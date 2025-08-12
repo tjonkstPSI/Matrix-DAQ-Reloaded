@@ -44,13 +44,13 @@ plugins:
   - id: "CAN"
     description: "Import DBC/XML, discover/select CAN signals with aliases; configure buses and acquire via NI-XNET"
   - id: "CCP"
-    description: "CCP over CAN: import A2L, configure bus/session, seed/key DLL unlock; select measurements (use A2L names) with optional global naming prefix; optional bounded writes"
+    description: "CCP over CAN (read-only): import A2L, configure bus/session, seed/key DLL unlock; select measurements (use A2L names) with optional global naming prefix"
   - id: "Calculated_Channels"
     description: "Restricted Python expressions evaluated at R; rolling functions, boolean latching, dependency ordering"
   - id: "Cycle"
-    description: "Load bank control from CSV (Time/Load) with interpolation, pause/stop/restart/skip, looping; optional Accept gating"
+    description: "Load bank control from CSV (Time kW) step schedule (no interpolation), pause/stop/restart/skip, looping; drives LoadBank setpoint; end-of-cycle stops issuing commands (operator control)"
   - id: "LoadBank"
-    description: "Load bank control via Modbus TCP: model dropdown, IP config, connection test, auto-connect/keep-alive, setpoint/accept, status reads"
+    description: "Load bank control via Modbus TCP: model dropdown, IP config, connection test, auto-connect/keep-alive; setpoint/accept; status reads; units derived from model map (kW typical)"
   - id: "Modbus"
     description: "Custom Modbus TCP read/write channels: per-server register maps, polling with scaling, aliases, write safeguards"
   - id: "Statistics"
@@ -102,7 +102,7 @@ inputs:
 outputs:
   - id: "OUT-DATA"
     type: "Parquet time-series + YAML metadata"
-    schema: "Recording grid at R; slow sources aligned to R; statistics outputs separate"
+    schema: "Recording grid at R; slow sources aligned to R; includes Time_Relative_s (s) from Core; statistics outputs separate"
   - id: "OUT-EXCEL"
     type: "Excel export"
     schema: "Sheets: Metadata, Data; includes Time_Relative_s and Time_Absolute_iso8601; multi-file split with .1, .2 when rows exceed Excel limit"
@@ -221,6 +221,9 @@ config:
   snapshot_policy:
     when: ["On Start Test (locked config)", "On Stop Test"]
     destination: "Run folder under config_snapshot/ (per-plugin YAML copies)"
+  core:
+    run_mode: "demo | continuous"
+    tick_interval_s: "publish interval (e.g., 0.1 for 10 Hz)"
 
 logging:
   level_default: "info"
@@ -350,6 +353,8 @@ ui:
     alarm_colors:
       warning: "yellow"
       shutdown: "red"
+  status:
+    connection_indicator: "Connected/Disconnected via freshness of telemetry (< 1 s)"
   plugin_tiles:
     right_click_menu: ["Configure", "Show Error", "Reset Error"]
     health_colors: { green: "OK", red: "Error" }
@@ -370,7 +375,7 @@ system_health:
         driver:
           refresh_rate_hz_default: 2
           timeout_ms_default: 1000
-          supported_devices: ["NI-9185", "NI-9188"]
+          supported_devices: ["NI-9188", "NI-9189"]
         digital_loopback:
           do_line: "TBD (per site)"
           di_return: "TBD (per site)"

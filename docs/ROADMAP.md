@@ -19,11 +19,11 @@ Deliver a Windows desktop app that streams, visualizes, and records engine test 
   - NI DAQ: fast AI path with 10×R acquisition and 4th‑order IIR Butterworth decimation
   - Channel Manager: evaluate per‑channel alarms; AlarmSummary booleans; AlarmEvents log; row coloring in UI table
   - Excel exporter: Metadata/Data, AlarmEvents, and per‑stat tabs; workbook split policy confirmed
-  - Continuous core run mode + graceful shutdown; basic run lifecycle logs
+  - Continuous core run mode + graceful shutdown; basic run lifecycle logs (DONE)
 
 - Month 2–3
   - LoadBank (real): map‑driven reads/writes, confirm readback; control from UI panel
-  - Cycle: step schedule (kW), pause/stop/restart/skip; preview plot; drive LoadBank setpoint
+  - Cycle: step schedule (kW), pause/stop/restart/skip; preview plot; drive LoadBank setpoint (SIM WIRED)
   - CAN (real): XNET integration (v23.3), signal selection/aliasing import path
   - CCP (read‑only real): A2L prefix naming; seed/key DLL unlock flow stubbed (no writes)
 
@@ -52,14 +52,16 @@ Deliver a Windows desktop app that streams, visualizes, and records engine test 
 - NI DAQ enumeration via NI‑DAQmx and NI MAX sim
 - Alias uniqueness checks (per‑plugin + global), console validation logs
 - Modbus JSON Schema validation (defense in depth)
+- Core run mode toggle (demo/continuous) and graceful Ctrl+C stop
+- Cycle plugin: CSV (Time, kW) schedule → drives LoadBank setpoint; end‑of‑cycle stops issuing commands; edge‑aware final step
+- UI status (Connected/Disconnected) and Core‑sourced `Time_Relative_s` channel displayed as a row
 
 ### In progress / next up
-- Core run mode toggle (demo vs continuous) and graceful shutdown
 - UI: table row coloring for alarms; Source column deferred by policy
 - Excel export end‑to‑end, including AlarmEvents and per‑stat tabs
 - Channel Manager: alarm evaluation loop; AlarmSummary outputs
 - NI DAQ: fast AI path with 10×R sampling and IIR Butterworth decimation
-- Cycle→LoadBank: kW step schedule execution
+- LoadBank real control path (model map → reads/writes)
 
 ### To‑do (detailed)
 - NI DAQ
