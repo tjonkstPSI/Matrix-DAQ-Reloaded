@@ -1,0 +1,14 @@
+# Author: T. Onkst | Date: 08122025
+
+mode: sim
+recording_rate_hz: 10
+
+buses: []
+databases: []
+signals:
+  - alias: "RPM"
+    unit: "rpm"
+  - alias: "Oil Pressure"
+    unit: "kPa"
+
+

@@ -1,0 +1,32 @@
+# Author: T. Onkst | Date: 08122025
+
+mode: sim
+recording_rate_hz: 10
+
+session:
+  bus: "CAN1"
+  station_address: 1
+  timeout_ms: 50
+  max_retries: 3
+
+security:
+  dll_path: null
+  function: null
+
+a2l:
+  files: []
+  variant: null
+
+measurements:
+  naming_prefix: "emaster"
+  list:
+    - name: "RPM"
+      unit_override: "rpm"
+      enabled: true
+    - name: "Oil_Pressure"
+      unit_override: "kPa"
+      enabled: true
+
+writes: []
+
+

@@ -1,0 +1,10 @@
+# Author: T. Onkst | Date: 08122025
+
+recording_rate_hz: 10
+
+channels: []
+
+dependencies:
+  allow_calc_as_inputs: true
+
+

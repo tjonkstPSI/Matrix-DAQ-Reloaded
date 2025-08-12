@@ -1,0 +1,419 @@
+name: "Engine Test Data Recorder"
+purpose: "Stream, visualize, and record engine test data from NI cDAQ, CAN/CCP, and Modbus devices; export to Excel."
+stakeholders:
+  - "Test Engineers"
+  - "Test Cell Operators"
+
+environment:
+  os: "Windows 10/11"
+  runtime: "Python 3.x (Windows)"
+  deployment: "Lab test station"
+  dependencies:
+    - "PySide6 (UI)"
+    - "NI-DAQmx Python"
+    - "NI-XNET Python"
+    - "pymodbus"
+    - "pyzmq (ZeroMQ)"
+    - "numpy, scipy (filters/decimation)"
+    - "pandas, pyarrow (Parquet)"
+    - "openpyxl or xlsxwriter (Excel export)"
+
+constraints:
+  timeline_months: 6
+  offline_capability: "Local-only; no external dependencies required during operation"
+
+hardware:
+  devices:
+    - name: "NI cDAQ Chassis + Modules"
+      examples: ["NI-9214", "NI-9239", "NI-9375", "NI-9862"]
+      interface: "USB/Ethernet"
+      protocols: ["DAQmx", "XNET"]
+      drivers: ["NI-DAQmx", "NI-XNET"]
+    - name: "Vaisala Environmental Sensors"
+      interface: "Ethernet"
+      protocols: ["Modbus TCP"]
+      drivers: []
+    - name: "Load Bank"
+      interface: "Ethernet"
+      protocols: ["Modbus TCP"]
+      drivers: []
+
+plugins:
+  - id: "NI_DAQ"
+    description: "cDAQ configuration: discover/select channels via checkbox, assign unique aliases, scaling, ranges; fast channels acquisition"
+  - id: "CAN"
+    description: "Import DBC/XML, discover/select CAN signals with aliases; configure buses and acquire via NI-XNET"
+  - id: "CCP"
+    description: "CCP over CAN: import A2L, configure bus/session, seed/key DLL unlock; select measurements (use A2L names) with optional global naming prefix; optional bounded writes"
+  - id: "Calculated_Channels"
+    description: "Restricted Python expressions evaluated at R; rolling functions, boolean latching, dependency ordering"
+  - id: "Cycle"
+    description: "Load bank control from CSV (Time/Load) with interpolation, pause/stop/restart/skip, looping; optional Accept gating"
+  - id: "LoadBank"
+    description: "Load bank control via Modbus TCP: model dropdown, IP config, connection test, auto-connect/keep-alive, setpoint/accept, status reads"
+  - id: "Modbus"
+    description: "Custom Modbus TCP read/write channels: per-server register maps, polling with scaling, aliases, write safeguards"
+  - id: "Statistics"
+    description: "Secondary logger of stats (mean, stdev, min, max) at rate R with rolling/fixed windows and optional triggers"
+  - id: "Vaisala"
+    description: "Vaisala environmental Modbus TCP: model dropdown with maps, IP config, connection test, polling with calibration offsets"
+  - id: "EngineTest"
+    description: "Collects run metadata (lock-test fields)"
+  - id: "Channel_Manager"
+    description: "Configure recording rate R (≤100 Hz) and per-channel alarms with latching; bulk edits; optional summary outputs"
+
+workflows:
+  - id: "WF-SESSION"
+    name: "Session setup"
+    trigger: "User"
+    steps:
+      - "Select plugins"
+      - "Import previous configuration (optional)"
+      - "Set local data root and test folder postfix"
+      - "Console shows plugin health (green/red)"
+      - "Streaming starts (not recording)"
+  - id: "WF-LOCK_START_STOP"
+    name: "Lock and run"
+    steps:
+      - "Lock test: prompt EngineTest metadata; Pre-Test Comments"
+      - "Start Test: begin recording at rate R (≤100 Hz)"
+      - "Segment rollover by time or size when thresholds exceeded"
+      - "Stop Recording: prompt Post-Test Comments"
+      - "Stop Test: finalize and move from temp to final folder"
+      - "Offer Excel export (split into .1, .2 … if row limit exceeded)"
+      - "For new run: lock again, update metadata, start"
+  - id: "WF-ERROR_RECOVERY"
+    name: "Error handling"
+    steps:
+      - "On device error: retry/backoff per plugin"
+      - "On critical fault: fail-safe stop; preserve committed data; allow export on restart"
+
+inputs:
+  - id: "IN-CDAQ"
+    type: "cDAQ channels"
+    schema: "Module/channel, scaling, range, rate; fast channels (analog voltage + digital) oversample at 10×R"
+  - id: "IN-CAN"
+    type: "CAN/CCP"
+    schema: "DBC/XML, A2L + seed/key DLL provided by operator"
+  - id: "IN-MODBUS"
+    type: "Modbus TCP"
+    schema: "Register maps (TBD)"
+
+outputs:
+  - id: "OUT-DATA"
+    type: "Parquet time-series + YAML metadata"
+    schema: "Recording grid at R; slow sources aligned to R; statistics outputs separate"
+  - id: "OUT-EXCEL"
+    type: "Excel export"
+    schema: "Sheets: Metadata, Data; includes Time_Relative_s and Time_Absolute_iso8601; multi-file split with .1, .2 when rows exceed Excel limit"
+  - id: "OUT-LOGS"
+    type: "Run logs"
+    schema: "Structured text with rotation; per-run directory"
+  - id: "OUT-RUN-FOLDER"
+    type: "Run artifact bundle"
+    schema: "Folder named after base; contains data, metadata, logs, and config snapshots for reproducibility"
+
+requirements:
+  functional:
+    - id: "FR-001"
+      priority: "MUST"
+      statement: "Record up to 200 channels at user-selected R ≤ 100 Hz; fast channels oversampled 10×R and decimated to R."
+    - id: "FR-002"
+      priority: "MUST"
+      statement: "Near real-time visualization with configurable 1/5/10 Hz updates; plotting decoupled from recording."
+    - id: "FR-003"
+      priority: "MUST"
+      statement: "Support CAN (XNET), CCP via A2L + seed/key DLL, and Modbus TCP read/write."
+    - id: "FR-004"
+      priority: "SHOULD"
+      statement: "Calculated channels using restricted Python expressions; optional script channels later."
+    - id: "FR-005"
+      priority: "MUST"
+      statement: "Excel export with metadata sheet and data sheet; handle row limits by splitting files (.1, .2 …)."
+    - id: "FR-006"
+      priority: "MUST"
+      statement: "Warn when disk free space < 5 GB; do not block run."
+    - id: "FR-007"
+      priority: "MUST"
+      statement: "Console 'Start Test' blocked until all selected plugins are green."
+    - id: "FR-008"
+      priority: "MUST"
+      statement: "Support time- or size-based segmentation; apply _1, _2 … only when segmentation occurs."
+    - id: "FR-009"
+      priority: "SHOULD"
+      statement: "Statistics plugin emits mean/stdev/min/max at rate R with configurable windows and triggers."
+    - id: "FR-010"
+      priority: "MUST"
+      statement: "On Stop Recording, prompt user with Post-Test Comments dialog."
+    - id: "FR-011"
+      priority: "MUST"
+      statement: "Operator can view/reset plugin errors via UI (e.g., right-click 'Show Error' / 'Reset Error'); 'Configure' via context menu."
+    - id: "FR-012"
+      priority: "MUST"
+      statement: "Per-plugin YAML configuration files; snapshot copies bundled with each run for reproducibility."
+  nonfunctional:
+    - id: "NFR-001"
+      category: "Reliability"
+      statement: "Crash-safe writes; worst-case data loss < 1 s; recovery/export after restart."
+    - id: "NFR-002"
+      category: "Performance"
+      statement: "Sustain 4 h runs with segmentation; UI latency ≤ 250 ms."
+    - id: "NFR-003"
+      category: "Security"
+      statement: "Local-only operation; disable external connections by default; no secrets storage."
+    - id: "NFR-004"
+      category: "Maintainability"
+      statement: "Plugin lifecycle with validation and health reporting; YAML config with schema validation; per-plugin files."
+
+states:
+  machine: ["Init", "Configuring", "ConsoleReady", "Locked", "Recording", "SegmentRollover", "Stopping", "Exporting", "Completed", "Error"]
+  transitions:
+    - { from: "ConsoleReady", to: "Locked", on: "Lock test (metadata OK)" }
+    - { from: "Locked", to: "Recording", on: "Start Test (all green)" }
+    - { from: "Recording", to: "SegmentRollover", on: "Time/size limit exceeded" }
+    - { from: "Recording", to: "Stopping", on: "Stop Recording (Post-Test Comments)" }
+    - { from: "Stopping", to: "Exporting", on: "Finalize files" }
+    - { from: "Exporting", to: "Completed", on: "Export done" }
+    - { from: "Any", to: "Error", on: "Critical fault" }
+
+timing:
+  recording_rate_R_hz_max: 100
+  plotting_update_rates_hz: [1, 5, 10]
+  fast_channels:
+    definition: "Analog voltage + digital inputs"
+    acquisition: "Hardware sample at 10×R; anti-aliased; decimate to R for storage"
+  other_sources:
+    definition: "TC/RTD/CAN/CCP/Modbus"
+    acquisition: "≤ R (or slower); aligned to R grid"
+  decimation_filter: "Low-pass (FIR/IIR) with cutoff < R/2"
+  decimation_filter_default: "4th-order IIR Butterworth"
+
+synchronization:
+  daqmx: "Shared hardware timebase and start trigger across relevant tasks"
+  can_xnet: "Use XNET hardware timestamps; align to R grid; if clock skew observed, apply periodic offset re-alignment (log applied offset)"
+  modbus: "Host-timestamped; hold last value between updates"
+
+config:
+  canonical_format: "YAML"
+  per_plugin_files: true
+  file_examples:
+    - "configs/ni_daq.yaml"
+    - "configs/can.yaml"
+    - "configs/ccp.yaml"
+    - "configs/calculated_channels.yaml"
+    - "configs/cycle.yaml"
+    - "configs/loadbank.yaml"
+    - "configs/modbus.yaml"
+    - "configs/statistics.yaml"
+    - "configs/vaisala.yaml"
+    - "configs/engine_test.yaml"
+    - "configs/channel_manager.yaml"
+  parameters:
+    - "Channel sets"
+    - "Rates"
+    - "Metadata fields"
+    - "Calculated expressions"
+    - "Segmentation policy"
+  storage_locations:
+    temp_runs: "C:\\ProgramData\\PSI\\Test Data"
+    final_runs: "User-selected local folder"
+  validation: "Schema-validated where applicable (TBD schema files)"
+  snapshot_policy:
+    when: ["On Start Test (locked config)", "On Stop Test"]
+    destination: "Run folder under config_snapshot/ (per-plugin YAML copies)"
+
+logging:
+  level_default: "info"
+  diagnostics_mode: "debug (optional)"
+  retention_policy: "Keep last 5 runs"
+  structure: "Per-run log directory; include plugin health and alarm events"
+  operator_visibility:
+    plugin_error_context_menu: ["Configure", "Show Error", "Reset Error"]
+
+storage:
+  format: "Parquet (.parquet) + sidecar YAML metadata (.yaml)"
+  segmentation:
+    enabled: true
+    by: ["time", "size"]
+    time_limit_default_h: 4
+    size_limit_default_mb: 100
+    naming: "Apply _1, _2, … only when segmentation occurs; first segment is _1"
+  temp_path: "C:\\ProgramData\\PSI\\Test Data"
+  finalize_on_stop: "Move to user-configured final folder"
+  run_folder_structure:
+    folder_name: "MMDDYY_HHMMSS_EngineType_TestType"
+    contents:
+      - "data/*.parquet (and segments if any)"
+      - "metadata.yaml (run-level)"
+      - "config_snapshot/*.yaml (copies of per-plugin configs used)"
+      - "logs/*.log"
+      - "exports/*.xlsx (if user exported)"
+  crash_safety:
+    write_mode: "Append-only chunked writes"
+    chunk_duration_s: 1
+    worst_case_loss_s: "< 1"
+    recovery: "Recover last committed chunks on restart"
+  excel_export:
+    enabled: true
+    sheets: ["Metadata", "Data"]
+    time_columns: ["Time_Relative_s", "Time_Absolute_iso8601"]
+    row_limit_behavior: "Split into .1, .2, … when exceeding Excel row limit (~1,048,576)"
+    naming_examples:
+      no_seg: "MMDDYY_HHMMSS_EngineType_TestType.xlsx"
+      seg2_split: "MMDDYY_HHMMSS_EngineType_TestType_2.1.xlsx"
+  disk_guardrail:
+    min_free_gb: 5
+    behavior: "warn_only"
+
+filenaming:
+  base: "MMDDYY_HHMMSS_EngineType_TestType"
+  segment_suffix: "Apply _1, _2, … only if segmented"
+  excel_split_suffix: "Apply .1, .2, … only if row-limit split"
+  statistics_postfix: "_Statistics"
+
+alarms:
+  units: "Derived from post-scaling units per channel"
+  types: ["high_warning", "low_warning", "high_shutdown", "low_shutdown"]
+  latching:
+    trigger_after_s: "<per-limit configurable>"
+    unlatch_after_s: "<per-limit configurable>"
+  actions:
+    warning:
+      - "UI_indicator_yellow"
+      - "log_event"
+    shutdown:
+      - "trigger_estop_circuit (via calculated channel logic)"
+      - "UI_indicator_red"
+      - "log_event"
+
+metadata:
+  lock_test_required_fields:
+    - name: "Engine Type"
+      type: "enum"
+      values: ["4X", "8.8L", "14L", "22L", "32L", "53L"]
+    - name: "Engine Serial Number"
+      type: "string"
+    - name: "Test Type"
+      type: "enum"
+      values: ["Standard Break In", "Durability", "Spark Sweep", "Vibration", "Other"]
+    - name: "Test Operator"
+      type: "string"
+    - name: "Project Number"
+      type: "string"
+
+calculated_channels:
+  engine: "Restricted Python expressions (asteval or similar sandbox)"
+  allowed:
+    functions: ["abs", "min", "max", "mean", "stdev", "sqrt", "sin", "cos", "tan", "exp", "log", "if_then_else", "rolling_mean", "rolling_stdev"]
+    libraries: ["math", "numpy (subset)"]
+  disallowed: ["I/O", "filesystem", "network", "imports"]
+  script_channels: "TBD (optional advanced feature)"
+  estop_implementation: "Per-cell logic using digital inputs and IF expressions; configurable per site"
+
+statistics_plugin:
+  rate: "Match recording rate R"
+  windows: ["fixed", "rolling"]
+  window_size: "<configurable>"
+  triggers: "Expressions using configured channels"
+  output_naming_postfix: "_Statistics"
+  segmentation_and_excel_split: "Same rules as primary data"
+
+cycle_loadbank:
+  cycle_file_format: "CSV"
+  csv_schema:
+    columns: ["Time", "Load"]
+    notes: "Fan is always on; no column"
+  controls: ["pause", "stop", "restart", "skip"]
+  looping:
+    loops_total_default: 1
+    inter_loop_dwell_s_default: 0
+    between_loops_safe_state: false
+  comms_loss_behavior: "Trigger E-stop circuit; abort current loop"
+  engine_shutdown: "Digital output to engine controller (behavior via calculated channels/logic)"
+  polling_and_limits: "TBD (register maps, scaling, rates, safeguards)"
+
+ui:
+  architecture: "Two-process bundle: Core (acquisition) + UI (PySide6)"
+  ipc:
+    transport: "ZeroMQ (local-only)"
+    patterns:
+      telemetry: "PUB/SUB for live frames"
+      control: "REQ/REP for operator commands"
+    payloads: ["JSON", "MessagePack"]
+  displays:
+    templates:
+      - "AllChannelsTable (grouped by type)"
+      - "PlotsBlank (user selects channels)"
+      - "DialsGauges (configurable)"
+    update_rates_hz: [1, 5, 10]
+    multi_window: true
+    alarm_colors:
+      warning: "yellow"
+      shutdown: "red"
+  plugin_tiles:
+    right_click_menu: ["Configure", "Show Error", "Reset Error"]
+    health_colors: { green: "OK", red: "Error" }
+  controls:
+    loadbank: ["fan_on_off (always on policy)", "setpoint", "accept"]
+    analog_out: ["selected 0–10 V channels"]
+
+error_handling:
+  io_retry: "Per plugin retry with backoff"
+  critical_fault: "Fail-safe stop; preserve committed data; notify user"
+  resume_policy: "User-driven after faults; health must be green to proceed"
+
+system_health:
+  watchdog:
+    ni_daq:
+      enabled: true
+      modes:
+        driver:
+          refresh_rate_hz_default: 2
+          timeout_ms_default: 1000
+          supported_devices: ["NI-9185", "NI-9188"]
+        digital_loopback:
+          do_line: "TBD (per site)"
+          di_return: "TBD (per site)"
+          toggle_rate_hz_default: 2
+          verify_timeout_ms_default: 250
+          miss_threshold_default: 3
+      behavior_on_fault: ["Mark NI_DAQ red", "Raise system fault", "Optional: trigger E-stop via calculated channel"]
+
+safety_and_compliance:
+  hazards: ["Unsafe output states", "Load bank misconfiguration", "ECU unlock misuse"]
+  mitigations:
+    - "Alarms with latching and shutdown actions"
+    - "Per-cell E-stop logic via calculated channels"
+    - "Start blocked until all plugins green"
+  estop:
+    implementation: "Calculated-channel-based using DI + IF logic"
+    per_cell_variation: true
+
+security:
+  posture: "Local-only"
+  external_connections: "Disabled by default"
+  secrets: "None stored"
+
+migration_notes:
+  from_labview:
+    - "Match or exceed prior behavior"
+    - "Gather VI screenshots and quirks (TBD)"
+  dependencies_and_versions: "A2L + seed/key DLL versions provided by operator (TBD)"
+
+definition_of_done:
+  - "Feature parity with prior system (or better)"
+  - "All FR/NFR mapped to tests in RTM"
+  - "Build reproducible on target machine"
+  - "Excel export validated against large runs"
+
+versioning: "SemVer MAJOR.MINOR.PATCH; pre-release allowed"
+
+open_questions:
+  cdaq_channel_inventory: "TBD (names, ranges, accuracies, groupings, triggers)"
+  can_ccp_unlock_flow: "TBD (detailed sequence, retries/timeouts)"
+  modbus_register_maps: "TBD (addresses, types, scaling, rates, safeguards)"
+  ui_templates_final: "TBD (provide screenshots and preferred layouts)"
+  segmentation_size_limit_mb: "TBD (user-configurable default)"
+  schema_files: "TBD (JSON Schema/YAML for config validation)"
+
+

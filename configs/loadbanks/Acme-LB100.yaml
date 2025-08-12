@@ -1,0 +1,36 @@
+# Author: T. Onkst | Date: 08122025
+
+model: "Acme-LB100"
+
+commands:
+  setpoint:
+    fc: 6                 # write single holding register
+    address: 40100
+    type: uint16
+    ui_unit: "kW"         # UI load in kW 0..100 → register via scaling
+    scaling: { m: 10.0, b: 0.0 }  # 1kW → +10 register units
+    min: 0
+    max: 100
+    confirm_readback: true
+  accept:
+    fc: 5                 # write single coil
+    address: 1
+
+status:
+  measured_load:
+    fc: 3                 # read holding register
+    address: 41000
+    type: uint16
+    scaling: { m: 1, b: 0.0, unit: "kW" }
+    poll_hz: 2
+  faults_word:
+    fc: 3
+    address: 41010
+    type: uint16
+    poll_hz: 1
+  ready_bit:
+    fc: 2                 # read discrete input
+    address: 10
+    poll_hz: 2
+
+

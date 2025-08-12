@@ -1,0 +1,30 @@
+# Author: T. Onkst | Date: 08122025
+
+recording_rate_hz: 10
+
+source:
+  csv_path: null
+  columns: { time: "Time", load: "Load" }
+
+execution:
+  loops_total: 1
+  inter_loop_dwell_s: 0
+  restart_policy: "restart_loop"
+  skip_behavior: "next_row"
+  interpolation: "none"
+
+integration:
+  loadbank:
+    accept_required: false
+    units: "kW"
+    smoothing:
+      ramp_limit_pct_per_s: null
+
+optional_safety:
+  enabled: false
+  watch_channel: null
+  limit_high: null
+  backoff_kw: null
+  cooloff_s: null
+
+

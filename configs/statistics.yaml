@@ -1,0 +1,32 @@
+# Author: T. Onkst | Date: 08122025
+
+recording_rate_hz: 10
+
+output:
+  format: wide
+  enable_excel_export: false
+  excel_per_stat_sheet: true
+
+windows:
+  mode: rolling
+  size:
+    seconds: 5
+    samples: null
+  emit_interval:
+    seconds: null
+    samples: null
+  min_samples: 3
+
+triggers:
+  enabled: false
+  condition: null
+  behavior: emit_only_when_true
+  holdoff_s: 0
+
+manual_logging:
+  enabled: true
+  include_timestamp: true
+
+channels: []
+
+

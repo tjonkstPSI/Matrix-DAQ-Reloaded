@@ -1,0 +1,15 @@
+# Author: T. Onkst | Date: 08122025
+
+recording_rate_hz: 10
+
+channels: []
+
+aggregation:
+  emit_summary_channels: true
+
+output:
+  alarm_events:
+    enabled: true
+    include_in_excel: true
+
+

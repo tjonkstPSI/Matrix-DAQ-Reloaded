@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psi.local/schemas/modbus.schema.json",
+  "title": "Modbus Plugin Configuration",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "mode": {
+      "type": "string",
+      "enum": ["real", "sim"]
+    },
+    "recording_rate_hz": {
+      "type": "number",
+      "minimum": 0,
+      "exclusiveMinimum": true
+    },
+    "servers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "name": { "type": "string" },
+          "host": { "type": "string" },
+          "port": { "type": "integer", "minimum": 1 },
+          "unit_id": { "type": "integer", "minimum": 0 },
+          "timeout_ms": { "type": "integer", "minimum": 0 },
+          "max_retries": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "reads": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["alias", "fc", "address", "type"],
+        "additionalProperties": true,
+        "properties": {
+          "alias": { "type": "string", "minLength": 1 },
+          "server": { "type": "string" },
+          "fc": { "type": "integer", "enum": [1, 2, 3, 4] },
+          "address": { "type": "integer", "minimum": 0 },
+          "type": { "type": "string", "enum": ["uint16", "int16", "uint32", "int32", "float32", "float64", "coil"] },
+          "word_order": { "type": "string" },
+          "byte_order": { "type": "string", "enum": ["big", "little"] },
+          "scaling": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "m": { "type": "number" },
+              "b": { "type": "number" },
+              "unit": { "type": "string" }
+            }
+          },
+          "poll_hz": { "type": "number", "minimum": 0, "exclusiveMinimum": true },
+          "enabled": { "type": "boolean" }
+        }
+      }
+    },
+    "writes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["alias", "fc", "address"],
+        "additionalProperties": true,
+        "properties": {
+          "alias": { "type": "string", "minLength": 1 },
+          "server": { "type": "string" },
+          "fc": { "type": "integer", "enum": [5, 6, 15, 16] },
+          "address": { "type": "integer", "minimum": 0 },
+          "type": { "type": "string" },
+          "min": { "type": "number" },
+          "max": { "type": "number" },
+          "rate_limit_hz": { "type": "number", "minimum": 0 },
+          "confirm_readback": { "type": "boolean" },
+          "enabled": { "type": "boolean" }
+        }
+      }
+    }
+  }
+}
+
+

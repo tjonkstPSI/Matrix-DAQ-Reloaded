@@ -1,0 +1,22 @@
+# Author: T. Onkst | Date: 08122025
+
+mode: sim
+recording_rate_hz: 10
+
+connection:
+  host: 127.0.0.1
+  port: 502
+  unit_id: 1
+
+model:
+  selected: null
+  map_file: null
+
+polling:
+  override_poll_hz: null
+
+calibration_offsets: {}
+
+channels: []
+
+

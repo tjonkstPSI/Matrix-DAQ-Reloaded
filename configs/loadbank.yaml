@@ -1,0 +1,30 @@
+# Author: T. Onkst | Date: 08122025
+
+mode: sim
+recording_rate_hz: 10
+
+connection:
+  host: 127.0.0.1
+  port: 502
+  unit_id: 1
+
+model:
+  selected: null
+  map_file: configs/loadbanks/Acme-LB100.yaml
+
+polling:
+  default_status_poll_hz: 2
+
+safety:
+  setpoint_limits_percent: { min: 0, max: 100 }
+  require_accept_confirmation: true
+  rate_limit_setpoint_hz: 1
+
+expose_channels:
+  measured_load_alias: "LB Measured Load"
+  ready_alias: "LB Ready"
+  faults_alias: "LB Faults"
+  setpoint_alias: "LB Setpoint"
+  accept_alias: "LB Accept"
+
+

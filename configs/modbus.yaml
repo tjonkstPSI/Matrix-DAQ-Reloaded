@@ -1,0 +1,23 @@
+# Author: T. Onkst | Date: 08122025
+
+mode: sim
+recording_rate_hz: 10
+
+servers: []
+writes: []
+
+# Example simulated reads
+reads:
+  - alias: "Room Temp"
+    fc: 4
+    address: 30001
+    type: float32
+    scaling: { m: 1.0, b: 0.0, unit: "C" }
+  - alias: "Humidity"
+    fc: 4
+    address: 30002
+    type: float32
+    scaling: { m: 1.0, b: 0.0, unit: "%RH" }
+writes: []
+
+
