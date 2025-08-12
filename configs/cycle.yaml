@@ -3,7 +3,7 @@
 recording_rate_hz: 10
 
 source:
-  csv_path: null
+  csv_path: configs/cycles/demo.csv
   columns: { time: "Time", load: "Load" }
 
 execution:

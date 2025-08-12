@@ -21,6 +21,9 @@ def main() -> int:
     orchestrator.start()
     try:
         orchestrator.run()
+    except KeyboardInterrupt:
+        print("\n[INFO] KeyboardInterrupt received; stopping...")
+        orchestrator.request_stop()
     finally:
         orchestrator.stop()
     return 0

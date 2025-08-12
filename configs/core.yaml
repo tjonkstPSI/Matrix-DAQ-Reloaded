@@ -1,0 +1,10 @@
+# Author: T. Onkst | Date: 08122025
+
+# Core run behavior
+run_mode: continuous   # demo | continuous
+demo_ticks: 50   # number of ticks to run in demo mode
+
+# Loop timing (seconds per tick) for demo/continuous publishing
+tick_interval_s: 0.1  # 10 Hz
+
+

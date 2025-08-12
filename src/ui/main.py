@@ -19,15 +19,20 @@ def main() -> int:
     app = QApplication(sys.argv)
     window = QWidget()
     layout = QVBoxLayout(window)
-    header = QLabel("UI skeleton running — live Modbus sim table")
+    header = QLabel("UI skeleton running — live telemetry table")
+    status = QLabel("Disconnected")
+    status.setStyleSheet("color: red;")
     table = QTableWidget(0, 3)
     table.setHorizontalHeaderLabels(["Alias", "Value", "Unit"]) 
     layout.addWidget(header)
+    layout.addWidget(status)
     layout.addWidget(table)
     window.resize(420, 240)
     window.show()
 
     sub = create_ui_subscriber()
+
+    last_msg_time = {"t": 0.0}
 
     def poll():
         if sub is None:
@@ -41,6 +46,9 @@ def main() -> int:
                 data = json.loads(payload.decode("utf-8"))
                 values = data.get("values", {})
                 units = data.get("units", {})
+                # Mark last message time for connection status
+                import time as _t
+                last_msg_time["t"] = _t.time()
                 # Update table
                 table.setRowCount(len(values))
                 for row, (alias, val) in enumerate(values.items()):
@@ -49,6 +57,19 @@ def main() -> int:
                     table.setItem(row, 2, QTableWidgetItem(str(units.get(alias, ""))))
         except Exception:
             # No message available or other non-fatal issue
+            pass
+        # Update connection status based on recent message
+        try:
+            import time as _t
+            now = _t.time()
+            connected = (now - last_msg_time["t"]) < 1.0  # 1s freshness window
+            if connected:
+                status.setText("Connected")
+                status.setStyleSheet("color: green;")
+            else:
+                status.setText("Disconnected")
+                status.setStyleSheet("color: red;")
+        except Exception:
             pass
 
     timer = QTimer()

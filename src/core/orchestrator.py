@@ -14,6 +14,8 @@ from ..plugins.ccp import CCPPlugin
 from ..plugins.ni_daq import NiDAQPlugin
 from ..plugins.loadbank import LoadBankPlugin
 from .ipc.bus import IPCBus
+from ..config.loader import load_yaml_config
+from ..plugins.cycle import CyclePlugin
 
 
 @dataclass
@@ -30,11 +32,15 @@ class Orchestrator:
         self.registry = PluginRegistry(configs_dir)
         self.plugins: Dict[str, BasePlugin] = {}
         self.bus = IPCBus()
+        self.core_cfg: Dict[str, Any] = {}
 
     def start(self) -> None:
         # Placeholder: load configs, initialize IPC bus, register simulated plugins
         self._register_builtin_specs()
         self.plugins = self.registry.create_all()
+        # Load core config
+        core_cfg_path = (self.configs_dir / "core.yaml").resolve()
+        self.core_cfg = load_yaml_config(core_cfg_path)
         # Load configs for each plugin and run basic validation
         all_ok = True
         for pid, plugin in self.plugins.items():
@@ -100,40 +106,102 @@ class Orchestrator:
         modbus.arm()
         modbus.start()
         try:
-            # Generate 50 ticks at 10 Hz, publish telemetry merging Modbus and CAN
+            # Generate ticks per run_mode, publish telemetry merging plugins
             import time, json
             can = self.plugins.get("CAN")
             ccp = self.plugins.get("CCP")
             lb = self.plugins.get("LoadBank")
+            cycle = self.plugins.get("Cycle")
             if can:
                 can.configure(); can.validate(); can.start()
             if ccp:
                 ccp.configure(); ccp.validate(); ccp.start()
             if lb:
                 lb.configure(); lb.validate(); lb.start()
-            for _ in range(50):
-                vals = {}
-                units = {}
-                vals.update(getattr(modbus, "simulate_step")())
-                units.update(getattr(modbus, "units")())
-                if can:
-                    vals.update(getattr(can, "simulate_step")())
-                    units.update(getattr(can, "units")())
-                if ccp:
-                    vals.update(getattr(ccp, "simulate_step")())
-                    units.update(getattr(ccp, "units")())
-                if lb:
-                    # Example: ramp setpoint from 0 to 100% over demo
-                    sp = (_ / 49.0) * 100.0
-                    getattr(lb, "command_setpoint_pct")(sp)
-                    vals.update(getattr(lb, "simulate_step")())
-                    units.update(getattr(lb, "units")())
-                payload = json.dumps({"ts": time.time(), "values": vals, "units": units}).encode("utf-8")
-                self.bus.publish_telemetry(payload)
-                time.sleep(0.1)
+            if cycle:
+                cycle.configure(); cycle.validate(); cycle.start()
+            prev_complete = getattr(cycle, "is_complete")() if cycle else False
+            run_mode = str(self.core_cfg.get("run_mode", "demo")).lower()
+            demo_ticks = int(self.core_cfg.get("demo_ticks", 50))
+            interval = float(self.core_cfg.get("tick_interval_s", 0.1))
+            i = 0
+            t0 = time.time()
+            if run_mode == "demo":
+                for _ in range(demo_ticks):
+                    if not self._running:
+                        break
+                    vals = {}
+                    units = {}
+                    vals.update(getattr(modbus, "simulate_step")())
+                    units.update(getattr(modbus, "units")())
+                    if can:
+                        vals.update(getattr(can, "simulate_step")())
+                        units.update(getattr(can, "units")())
+                    if ccp:
+                        vals.update(getattr(ccp, "simulate_step")())
+                        units.update(getattr(ccp, "units")())
+                    if lb and cycle:
+                        sp = float(getattr(cycle, "current_setpoint_kw")())
+                        now_complete = getattr(cycle, "is_complete")()
+                        # Edge-aware final send: send when not complete, or on transition to complete
+                        if (not now_complete) or (not prev_complete and now_complete):
+                            getattr(lb, "command_setpoint_pct")(sp)
+                        prev_complete = now_complete
+                        vals.update(getattr(lb, "simulate_step")())
+                        units.update(getattr(lb, "units")())
+                    # Add relative time channel from core
+                    elapsed = time.time() - t0
+                    vals["Time_Relative_s"] = elapsed
+                    units["Time_Relative_s"] = "s"
+                    payload = json.dumps({"ts": time.time(), "values": vals, "units": units}).encode("utf-8")
+                    self.bus.publish_telemetry(payload)
+                    time.sleep(interval)
+                    i += 1
+            else:
+                while self._running:
+                    vals = {}
+                    units = {}
+                    vals.update(getattr(modbus, "simulate_step")())
+                    units.update(getattr(modbus, "units")())
+                    if can:
+                        vals.update(getattr(can, "simulate_step")())
+                        units.update(getattr(can, "units")())
+                    if ccp:
+                        vals.update(getattr(ccp, "simulate_step")())
+                        units.update(getattr(ccp, "units")())
+                    if lb and cycle:
+                        sp = float(getattr(cycle, "current_setpoint_kw")())
+                        now_complete = getattr(cycle, "is_complete")()
+                        if (not now_complete) or (not prev_complete and now_complete):
+                            getattr(lb, "command_setpoint_pct")(sp)
+                        prev_complete = now_complete
+                        vals.update(getattr(lb, "simulate_step")())
+                        units.update(getattr(lb, "units")())
+                    # Add relative time channel from core
+                    elapsed = time.time() - t0
+                    vals["Time_Relative_s"] = elapsed
+                    units["Time_Relative_s"] = "s"
+                    payload = json.dumps({"ts": time.time(), "values": vals, "units": units}).encode("utf-8")
+                    self.bus.publish_telemetry(payload)
+                    time.sleep(interval)
+                    i += 1
         finally:
-            modbus.stop()
+            # Stop plugins and bus gracefully
+            try:
+                modbus.stop()
+            except Exception:
+                pass
+            for pid in ("CAN", "CCP", "LoadBank"):
+                try:
+                    p = self.plugins.get(pid)
+                    if p:
+                        p.stop()
+                except Exception:
+                    pass
             self.bus.stop()
+
+    def request_stop(self) -> None:
+        self._running = False
 
     def stop(self) -> None:
         self._running = False
@@ -148,7 +216,7 @@ class Orchestrator:
             PluginSpec(id="CAN", cls=CANPlugin, config_name="can.yaml"),
             PluginSpec(id="CCP", cls=CCPPlugin, config_name="ccp.yaml"),
             PluginSpec(id="Calculated_Channels", cls=_Stub, config_name="calculated_channels.yaml"),
-            PluginSpec(id="Cycle", cls=_Stub, config_name="cycle.yaml"),
+            PluginSpec(id="Cycle", cls=CyclePlugin, config_name="cycle.yaml"),
             PluginSpec(id="LoadBank", cls=LoadBankPlugin, config_name="loadbank.yaml"),
             PluginSpec(id="Modbus", cls=ModbusPlugin, config_name="modbus.yaml"),
             PluginSpec(id="Statistics", cls=_Stub, config_name="statistics.yaml"),
