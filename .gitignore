@@ -39,6 +39,7 @@ coverage.xml
 run/
 !run/.gitkeep
 logs/**
+/runs/
 
 # Local env files
 .env

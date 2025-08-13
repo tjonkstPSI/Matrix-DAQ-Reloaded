@@ -6,14 +6,16 @@
 Configure and acquire data from NI cDAQ modules for analog input (voltage, thermocouple, RTD), digital input/output, and analog output. Provide scaling, naming, alarms, synchronization, oversampling/decimation, and health reporting.
 
 ### Channel Discovery, Selection, and Aliases
-- On Configure, discover all connected cDAQ chassis/modules and enumerate available physical channels.
-- UI presents a tree/list with checkbox selection per channel.
-- For each selected channel, the operator assigns a required display/recording name called "alias". The alias:
-  - Is used in UI displays and as the column name in Parquet/Excel output
-  - Must be unique among enabled channels
-  - Accepts letters, numbers, underscore, dash, and space; length ≤ 64
-  - Defaults to the internal `id` if left blank (validation will prompt to confirm)
-- The hardware path (e.g., `cDAQ9185-1/ai0`) is always stored in metadata alongside the alias for traceability.
+- Discovery helper (available now):
+  - Enumerates cDAQ chassis/modules and AI/DI/DO/AO
+  - Categorizes modules by product_type (e.g., 9214→TC, 9217→RTD, 9239→Voltage, 9265→AO current)
+  - Generates a structured template at `configs/ni_daq.generated.yaml`
+  - Usage:
+    ```bash
+    py -m src.tools.nidaq_discover
+    ```
+- Operator copies needed sections into `configs/ni_daq.yaml`, enables channels, sets scaling/sensors, and aliases.
+- UI channel picker is planned later; for now, YAML drives selection.
 
 ### Supported Channel Types
 - Analog Input Voltage (`ai_voltage`)
@@ -25,13 +27,9 @@ Configure and acquire data from NI cDAQ modules for analog input (voltage, therm
 
 ### Acquisition Model
 - Recording rate R (per run) ≤ 100 Hz
-- Fast channels: `ai_voltage` and `di` sampled in hardware at 10×R, anti-aliased, decimated to R for storage/UI
-  - AI decimation: low-pass FIR/IIR; cutoff < R/2
-  - DI decimation: last-sample-hold at decimation boundary; optional edge count sub-feature (TBD)
-- Slow channels: `ai_tc`, `ai_rtd` sampled at ≤ R and aligned to the R grid
-- Synchronization: share DAQmx SampleClock and Start Trigger among compatible tasks; align all DAQ tasks to the same timebase
-- Buffering: continuous acquisition with ring buffers sized for ≥ 5 s (or ≥ 10× chunk duration); write chunks at 1 s intervals
-- Error handling: device/module removal, rate not supported, routing conflicts → surface in UI (Show Error), allow Reset Error to retry init; logs include DAQmx error codes
+- Fast channels: `ai_voltage` sampled at 10×R and anti‑alias averaged to R (sim and real); DI read at R (on‑demand) for now
+- Slow channels: `ai_temp` (TC/RTD) at ≤ R; configure CJC/wires where supported; fallback to voltage if unsupported
+- Error handling: invalid/unsupported physical channels are skipped; DAQmx tasks are explicitly closed on stop to avoid resource warnings
 
 ### Watchdog (Chassis Connectivity Check)
 - Purpose: continuously verify NI cDAQ connectivity and detect host↔device link loss.
@@ -54,98 +52,40 @@ Configure and acquire data from NI cDAQ modules for analog input (voltage, therm
 - Warning → UI yellow + log; Shutdown → triggers E-stop via calculated channel logic + UI red + log
 
 ### Configuration (YAML)
-File: `configs/ni_daq.yaml`
+File: `configs/ni_daq.yaml` (structured)
 
 ```yaml
-recording_rate_hz: 100            # R (per run); may be overridden by Channel Manager
-oversample_factor_fast: 10        # hardware oversample factor for ai_voltage and di
-  decimation:
-  filter: IIR_Butterworth         # default: 4th-order IIR Butterworth
-  cutoff_hz: auto                 # auto = < R/2 (design 4th-order)
-sync:
-  share_sample_clock: true
-  share_start_trigger: true
+mode: real  # real | sim
+recording_rate_hz: 10
 
-watchdog:
-  mode: driver                        # driver | digital_loopback
-  enabled: true
-  driver:
-    refresh_rate_hz: 2
-    timeout_ms: 1000                  # device-side expiration window
-    expir_states:                     # optional safe states to apply on expiration (device-supported DO/AO)
-      do_lines: []                    # e.g., ["cDAQ9185-1/port1/line0:low", "cDAQ9185-1/port1/line1:low"]
-      ao_lines: []                    # e.g., ["cDAQ9185-1/ao0:0.0V"]
-  digital_loopback:
-    do_line: "cDAQ9185-1/port1/line7"
-    di_return: "cDAQ9185-1/port0/line7"
-    toggle_rate_hz: 2
-    verify_timeout_ms: 250
-    miss_threshold: 3
-
-chassis:
-  - alias: "cDAQ_A"
-    device: "cDAQ9185-1"         # DAQmx device name
+decimation:
+  filter: IIR_Butterworth
+  cutoff_hz: auto
 
 channels:
-  - id: "P_oil"
-    alias: "Oil Pressure"          # Display/recording name (required for enabled channels)
-    device: "cDAQ9185-1/ai0"
-    type: ai_voltage
-    terminal_config: Differential  # Differential | RSE | NRSE
-    range_v: { min: 0, max: 10 }
-    scaling: { type: linear, unit: kPa, m: 10.0, b: 0.0 }  # 0–10 V → 0–100 kPa
-    category: Pressure
-    enabled: true
-    alarms:
-      high_warning:  { value: 90,  trigger_after_s: 5,  unlatch_after_s: 10 }
-      high_shutdown: { value: 95,  trigger_after_s: 1,  unlatch_after_s: 5 }
-      low_warning:   null
-      low_shutdown:  null
-
-  - id: "T_exh1"
-    alias: "Exhaust Temp 1"
-    device: "cDAQ9185-1/ai1"
-    type: ai_tc
-    tc_type: K
-    cjc: built_in
-    unit: C
-    range_c: { min: 0, max: 1200 }
-    category: Temperature
-    enabled: true
-
-  - id: "RTD1"
-    alias: "RTD Sensor 1"
-    device: "cDAQ9185-1/ai2"
-    type: ai_rtd
-    rtd_type: Pt100
-    wiring: 3wire                  # 2wire | 3wire | 4wire
-    unit: C
-    category: Temperature
-    enabled: true
-
-  - id: "DI_0"
-    alias: "DI Line 0"
-    device: "cDAQ9185-1/port0/line0"
-    type: di
-    category: Digital
-    enabled: true
-
-  - id: "DO_SHUTDOWN"
-    alias: "Shutdown DO"
-    device: "cDAQ9185-1/port1/line0"
-    type: do
-    default_state: low
-    category: Digital
-    enabled: true
-
-  - id: "AO_FAN"
-    alias: "Fan Command"
-    device: "cDAQ9185-1/ao0"
-    type: ao_voltage
-    range_v: { min: 0, max: 10 }
-    unit: V
-    category: Analog
-    enabled: true
+  ai_voltage:
+    - phys: "Dev1/ai0"
+      alias: "qPR_Amb"
+      enabled: true
+      range_v: { min: 0, max: 10 }
+      scaling: { m: 10.0, b: 0.0, unit: "kPa" }
+  ai_temp:
+    - phys: "Dev1/ai1"
+      alias: "qTP_Amb"
+      enabled: true
+      sensor: { type: "TC", subtype: "K" }
+      unit: "C"
+  di:
+    - phys: "Dev1/port0/line0"
+      alias: "qDG_Estop"
+      enabled: true
+      initial: 1
+  do:
+    - phys: "Dev1/port1/line0"
+      alias: "qDG_FuelPump"
+      enabled: true
+      initial: 0
+  ao: []
 ```
 
 #### Validation Rules

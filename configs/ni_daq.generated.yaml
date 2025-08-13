@@ -1,5 +1,3 @@
-# Author: T. Onkst | Date: 08122025
-
 mode: real
 recording_rate_hz: 10
 decimation:
@@ -8,15 +6,15 @@ decimation:
 channels:
   ai_voltage:
   - phys: AGENTMod1/ai0
-    alias: qPR_Amb
-    enabled: True
+    alias: AGENTMod1_ai0
+    enabled: false
     range_v:
       min: 0
       max: 10
     scaling:
       m: 1.0
       b: 0.0
-      unit: kPa
+      unit: V
   - phys: AGENTMod1/ai1
     alias: AGENTMod1_ai1
     enabled: false
@@ -208,15 +206,15 @@ channels:
       b: 0.0
       unit: V
   - phys: MATRIXMod3/ai0
-    alias: qFL_Ccsbby
-    enabled: True
+    alias: MATRIXMod3_ai0
+    enabled: false
     range_v:
       min: 0
       max: 10
     scaling:
       m: 1.0
       b: 0.0
-      unit: SCFM
+      unit: V
   - phys: MATRIXMod3/ai1
     alias: MATRIXMod3_ai1
     enabled: false
@@ -385,8 +383,8 @@ channels:
       wires: 3
     unit: C
   - phys: MATRIXMod1/ai0
-    alias: qTP_Amb
-    enabled: True
+    alias: MATRIXMod1_ai0
+    enabled: false
     sensor:
       type: TC
       subtype: K
@@ -610,8 +608,8 @@ channels:
     unit: C
   di:
   - phys: MATRIXMod6/port0/line0
-    alias: qDI_Estop
-    enabled: True
+    alias: MATRIXMod6_port0_line0
+    enabled: false
     initial: 0
   - phys: MATRIXMod6/port0/line1
     alias: MATRIXMod6_port0_line1
@@ -675,8 +673,8 @@ channels:
     initial: 0
   do:
   - phys: MATRIXMod6/port1/line0
-    alias: qDO_FuelPump
-    enabled: True
+    alias: MATRIXMod6_port1_line0
+    enabled: false
     initial: 0
   - phys: MATRIXMod6/port1/line1
     alias: MATRIXMod6_port1_line1

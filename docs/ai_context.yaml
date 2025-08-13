@@ -40,7 +40,7 @@ hardware:
 
 plugins:
   - id: "NI_DAQ"
-    description: "cDAQ configuration: discover/select channels via checkbox, assign unique aliases, scaling, ranges; fast channels acquisition"
+    description: "NI cDAQ acquisition: discovery helper generates structured YAML (categorized by module family); sim emits configured channels; real path supports AI voltage (10×R oversample+average), AI temperature at R, DI on-demand; scaling/units and aliases from config"
   - id: "CAN"
     description: "Import DBC/XML, discover/select CAN signals with aliases; configure buses and acquire via NI-XNET"
   - id: "CCP"

@@ -55,6 +55,7 @@ Deliver a Windows desktop app that streams, visualizes, and records engine test 
 - Core run mode toggle (demo/continuous) and graceful Ctrl+C stop
 - Cycle plugin: CSV (Time, kW) schedule → drives LoadBank setpoint; end‑of‑cycle stops issuing commands; edge‑aware final step
 - UI status (Connected/Disconnected) and Core‑sourced `Time_Relative_s` channel displayed as a row
+- NI DAQ: simulation path emits configured channels (AI voltage with 10× oversample/average to R, AI temp at R, DI/DO states); discovery helper generates structured YAML template with module family categorization
 - Channel Manager: per‑channel alarms with explicit debounce (enter_delay_s, clear_delay_s); UI row coloring (yellow/red); AlarmEvents persisted to per‑run JSONL with local timestamps (ts_hms)
 - Statistics: snapshot‑based (manual button + optional rising/falling edge trigger), configurable window (seconds or samples), backward/forward capture, metrics selection including p2p; snapshots persisted to per‑run JSONL; UI control wiring in place
 - IPC control path for UI → Core (manual statistics snapshot)
@@ -64,7 +65,7 @@ Deliver a Windows desktop app that streams, visualizes, and records engine test 
 - Recording pipeline: Parquet writer with append‑only chunks, time/size segmentation, per‑run config snapshot
 - Excel export end‑to‑end, including AlarmEvents (JSONL) and Statistics snapshots tabs; metadata sheet
 - Channel Manager: optional AlarmSummary channels (deferred); global banner and alarm drawer (deferred)
-- NI DAQ: fast AI path with 10×R sampling and IIR Butterworth decimation
+- NI DAQ: real read path hardening (fast AI 10×R average to R; AI temperature at R; DI on‑demand at R; explicit task teardown); UI channel picker (later)
 - LoadBank real control path (model map → reads/writes)
 
 ### To‑do (detailed)

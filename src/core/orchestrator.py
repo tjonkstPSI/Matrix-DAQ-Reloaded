@@ -150,6 +150,7 @@ class Orchestrator:
             cycle = self.plugins.get("Cycle")
             stats = self.plugins.get("Statistics")
             vaisala = self.plugins.get("Vaisala")
+            nidaq = self.plugins.get("NI_DAQ")
             if can:
                 can.configure(); can.validate(); can.start()
             if ccp:
@@ -160,6 +161,8 @@ class Orchestrator:
                 stats.configure(); stats.validate(); stats.start()
             if vaisala:
                 vaisala.configure(); vaisala.validate(); vaisala.start()
+            if nidaq:
+                nidaq.configure(); nidaq.validate(); nidaq.start()
             if cycle:
                 cycle.configure(); cycle.validate(); cycle.start()
             prev_complete = getattr(cycle, "is_complete")() if cycle else False
@@ -191,6 +194,9 @@ class Orchestrator:
                     units = {}
                     vals.update(getattr(modbus, "simulate_step")())
                     units.update(getattr(modbus, "units")())
+                    if nidaq:
+                        vals.update(getattr(nidaq, "simulate_step")())
+                        units.update(getattr(nidaq, "units")())
                     if can:
                         vals.update(getattr(can, "simulate_step")())
                         units.update(getattr(can, "units")())
@@ -280,6 +286,9 @@ class Orchestrator:
                     units = {}
                     vals.update(getattr(modbus, "simulate_step")())
                     units.update(getattr(modbus, "units")())
+                    if nidaq:
+                        vals.update(getattr(nidaq, "simulate_step")())
+                        units.update(getattr(nidaq, "units")())
                     if can:
                         vals.update(getattr(can, "simulate_step")())
                         units.update(getattr(can, "units")())
@@ -366,7 +375,7 @@ class Orchestrator:
                 modbus.stop()
             except Exception:
                 pass
-            for pid in ("CAN", "CCP", "LoadBank"):
+            for pid in ("CAN", "CCP", "LoadBank", "NI_DAQ", "Vaisala", "Statistics", "Modbus", "Cycle"):
                 try:
                     p = self.plugins.get(pid)
                     if p:
