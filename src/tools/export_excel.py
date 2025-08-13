@@ -128,10 +128,69 @@ def write_metadata_sheet(writer, run_meta: Dict[str, object], data_files: List[P
     rows.append(("plugins", ", ".join(run_meta.get("plugins", [])) if isinstance(run_meta.get("plugins"), list) else run_meta.get("plugins", "")))
     rows.append(("data_files", ", ".join([f.name for f in data_files])))
     rows.append(("total_rows", total_rows))
-    if units_sample:
-        rows.append(("units_sample", json.dumps(dict(list(units_sample.items())[:16]))))
     df = pd.DataFrame(rows, columns=["key", "value"])
     df.to_excel(writer, sheet_name="Metadata", index=False)
+    # Write units matrix below metadata as two columns: channel, unit
+    if units_sample:
+        items = list(units_sample.items())
+        df_units = pd.DataFrame(items, columns=["channel", "unit"])
+        # place with a gap of 2 rows after the first table
+        startrow = len(rows) + 2
+        df_units.to_excel(writer, sheet_name="Metadata", index=False, startrow=startrow)
+
+
+def _autosize_and_format_numeric(writer, sheet_name: str, df_columns: List[str], engine: str) -> None:
+    try:
+        import numpy as _np  # type: ignore
+    except Exception:
+        _np = None
+    try:
+        ws = writer.sheets.get(sheet_name)
+    except Exception:
+        ws = None
+    if ws is None:
+        return
+    # Determine approximate widths from header
+    col_widths = {i: len(str(col)) + 2 for i, col in enumerate(df_columns)}
+    # Best-effort expansion: we cannot easily read back all cells without extra cost; headers-only sizing is acceptable
+    # Apply widths and numeric formats
+    try:
+        if engine == "openpyxl":
+            from openpyxl.utils import get_column_letter  # type: ignore
+            from openpyxl.styles import numbers  # type: ignore
+            max_row = getattr(ws, 'max_row', 0)
+            for i, col in enumerate(df_columns, start=1):
+                letter = get_column_letter(i)
+                try:
+                    ws.column_dimensions[letter].width = max(col_widths.get(i-1, 10), 10)
+                except Exception:
+                    pass
+                # Apply 2-decimal display to numeric columns (skip first two time columns)
+                if i > 2:
+                    try:
+                        for r in range(2, max_row + 1):
+                            cell = ws.cell(row=r, column=i)
+                            # Only set if value is number
+                            if isinstance(cell.value, (int, float)):
+                                cell.number_format = '0.00'
+                    except Exception:
+                        pass
+        else:
+            # xlsxwriter
+            try:
+                wb = writer.book
+                numfmt = wb.add_format({'num_format': '0.00'})
+            except Exception:
+                numfmt = None
+            for i, col in enumerate(df_columns):
+                width = max(col_widths.get(i, 10), 10)
+                fmt = numfmt if (i > 1 and numfmt is not None) else None
+                try:
+                    ws.set_column(i, i, width, fmt)
+                except Exception:
+                    pass
+    except Exception:
+        pass
 
 
 def load_units_merged(files: List[Path]) -> Dict[str, str]:
@@ -220,6 +279,11 @@ def export_excel(run_dir: Path, engine: str = "openpyxl", rows_per_file: int = E
                 if frames_list:
                     df = pd.concat(frames_list, ignore_index=True)
                     df.to_excel(writer, sheet_name="Data", index=False)
+                    # Autosize and apply numeric formats (2 decimals) on Data sheet
+                    try:
+                        _autosize_and_format_numeric(writer, "Data", list(df.columns), engine)
+                    except Exception:
+                        pass
                 write_metadata_sheet(writer, run_meta, [f], total_rows, units)
                 ae_df = read_jsonl(run_dir / "alarm_events.jsonl")
                 if ae_df is not None:

@@ -16,6 +16,7 @@ from ..plugins.loadbank import LoadBankPlugin
 from .ipc.bus import IPCBus
 from ..config.loader import load_yaml_config
 from ..plugins.cycle import CyclePlugin
+from ..plugins.calculated import CalculatedChannelsPlugin
 from .alarms.engine import AlarmEngine
 from .storage.alarm_events import AlarmEventsSink
 from ..plugins.statistics import StatisticsPlugin
@@ -166,6 +167,7 @@ class Orchestrator:
             stats = self.plugins.get("Statistics") if self._plugin_enabled.get("Statistics", True) else None
             vaisala = self.plugins.get("Vaisala") if self._plugin_enabled.get("Vaisala", True) else None
             nidaq = self.plugins.get("NI_DAQ") if self._plugin_enabled.get("NI_DAQ", True) else None
+            calc = self.plugins.get("Calculated_Channels") if self._plugin_enabled.get("Calculated_Channels", True) else None
             if can:
                 can.configure(); can.validate(); can.start()
             if ccp:
@@ -180,6 +182,9 @@ class Orchestrator:
                 nidaq.configure(); nidaq.validate(); nidaq.start()
             if cycle:
                 cycle.configure(); cycle.validate(); cycle.start()
+            calc = self.plugins.get("Calculated_Channels") if self._plugin_enabled.get("Calculated_Channels", True) else None
+            if calc:
+                calc.configure(); calc.validate(); calc.start()
             prev_complete = getattr(cycle, "is_complete")() if cycle else False
             run_mode = str(self.core_cfg.get("run_mode", "demo")).lower()
             demo_ticks = int(self.core_cfg.get("demo_ticks", 50))
@@ -234,6 +239,15 @@ class Orchestrator:
                         units.update(getattr(vaisala, "units")())
                     # Capture current timestamp for this tick
                     now_ts = time.time()
+                    # Run calculated channels using merged source values before alarms/stats
+                    if calc is not None:
+                        try:
+                            calc_vals = getattr(calc, "simulate_step")(vals)
+                            vals.update(calc_vals)
+                            # Units from plugin
+                            units.update(getattr(calc, "units")())
+                        except Exception:
+                            pass
                     # Update statistics plugin and handle outputs (persist only)
                     if stats:
                         getattr(stats, "update")(vals, units, now_ts)
@@ -341,6 +355,14 @@ class Orchestrator:
                         units.update(getattr(vaisala, "units")())
                     # Capture current timestamp for this tick
                     now_ts = time.time()
+                    # Run calculated channels before alarms/stats
+                    if calc is not None:
+                        try:
+                            calc_vals = getattr(calc, "simulate_step")(vals)
+                            vals.update(calc_vals)
+                            units.update(getattr(calc, "units")())
+                        except Exception:
+                            pass
                     # Update statistics plugin and handle outputs (persist only)
                     if stats:
                         getattr(stats, "update")(vals, units, now_ts)
@@ -424,7 +446,7 @@ class Orchestrator:
                 modbus.stop()
             except Exception:
                 pass
-            for pid in ("CAN", "CCP", "LoadBank", "NI_DAQ", "Vaisala", "Statistics", "Modbus", "Cycle"):
+            for pid in ("CAN", "CCP", "LoadBank", "NI_DAQ", "Vaisala", "Statistics", "Calculated_Channels", "Modbus", "Cycle"):
                 try:
                     p = self.plugins.get(pid)
                     if p and self._plugin_enabled.get(pid, True):
@@ -511,7 +533,7 @@ class Orchestrator:
             PluginSpec(id="NI_DAQ", cls=NiDAQPlugin, config_name="ni_daq.yaml"),
             PluginSpec(id="CAN", cls=CANPlugin, config_name="can.yaml"),
             PluginSpec(id="CCP", cls=CCPPlugin, config_name="ccp.yaml"),
-            PluginSpec(id="Calculated_Channels", cls=_Stub, config_name="calculated_channels.yaml"),
+            PluginSpec(id="Calculated_Channels", cls=CalculatedChannelsPlugin, config_name="calculated_channels.yaml"),
             PluginSpec(id="Cycle", cls=CyclePlugin, config_name="cycle.yaml"),
             PluginSpec(id="LoadBank", cls=LoadBankPlugin, config_name="loadbank.yaml"),
             PluginSpec(id="Modbus", cls=ModbusPlugin, config_name="modbus.yaml"),

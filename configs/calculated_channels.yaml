@@ -1,11 +1,18 @@
 # Author: T. Onkst | Date: 08122025
 enabled: true
-
-recording_rate_hz: 10
-
-channels: []
-
-dependencies:
-  allow_calc_as_inputs: true
+channels:
+  - alias: "mFL_Ccsbby"
+    expr: "x*10"
+    symbols:
+      x: "qFL_Ccsbby"
+    unit: "SCFM"
+    enabled: true
+  - alias: "mPR_Amb_psi"
+    expr: "k * kpa"
+    symbols:
+      k: 0.1450377
+      kpa: "qPR_Amb"
+    unit: "psi"
+    enabled: true
 
 
