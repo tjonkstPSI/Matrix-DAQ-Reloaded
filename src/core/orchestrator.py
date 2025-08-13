@@ -21,6 +21,7 @@ from .storage.alarm_events import AlarmEventsSink
 from ..plugins.statistics import StatisticsPlugin
 from .storage.stats_snapshots import StatsSnapshotsSink
 from ..plugins.vaisala import VaisalaPlugin
+from .storage.parquet_writer import ParquetWriter, ParquetWriterSettings
 
 
 @dataclass
@@ -43,6 +44,8 @@ class Orchestrator:
         self._alarm_tick_logged: bool = False
         self._events_sink: AlarmEventsSink | None = None
         self._stats_sink: StatsSnapshotsSink | None = None
+        self._parquet: ParquetWriter | None = None
+        self._run_dir: Path | None = None
 
     def start(self) -> None:
         # Placeholder: load configs, initialize IPC bus, register simulated plugins
@@ -120,13 +123,32 @@ class Orchestrator:
         # Prepare run directory for event logging (simple timestamped folder)
         try:
             import time as _t
+            import yaml as _yaml  # type: ignore
             run_base = _t.strftime("%m%d%y_%H%M%S")
             run_dir = (self.configs_dir.parent / f"runs/{run_base}").resolve()
+            self._run_dir = run_dir
             self._events_sink = AlarmEventsSink(run_dir)
             self._stats_sink = StatsSnapshotsSink(run_dir)
-            print(f"[INFO] AlarmEvents sink: {str(run_dir)}")
+            # Initialize Parquet writer and snapshot configs
+            self._parquet = ParquetWriter(run_dir, ParquetWriterSettings())
+            try:
+                self._parquet.snapshot_configs(self.configs_dir)
+            except Exception:
+                pass
+            # Minimal run-level metadata
+            meta = {
+                "run_id": run_base,
+                "run_start_iso8601": _t.strftime("%Y-%m-%dT%H:%M:%S", _t.localtime()),
+                "recording_rate_hz": float(self.channel_cfg.get("recording_rate_hz", self.settings.recording_rate_hz)),
+                "plugins": sorted(list(self.plugins.keys())),
+            }
+            try:
+                (run_dir / "metadata.yaml").write_text(_yaml.safe_dump(meta, sort_keys=False), encoding="utf-8")
+            except Exception:
+                pass
+            print(f"[INFO] Run folder: {str(run_dir)}")
         except Exception as e:
-            print(f"[WARN] AlarmEvents sink initialization failed: {e}")
+            print(f"[WARN] Run folder initialization failed: {e}")
 
     def run(self) -> None:
         # Simple lifecycle exercise: configure/validate/arm/start/stop simulated Modbus
@@ -278,6 +300,12 @@ class Orchestrator:
                         "alarm_events": events,
                     }).encode("utf-8")
                     self.bus.publish_telemetry(payload)
+                    # Append to Parquet data stream
+                    try:
+                        if self._parquet is not None:
+                            self._parquet.append(now_ts, vals, units)
+                    except Exception:
+                        pass
                     time.sleep(interval)
                     i += 1
             else:
@@ -367,6 +395,12 @@ class Orchestrator:
                         "alarm_events": events,
                     }).encode("utf-8")
                     self.bus.publish_telemetry(payload)
+                    # Append to Parquet data stream
+                    try:
+                        if self._parquet is not None:
+                            self._parquet.append(now_ts, vals, units)
+                    except Exception:
+                        pass
                     time.sleep(interval)
                     i += 1
         finally:
@@ -387,6 +421,12 @@ class Orchestrator:
             try:
                 if self._events_sink is not None:
                     self._events_sink.finalize()
+            except Exception:
+                pass
+            # Finalize Parquet writer
+            try:
+                if self._parquet is not None:
+                    self._parquet.finalize()
             except Exception:
                 pass
 
