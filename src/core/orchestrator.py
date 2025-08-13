@@ -16,6 +16,8 @@ from ..plugins.loadbank import LoadBankPlugin
 from .ipc.bus import IPCBus
 from ..config.loader import load_yaml_config
 from ..plugins.cycle import CyclePlugin
+from .alarms.engine import AlarmEngine
+from .storage.alarm_events import AlarmEventsSink
 
 
 @dataclass
@@ -33,6 +35,10 @@ class Orchestrator:
         self.plugins: Dict[str, BasePlugin] = {}
         self.bus = IPCBus()
         self.core_cfg: Dict[str, Any] = {}
+        self.channel_cfg: Dict[str, Any] = {}
+        self.alarm_engine: AlarmEngine | None = None
+        self._alarm_tick_logged: bool = False
+        self._events_sink: AlarmEventsSink | None = None
 
     def start(self) -> None:
         # Placeholder: load configs, initialize IPC bus, register simulated plugins
@@ -41,6 +47,22 @@ class Orchestrator:
         # Load core config
         core_cfg_path = (self.configs_dir / "core.yaml").resolve()
         self.core_cfg = load_yaml_config(core_cfg_path)
+        # Load channel manager config (optional)
+        ch_cfg_path = (self.configs_dir / "channel_manager.yaml").resolve()
+        self.channel_cfg = load_yaml_config(ch_cfg_path)
+        if self.channel_cfg:
+            try:
+                self.alarm_engine = AlarmEngine(self.channel_cfg)
+                chan_items = (self.channel_cfg.get("channels") or [])
+                chan_count = len(chan_items)
+                print(f"[INFO] AlarmEngine initialized: {chan_count} channel(s)")
+                if chan_count:
+                    aliases = [str(it.get("alias")) for it in chan_items if isinstance(it, dict) and it.get("alias")]
+                    print("[INFO] AlarmEngine channels:", ", ".join(aliases))
+            except Exception as e:
+                print(f"[WARN] Failed to initialize AlarmEngine: {e}")
+        else:
+            print("[INFO] Channel Manager config not found or empty; alarms disabled")
         # Load configs for each plugin and run basic validation
         all_ok = True
         for pid, plugin in self.plugins.items():
@@ -91,6 +113,15 @@ class Orchestrator:
             raise
         self.bus.start()
         self._running = True
+        # Prepare run directory for event logging (simple timestamped folder)
+        try:
+            import time as _t
+            run_base = _t.strftime("%m%d%y_%H%M%S")
+            run_dir = (self.configs_dir.parent / f"runs/{run_base}").resolve()
+            self._events_sink = AlarmEventsSink(run_dir)
+            print(f"[INFO] AlarmEvents sink: {str(run_dir)}")
+        except Exception as e:
+            print(f"[WARN] AlarmEvents sink initialization failed: {e}")
 
     def run(self) -> None:
         # Simple lifecycle exercise: configure/validate/arm/start/stop simulated Modbus
@@ -126,6 +157,21 @@ class Orchestrator:
             interval = float(self.core_cfg.get("tick_interval_s", 0.1))
             i = 0
             t0 = time.time()
+            
+            def _format_local_hms(epoch_seconds: float) -> str:
+                """Return local workstation time as HH:MM:SS.fff for an epoch timestamp."""
+                try:
+                    import time as _t
+                    whole = int(epoch_seconds)
+                    frac_ms = int(round((epoch_seconds - whole) * 1000.0))
+                    # Handle rounding to next second
+                    if frac_ms >= 1000:
+                        whole += 1
+                        frac_ms = 0
+                    hhmmss = _t.strftime("%H:%M:%S", _t.localtime(whole))
+                    return f"{hhmmss}.{frac_ms:03d}"
+                except Exception:
+                    return "00:00:00.000"
             if run_mode == "demo":
                 for _ in range(demo_ticks):
                     if not self._running:
@@ -153,7 +199,34 @@ class Orchestrator:
                     elapsed = time.time() - t0
                     vals["Time_Relative_s"] = elapsed
                     units["Time_Relative_s"] = "s"
-                    payload = json.dumps({"ts": time.time(), "values": vals, "units": units}).encode("utf-8")
+                    # Evaluate alarms
+                    states, summary, events = ({}, {"any_warning": False, "any_shutdown": False}, [])
+                    now_ts = time.time()
+                    if self.alarm_engine is not None:
+                        states, summary, events = self.alarm_engine.evaluate(vals, now_ts)
+                        for ev in events:
+                            ev_ts = float(ev.get("ts", now_ts))
+                            ev["ts_hms"] = _format_local_hms(ev_ts)
+                            print(f"[ALARM] {ev['alias']}: {ev['from']} -> {ev['to']} val={ev.get('value')} t={ev['ts_hms']}")
+                        if self._events_sink is not None and events:
+                            try:
+                                self._events_sink.append_many(events)
+                            except Exception:
+                                pass
+                    if self.alarm_engine is not None and not self._alarm_tick_logged:
+                        try:
+                            print(f"[INFO] AlarmEngine tick sample: states={states} summary={summary} events={len(events)}")
+                        except Exception:
+                            pass
+                        self._alarm_tick_logged = True
+                    payload = json.dumps({
+                        "ts": time.time(),
+                        "values": vals,
+                        "units": units,
+                        "states": states,
+                        "alarm_summary": summary,
+                        "alarm_events": events,
+                    }).encode("utf-8")
                     self.bus.publish_telemetry(payload)
                     time.sleep(interval)
                     i += 1
@@ -181,7 +254,34 @@ class Orchestrator:
                     elapsed = time.time() - t0
                     vals["Time_Relative_s"] = elapsed
                     units["Time_Relative_s"] = "s"
-                    payload = json.dumps({"ts": time.time(), "values": vals, "units": units}).encode("utf-8")
+                    # Evaluate alarms
+                    states, summary, events = ({}, {"any_warning": False, "any_shutdown": False}, [])
+                    now_ts = time.time()
+                    if self.alarm_engine is not None:
+                        states, summary, events = self.alarm_engine.evaluate(vals, now_ts)
+                        for ev in events:
+                            ev_ts = float(ev.get("ts", now_ts))
+                            ev["ts_hms"] = _format_local_hms(ev_ts)
+                            print(f"[ALARM] {ev['alias']}: {ev['from']} -> {ev['to']} val={ev.get('value')} t={ev['ts_hms']}")
+                        if self._events_sink is not None and events:
+                            try:
+                                self._events_sink.append_many(events)
+                            except Exception:
+                                pass
+                    if self.alarm_engine is not None and not self._alarm_tick_logged:
+                        try:
+                            print(f"[INFO] AlarmEngine tick sample: states={states} summary={summary} events={len(events)}")
+                        except Exception:
+                            pass
+                        self._alarm_tick_logged = True
+                    payload = json.dumps({
+                        "ts": time.time(),
+                        "values": vals,
+                        "units": units,
+                        "states": states,
+                        "alarm_summary": summary,
+                        "alarm_events": events,
+                    }).encode("utf-8")
                     self.bus.publish_telemetry(payload)
                     time.sleep(interval)
                     i += 1
@@ -199,6 +299,12 @@ class Orchestrator:
                 except Exception:
                     pass
             self.bus.stop()
+            # Finalize events sink (JSONL only for now)
+            try:
+                if self._events_sink is not None:
+                    self._events_sink.finalize()
+            except Exception:
+                pass
 
     def request_stop(self) -> None:
         self._running = False

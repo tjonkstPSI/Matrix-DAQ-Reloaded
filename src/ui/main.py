@@ -11,6 +11,7 @@ import sys
 
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget, QTableWidget, QTableWidgetItem
+from PySide6.QtGui import QColor, QBrush
 
 from ..core.ipc.bus import create_ui_subscriber
 
@@ -46,15 +47,31 @@ def main() -> int:
                 data = json.loads(payload.decode("utf-8"))
                 values = data.get("values", {})
                 units = data.get("units", {})
+                states = data.get("states", {})
                 # Mark last message time for connection status
                 import time as _t
                 last_msg_time["t"] = _t.time()
                 # Update table
                 table.setRowCount(len(values))
                 for row, (alias, val) in enumerate(values.items()):
-                    table.setItem(row, 0, QTableWidgetItem(str(alias)))
-                    table.setItem(row, 1, QTableWidgetItem(f"{val:.2f}"))
-                    table.setItem(row, 2, QTableWidgetItem(str(units.get(alias, ""))))
+                    alias_str = str(alias)
+                    state = str(states.get(alias_str, "OK"))
+                    item_alias = QTableWidgetItem(alias_str)
+                    item_val = QTableWidgetItem(f"{val:.2f}")
+                    item_unit = QTableWidgetItem(str(units.get(alias_str, "")))
+                    # Color rows based on state
+                    if state == "WARN":
+                        brush = QBrush(QColor("#fff8b3"))  # pale yellow
+                    elif state == "SHUT":
+                        brush = QBrush(QColor("#ffb3b3"))  # pale red
+                    else:
+                        brush = QBrush()
+                    item_alias.setBackground(brush)
+                    item_val.setBackground(brush)
+                    item_unit.setBackground(brush)
+                    table.setItem(row, 0, item_alias)
+                    table.setItem(row, 1, item_val)
+                    table.setItem(row, 2, item_unit)
         except Exception:
             # No message available or other non-fatal issue
             pass

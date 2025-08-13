@@ -1,15 +1,30 @@
 # Author: T. Onkst | Date: 08122025
 
+# Minimal example thresholds to smoke UI coloring
+channels:
+  - alias: "Room Temp"
+    high_warning: 24.4
+    high_shutdown: 28.5
+    enter_delay_s: 0.0
+    clear_delay_s: 1.0
+  - alias: "LB Measured Load"
+    high_warning: 30
+    high_shutdown: 90
+    enter_delay_s: 3.0
+    clear_delay_s: 0.0
+
+# Author: T. Onkst | Date: 08122025
+
 recording_rate_hz: 10
 
-channels: []
-
 aggregation:
-  emit_summary_channels: true
+  emit_summary_channels: false
 
 output:
   alarm_events:
     enabled: true
-    include_in_excel: true
+    format: jsonl
+    file_name: alarm_events.jsonl
+    fields: ["ts_hms", "alias", "from", "to", "value"]
 
 

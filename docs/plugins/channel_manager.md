@@ -21,9 +21,10 @@ Configure the recording rate R (≤ 100 Hz per run) and manage per‑channel ala
 - Evaluation at the recording rate R
 - Warning actions: UI color yellow + log with timestamp
 - Shutdown actions: set UI color red + log; downstream E‑stop actuation remains via a separate calculated logic channel, but Channel Manager can expose an aggregated `shutdown_request` boolean (see below)
-- Latching:
-  - trigger_after_s: condition must be continuously true for this duration before setting the state
-  - unlatch_after_s: condition must be continuously false for this duration before clearing the state
+- Debounce (explicit semantics):
+  - `enter_delay_s`: condition must be continuously non‑OK for this duration before entering WARN/SHUT
+  - `clear_delay_s`: condition must be continuously OK for this duration before clearing back to OK
+  - Backward compatibility: legacy keys `latch_on_s` and `unlatch_after_s` are honored as fallbacks
 - Precedence: Shutdown supersedes Warning for display/aggregation
 
 ### Aggregation Outputs (optional)
@@ -42,8 +43,8 @@ channels:
     units: "kPa"                    # informational; derived from source
     record_enabled: true
     alarms:
-      high_warning:  { value: 90,  trigger_after_s: 5,  unlatch_after_s: 10, enabled: true }
-      high_shutdown: { value: 95,  trigger_after_s: 1,  unlatch_after_s: 5,  enabled: true }
+      high_warning:  { value: 90,  enter_delay_s: 5,  clear_delay_s: 10, enabled: true }
+      high_shutdown: { value: 95,  enter_delay_s: 1,  clear_delay_s: 5,  enabled: true }
       low_warning:   null
       low_shutdown:  null
 
@@ -51,8 +52,8 @@ channels:
     units: "C"
     record_enabled: true
     alarms:
-      high_warning:  { value: 110, trigger_after_s: 5,  unlatch_after_s: 10, enabled: true }
-      high_shutdown: { value: 120, trigger_after_s: 1,  unlatch_after_s: 5,  enabled: true }
+      high_warning:  { value: 110, enter_delay_s: 5,  clear_delay_s: 10, enabled: true }
+      high_shutdown: { value: 120, enter_delay_s: 1,  clear_delay_s: 5,  enabled: true }
 
 aggregation:
   emit_summary_channels: true       # expose AlarmSummary booleans
@@ -86,7 +87,7 @@ output:
 - R is stored in run metadata and drives acquisition decimation
 - Alarm configurations are included in the config snapshot
  - Optional AlarmSummary booleans can be recorded as channels
- - Alarm events log: each activation and clear is recorded with timestamp(s), channel alias, limit type (high/low, warning/shutdown), value at event, and latch timing info. This event table is saved with run artifacts and included in Excel export as a separate worksheet (e.g., `AlarmEvents`).
+  - Alarm events log: each activation and clear is recorded with epoch time, local time (HH:MM:SS.fff), channel alias, transition (from→to), and value at event. Events are stored during the run as JSON Lines and exported on stop to CSV and Excel (worksheet `AlarmEvents`).
 
 ### Error Conditions (Examples)
 - Invalid thresholds (e.g., high < low) → validation error

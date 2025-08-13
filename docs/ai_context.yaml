@@ -109,6 +109,9 @@ outputs:
   - id: "OUT-LOGS"
     type: "Run logs"
     schema: "Structured text with rotation; per-run directory"
+  - id: "OUT-ALARM-EVENTS"
+    type: "Alarm events (JSONL)"
+    schema: "Per-run JSON Lines file alarm_events.jsonl with fields: ts_hms, alias, from, to, value"
   - id: "OUT-RUN-FOLDER"
     type: "Run artifact bundle"
     schema: "Folder named after base; contains data, metadata, logs, and config snapshots for reproducibility"
@@ -274,20 +277,25 @@ filenaming:
   excel_split_suffix: "Apply .1, .2, … only if row-limit split"
   statistics_postfix: "_Statistics"
 
-alarms:
-  units: "Derived from post-scaling units per channel"
-  types: ["high_warning", "low_warning", "high_shutdown", "low_shutdown"]
-  latching:
-    trigger_after_s: "<per-limit configurable>"
-    unlatch_after_s: "<per-limit configurable>"
-  actions:
-    warning:
-      - "UI_indicator_yellow"
-      - "log_event"
-    shutdown:
-      - "trigger_estop_circuit (via calculated channel logic)"
-      - "UI_indicator_red"
-      - "log_event"
+  alarms:
+    units: "Derived from post-scaling units per channel"
+    types: ["high_warning", "low_warning", "high_shutdown", "low_shutdown"]
+    debounce:
+      enter_delay_s: "<per-limit configurable; time non-OK must persist to enter WARN/SHUT>"
+      clear_delay_s: "<per-limit configurable; time OK must persist to clear back to OK>"
+      legacy_keys_supported: ["latch_on_s", "unlatch_after_s"]
+    actions:
+      warning:
+        - "UI_indicator_yellow"
+        - "log_event"
+      shutdown:
+        - "trigger_estop_circuit (via calculated channel logic)"
+        - "UI_indicator_red"
+        - "log_event"
+    logging:
+      format: "jsonl"
+      file_name: "alarm_events.jsonl"
+      fields: ["ts_hms", "alias", "from", "to", "value"]
 
 metadata:
   lock_test_required_fields:
