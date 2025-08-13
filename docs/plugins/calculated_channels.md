@@ -1,3 +1,61 @@
+<!-- Author: T. Onkst | Date: 08132025 -->
+
+## Calculated Channels Plugin
+
+### Purpose
+Define new channels computed from existing telemetry using safe expressions. Allows user-friendly simple symbols in expressions that map to full source aliases, making setup concise while recorded outputs use full alias names.
+
+### Configuration (YAML)
+File: `configs/calculated_channels.yaml`
+
+```yaml
+enabled: true
+
+channels:
+  - alias: "tCoolantDelta"
+    expr: "in - out"
+    symbols:
+      in: "tCoolantIn"
+      out: "tCoolantOut"
+    unit: "C"
+    enabled: true
+
+  - alias: "Oil Pressure_psi"
+    expr: "k * kpa"
+    symbols:
+      k: 0.1450377
+      kpa: "Oil Pressure"
+    unit: "psi"
+```
+
+### Semantics
+- Evaluated at the recording rate R after source plugins update, before alarms/statistics/recording.
+- Evaluation order: top-to-bottom in the `channels` list. Later calculations may reference earlier ones by mapping a symbol to the prior output alias.
+- Symbol binding:
+  - If a symbol maps to a number, it is used as a constant.
+  - If a symbol maps to a string, it is resolved from current telemetry values (or an earlier calculated output).
+- Units are optional per calculation and used in UI/export.
+
+### Expression Engine
+- Safe AST evaluator (no imports/I/O). Allowed:
+  - Arithmetic: +, -, *, /, %, **
+  - Unary +/-, parentheses
+  - Comparisons: >, >=, <, <=, ==, != (return 1.0/0.0)
+  - Boolean ops: and/or (return 1.0/0.0)
+  - If-else: `a if cond else b`
+  - Functions: abs, min, max, pow, round, sin, cos, tan, exp, log, sqrt
+- Disallowed: attribute access, indexing/subscript, function definitions, imports, I/O.
+- On evaluation error or missing symbol value, outputs NaN to keep schema stable.
+
+### Validation Rules
+- Each item requires `alias`, `expr`, and `symbols` (mapping).
+- No duplicate output aliases.
+- Optional `enabled` per item (default true).
+
+### Outputs
+- Calculated values are merged into the live telemetry `values` dict under the configured `alias`.
+- Units merged into the `units` map.
+
 <!-- Author: T. Onkst | Date: 08122025 -->
 
 ## Calculated Channels Plugin Specification

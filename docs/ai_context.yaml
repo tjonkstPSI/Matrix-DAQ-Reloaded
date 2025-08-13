@@ -46,7 +46,7 @@ plugins:
   - id: "CCP"
     description: "CCP over CAN (read-only): import A2L, configure bus/session, seed/key DLL unlock; select measurements (use A2L names) with optional global naming prefix"
   - id: "Calculated_Channels"
-    description: "Restricted Python expressions evaluated at R; rolling functions, boolean latching, dependency ordering"
+    description: "Calculated channels evaluated at R using safe expressions. Supports user-defined simple symbols mapped to full source aliases to simplify expressions; evaluated in listed order; outputs recorded under full aliases."
   - id: "Cycle"
     description: "Load bank control from CSV (Time kW) step schedule (no interpolation), pause/stop/restart/skip, looping; drives LoadBank setpoint; end-of-cycle stops issuing commands (operator control)"
   - id: "LoadBank"
@@ -105,7 +105,7 @@ outputs:
     schema: "Recording grid at R; slow sources aligned to R; includes Time_Relative_s (s) from Core; statistics outputs separate"
   - id: "OUT-EXCEL"
     type: "Excel export"
-    schema: "Sheets: Metadata, Data; includes Time_Relative_s and Time_Absolute_iso8601; multi-file split with .1, .2 when rows exceed Excel limit"
+    schema: "Per-Parquet workbook(s) with sheets: Metadata (includes units matrix), Data (autosize, 2-decimal display), AlarmEvents, StatsSnapshots; split a single file into .1, .2 if exceeding Excel row limit"
   - id: "OUT-LOGS"
     type: "Run logs"
     schema: "Structured text with rotation; per-run directory"
@@ -266,9 +266,9 @@ storage:
     recovery: "Recover last committed chunks on restart"
   excel_export:
     enabled: true
-    sheets: ["Metadata", "Data"]
+    sheets: ["Metadata", "Data", "AlarmEvents", "StatsSnapshots"]
     time_columns: ["Time_Relative_s", "Time_Absolute_iso8601"]
-    row_limit_behavior: "Split into .1, .2, … when exceeding Excel row limit (~1,048,576)"
+    row_limit_behavior: "One workbook per Parquet file; split a single file into .1, .2, … when exceeding Excel row limit (~1,048,576)"
     naming_examples:
       no_seg: "MMDDYY_HHMMSS_EngineType_TestType.xlsx"
       seg2_split: "MMDDYY_HHMMSS_EngineType_TestType_2.1.xlsx"
@@ -329,12 +329,14 @@ metadata:
       type: "string"
 
 calculated_channels:
-  engine: "Restricted Python expressions (asteval or similar sandbox)"
+  engine: "Safe AST evaluator (no imports/I/O), arithmetic, comparisons, boolean ops, selected math funcs"
+  symbols:
+    description: "Each calculation defines simple symbols that map to full source aliases (or constants); expressions use simple symbols"
   allowed:
-    functions: ["abs", "min", "max", "mean", "stdev", "sqrt", "sin", "cos", "tan", "exp", "log", "if_then_else", "rolling_mean", "rolling_stdev"]
-    libraries: ["math", "numpy (subset)"]
-  disallowed: ["I/O", "filesystem", "network", "imports"]
-  script_channels: "TBD (optional advanced feature)"
+    functions: ["abs", "min", "max", "pow", "round", "sin", "cos", "tan", "exp", "log", "sqrt"]
+  disallowed: ["I/O", "filesystem", "network", "imports", "attribute access", "indexing"]
+  evaluation_order: "top-to-bottom in config; prior calculated aliases may be referenced via symbols"
+  outputs: "Recorded under full output alias names; units optional per item"
   estop_implementation: "Per-cell logic using digital inputs and IF expressions; configurable per site"
 
 statistics_plugin:

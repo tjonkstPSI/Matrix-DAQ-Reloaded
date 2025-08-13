@@ -18,7 +18,7 @@ Deliver a Windows desktop app that streams, visualizes, and records engine test 
 - Month 1–2
   - NI DAQ: fast AI path with 10×R acquisition and 4th‑order IIR Butterworth decimation
   - Channel Manager: evaluate per‑channel alarms; AlarmSummary booleans; AlarmEvents log; row coloring in UI table
-  - Excel exporter: Metadata/Data, AlarmEvents, and per‑stat tabs; workbook split policy confirmed (DONE: post‑run tool)
+  - Excel exporter: Metadata/Data, AlarmEvents, and per‑stat tabs; workbook split policy confirmed (DONE: post‑run tool — per‑Parquet workbooks; autosize and 2‑decimal display)
   - Continuous core run mode + graceful shutdown; basic run lifecycle logs (DONE)
 
 - Month 2–3
@@ -62,10 +62,13 @@ Deliver a Windows desktop app that streams, visualizes, and records engine test 
 - Vaisala (simulation): Ambient Temp/RH/Pressure channels with configurable IP/model placeholders and calibration offsets; wired into telemetry
 - Storage: Parquet writer with 1 s chunked append during run; time/size segmentation; coalesce on finalize to single file per segment; units metadata embedded; config snapshotting to `config_snapshot/`
 - Tools: `inspect_parquet` (validate Parquet outputs) and `export_excel` (Metadata, Data, AlarmEvents, StatsSnapshots; split policy)
+- UI: Start/Stop Recording toggle; Export Workbook control disabled while recording; telemetry flag `recording` drives UI state
+- Plugin enable/disable: all except `Channel_Manager` and `EngineTest`; Modbus optional; Calculated Channels implemented with simple symbol mapping
 
 ### In progress / next up
-- Recording pipeline: Parquet writer coalescing polish; orchestrator-initiated export option and UI control
-  - Excel export wiring from UI (current tool is post‑run CLI)
+- NI DAQ real path hardening (fast AI, DI on-demand, errors/retries, teardown)
+- Excel export per-stat tabs (from StatsSnapshots), formatting polish
+- Optional disk space guardrail; config-driven export options
 - Channel Manager: optional AlarmSummary channels (deferred); global banner and alarm drawer (deferred)
 - NI DAQ: real read path hardening (fast AI 10×R average to R; AI temperature at R; DI on‑demand at R; explicit task teardown); UI channel picker (later)
 - LoadBank real control path (model map → reads/writes)
