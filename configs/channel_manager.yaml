@@ -3,14 +3,14 @@
 # Minimal example thresholds to smoke UI coloring
 channels:
   - alias: "Room Temp"
-    high_warning: 24.4
-    high_shutdown: 28.5
+    high_warning: 50
+    high_shutdown: 75
     enter_delay_s: 0.0
-    clear_delay_s: 1.0
+    clear_delay_s: 0.0
   - alias: "LB Measured Load"
-    high_warning: 30
-    high_shutdown: 90
-    enter_delay_s: 3.0
+    high_warning: 150
+    high_shutdown: 200
+    enter_delay_s: 0.0
     clear_delay_s: 0.0
 
 # Author: T. Onkst | Date: 08122025

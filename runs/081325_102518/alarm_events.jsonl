@@ -1,0 +1,9 @@
+{"ts_hms": "10:25:18.840", "alias": "Room Temp", "from": "OK", "to": "WARN", "value": 25.312868930080462}
+{"ts_hms": "10:25:21.989", "alias": "Room Temp", "from": "WARN", "to": "OK", "value": 23.097886967409693}
+{"ts_hms": "10:25:22.706", "alias": "Room Temp", "from": "OK", "to": "WARN", "value": 24.687131069919538}
+{"ts_hms": "10:25:26.055", "alias": "Room Temp", "from": "WARN", "to": "OK", "value": 23.097886967409703}
+{"ts_hms": "10:25:26.768", "alias": "Room Temp", "from": "OK", "to": "WARN", "value": 24.687131069919584}
+{"ts_hms": "10:25:30.100", "alias": "Room Temp", "from": "WARN", "to": "OK", "value": 23.097886967409725}
+{"ts_hms": "10:25:30.821", "alias": "Room Temp", "from": "OK", "to": "WARN", "value": 24.687131069919655}
+{"ts_hms": "10:25:34.171", "alias": "Room Temp", "from": "WARN", "to": "OK", "value": 23.097886967409746}
+{"ts_hms": "10:25:34.887", "alias": "Room Temp", "from": "OK", "to": "WARN", "value": 24.687131069919722}

@@ -10,10 +10,10 @@ from __future__ import annotations
 import sys
 
 from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget, QTableWidget, QTableWidgetItem
+from PySide6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget, QTableWidget, QTableWidgetItem, QPushButton
 from PySide6.QtGui import QColor, QBrush
 
-from ..core.ipc.bus import create_ui_subscriber
+from ..core.ipc.bus import create_ui_subscriber, create_ui_control_push
 
 
 def main() -> int:
@@ -27,11 +27,14 @@ def main() -> int:
     table.setHorizontalHeaderLabels(["Alias", "Value", "Unit"]) 
     layout.addWidget(header)
     layout.addWidget(status)
+    btn_stats = QPushButton("Log Statistics")
+    layout.addWidget(btn_stats)
     layout.addWidget(table)
     window.resize(420, 240)
     window.show()
 
     sub = create_ui_subscriber()
+    ctrl = create_ui_control_push()
 
     last_msg_time = {"t": 0.0}
 
@@ -92,6 +95,18 @@ def main() -> int:
     timer = QTimer()
     timer.timeout.connect(poll)
     timer.start(100)  # 10 Hz UI poll
+
+    def on_log_stats():
+        if ctrl is None:
+            return
+        try:
+            import json
+            msg = json.dumps({"type": "stats_snapshot", "mode": None}).encode("utf-8")
+            ctrl["control_push"].send(msg)
+        except Exception:
+            pass
+
+    btn_stats.clicked.connect(on_log_stats)
     return app.exec()
 
 

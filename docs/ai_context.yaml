@@ -56,7 +56,7 @@ plugins:
   - id: "Statistics"
     description: "Secondary logger of stats (mean, stdev, min, max) at rate R with rolling/fixed windows and optional triggers"
   - id: "Vaisala"
-    description: "Vaisala environmental Modbus TCP: model dropdown with maps, IP config, connection test, polling with calibration offsets"
+    description: "Vaisala environmental sensors (simulation now; Modbus TCP later). Sim emits Ambient Temp, RH, and Pressure with optional calibration offsets; config includes IP and model placeholders."
   - id: "EngineTest"
     description: "Collects run metadata (lock-test fields)"
   - id: "Channel_Manager"
@@ -323,9 +323,19 @@ calculated_channels:
 
 statistics_plugin:
   rate: "Match recording rate R"
-  windows: ["fixed", "rolling"]
-  window_size: "<configurable>"
-  triggers: "Expressions using configured channels"
+  snapshots:
+    window: "seconds or samples; min_samples configurable"
+    manual_logging: "operator button to capture one row"
+    automatic_logging:
+      trigger: "channel comparator threshold"
+      edge: "rising or falling; only logs on configured edge crossing"
+      holdoff_s: "optional re-arm delay"
+    capture_mode: "backward (trailing) or forward (future capture)"
+    notify_on_skip: "operator notification when skipped due to insufficient samples"
+  metrics: ["mean", "stdev", "min", "max", "p2p"]
+  selection:
+    global_defaults: "metrics.selected in statistics.yaml"
+    per_channel_override: "channels[*].stats can override the global list"
   output_naming_postfix: "_Statistics"
   segmentation_and_excel_split: "Same rules as primary data"
 

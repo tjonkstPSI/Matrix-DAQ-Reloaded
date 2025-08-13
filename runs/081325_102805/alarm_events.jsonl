@@ -1,0 +1,12 @@
+{"ts_hms": "10:28:05.998", "alias": "Room Temp", "from": "OK", "to": "WARN", "value": 25.312868930080462}
+{"ts_hms": "10:28:09.136", "alias": "Room Temp", "from": "WARN", "to": "OK", "value": 23.097886967409693}
+{"ts_hms": "10:28:09.851", "alias": "Room Temp", "from": "OK", "to": "WARN", "value": 24.687131069919538}
+{"ts_hms": "10:28:13.183", "alias": "Room Temp", "from": "WARN", "to": "OK", "value": 23.097886967409703}
+{"ts_hms": "10:28:13.901", "alias": "Room Temp", "from": "OK", "to": "WARN", "value": 24.687131069919584}
+{"ts_hms": "10:28:17.247", "alias": "Room Temp", "from": "WARN", "to": "OK", "value": 23.097886967409725}
+{"ts_hms": "10:28:17.971", "alias": "Room Temp", "from": "OK", "to": "WARN", "value": 24.687131069919655}
+{"ts_hms": "10:28:21.319", "alias": "Room Temp", "from": "WARN", "to": "OK", "value": 23.097886967409746}
+{"ts_hms": "10:28:22.043", "alias": "Room Temp", "from": "OK", "to": "WARN", "value": 24.687131069919722}
+{"ts_hms": "10:28:24.185", "alias": "LB Measured Load", "from": "OK", "to": "WARN", "value": 49.97623140989543}
+{"ts_hms": "10:28:25.408", "alias": "Room Temp", "from": "WARN", "to": "OK", "value": 23.097886967409767}
+{"ts_hms": "10:28:26.126", "alias": "Room Temp", "from": "OK", "to": "WARN", "value": 24.687131069919793}

@@ -3,15 +3,15 @@
 ## Statistics Plugin Specification
 
 ### Purpose
-Compute selectable summary statistics (mean, stdev, min, max) for selected channels at the recording rate R (≤ 100 Hz), using fixed or rolling windows. Emission can be automatic (trigger/gated) or manual on-demand via a "Log Statistics" button that records a single sample based on the current window content. Write results to separate Parquet + YAML (and optional Excel) with the `_Statistics` postfix and identical segmentation/split rules as primary data.
+Compute snapshot statistics on demand (manual button) or automatically on a trigger edge. Metrics include mean, stdev, min, max, and peak-to-peak (p2p). A snapshot operates over a configurable window (seconds or samples) and emits one row per fire. Export to storage (Parquet + YAML, optional Excel) will mirror primary data once the recording pipeline is in place.
 
 ### Inputs
 - Source channels: any enabled channels from NI DAQ, CAN/CCP, Modbus, etc.
 - Selectable statistics: per-channel checkboxes for mean, stdev, min, max; include a "Select All" convenience control
-- Window definitions:
-  - rolling: window length in seconds or samples
-  - fixed: emit interval in seconds or samples (resets each interval)
-- Triggers (optional): boolean/gated condition built from existing channels/expressions (for automatic emission)
+- Window definition: snapshot window length in seconds or samples; min_samples to validate a snapshot
+- Capture mode: `backward` (trailing window, immediate) or `forward` (capture next window, delayed)
+ - Metrics selection: global `metrics.selected` with per-channel overrides via `channels[*].stats`
+- Automatic trigger (optional): define channel, comparator (>, >=, <, <=), threshold, and edge (rising/falling). A snapshot is taken only on the configured edge crossing. Re-arms after optional holdoff.
 - Manual logging: UI provides a "Log Statistics" button that emits one line for the selected stats using the current window content
 
 ### Outputs
@@ -26,36 +26,37 @@ Compute selectable summary statistics (mean, stdev, min, max) for selected chann
 File: `configs/statistics.yaml`
 
 ```yaml
-recording_rate_hz: 100                 # matches recording rate R
-
-output:
-  format: wide                         # wide | long
-  enable_excel_export: false
-  excel_per_stat_sheet: true           # when exporting to Excel, create one tab per selected stat
-
-windows:
-  mode: rolling                        # rolling | fixed
-  size:
-    seconds: 5                         # rolling window length; ignored for fixed
+snapshot:
+  window:
+    seconds: 5                         # snapshot window length
     samples: null
-  emit_interval:
-    seconds: null                      # for fixed mode (e.g., every 10 s)
-    samples: null
-  min_samples: 3                       # minimum samples to produce stats
+  # readiness derived from window dimension: if seconds set, require >= seconds; if samples set, require >= samples
+  capture_mode: backward               # backward | forward
+  notify_on_skip: true                 # notify operator when skipped due to insufficient samples
 
-triggers:                              # optional gating (nice-to-have)
-  enabled: false
-  condition: "(IntakeAirTemp < 60)"     # expression over existing channels
-  behavior: emit_only_when_true        # emit_only_when_true | emit_on_rising_edge
-  holdoff_s: 0
+metrics:
+  selected: [mean, stdev, min, max, p2p]
 
 manual_logging:
   enabled: true                        # enables "Log Statistics" button in UI
-  include_timestamp: true              # include current time columns
+
+automatic_logging:
+  enabled: false
+  trigger:
+    channel: "Room Temp"
+    comparator: ">"                    # one of: >, >=, <, <=
+    threshold: 25
+    edge: rising                        # rising | falling
+    holdoff_s: 0
+
+output:
+  format: wide                         # wide | long (export deferred until recording pipeline ready)
+  enable_excel_export: false
+  excel_per_stat_sheet: true
 
 channels:
   - alias: "Oil Pressure"              # source channel alias
-    stats: [mean, stdev, min, max]
+    stats: [mean, stdev, min, max, p2p] # override; if omitted uses metrics.selected
     enabled: true
   - alias: "RPM"
     stats: [mean]
@@ -64,23 +65,19 @@ channels:
 
 #### Validation Rules
 - `recording_rate_hz` must match session R
-- `windows.mode` in {rolling, fixed}
-- rolling: `size.seconds|samples` must specify at least one; fixed: `emit_interval.seconds|samples` required
+- Snapshot window requires at least one of `seconds` or `samples`
 - `min_samples` ≥ 1
 - All `channels[*].alias` must exist and be numeric
-- `stats` subset of {mean, stdev, min, max}
-- Trigger expression (when enabled) must parse and reference existing channels
+- `stats` subset of {mean, stdev, min, max, p2p}
+- Automatic trigger (when enabled): must reference an existing numeric channel; comparator, threshold, and edge valid
  - If `manual_logging.enabled`, UI exposes action; when invoked with fewer than `min_samples`, emit NaN/skip per format rules
 
 ### Execution Model
-- Runs at R; maintains per-channel state for rolling or fixed intervals
-- rolling: update window each tick; emit each tick
-- fixed: accumulate until interval boundary, then emit and reset
-- When `min_samples` not met, output NaN (or skip in long format)
-- Trigger gating:
-  - emit_only_when_true: suppress emission when condition false
-  - emit_on_rising_edge: emit one sample at rising edge; optional holdoff
- - Manual logging: when the user presses "Log Statistics", compute the selected stats from the current window content and emit exactly one row immediately (does not reset rolling/fixed state); respects `min_samples` policy
+- Runs at R; maintains a rolling window buffer per configured source channel.
+- Snapshot emission:
+  - Manual: when the user presses "Log Statistics", compute the selected stats over the current window and emit exactly one row.
+  - Automatic: armed trigger watches for configured edge; on crossing, compute and emit one row; then re-arm after optional holdoff.
+- When `min_samples` not met, output NaN (or skip in long format).
 
 ### UI Flow
 - Right-click Statistics tile → Configure:
@@ -92,9 +89,9 @@ channels:
 - Runtime: shows current window size/progress, last emitted timestamp, quick preview values, and a "Log Statistics" button for manual one-shot emission
 
 ### Outputs and Metadata
-- Sidecar YAML includes: window mode/size, min_samples, trigger config, channel list and metrics
-- Files follow same segmentation and export rules as primary data, using `_Statistics` postfix
- - Excel export produces a `Metadata` sheet and one sheet per selected statistic (tabs named by the metric)
+- Sidecar YAML includes: snapshot window, min_samples, trigger config, channel list and metrics
+- Files will follow same segmentation and export rules as primary data, using `_Statistics` postfix (when recording pipeline is integrated)
+ - Excel export will produce a `Metadata` sheet and one sheet per selected statistic (tabs named by the metric)
 
 ### Error Conditions (Examples)
 - Non-numeric channel selected → validation error

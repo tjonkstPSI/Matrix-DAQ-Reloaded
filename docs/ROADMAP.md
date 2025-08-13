@@ -55,11 +55,15 @@ Deliver a Windows desktop app that streams, visualizes, and records engine test 
 - Core run mode toggle (demo/continuous) and graceful Ctrl+C stop
 - Cycle plugin: CSV (Time, kW) schedule → drives LoadBank setpoint; end‑of‑cycle stops issuing commands; edge‑aware final step
 - UI status (Connected/Disconnected) and Core‑sourced `Time_Relative_s` channel displayed as a row
+- Channel Manager: per‑channel alarms with explicit debounce (enter_delay_s, clear_delay_s); UI row coloring (yellow/red); AlarmEvents persisted to per‑run JSONL with local timestamps (ts_hms)
+- Statistics: snapshot‑based (manual button + optional rising/falling edge trigger), configurable window (seconds or samples), backward/forward capture, metrics selection including p2p; snapshots persisted to per‑run JSONL; UI control wiring in place
+- IPC control path for UI → Core (manual statistics snapshot)
+- Vaisala (simulation): Ambient Temp/RH/Pressure channels with configurable IP/model placeholders and calibration offsets; wired into telemetry
 
 ### In progress / next up
-- UI: table row coloring for alarms; Source column deferred by policy
-- Excel export end‑to‑end, including AlarmEvents and per‑stat tabs
-- Channel Manager: alarm evaluation loop; AlarmSummary outputs
+- Recording pipeline: Parquet writer with append‑only chunks, time/size segmentation, per‑run config snapshot
+- Excel export end‑to‑end, including AlarmEvents (JSONL) and Statistics snapshots tabs; metadata sheet
+- Channel Manager: optional AlarmSummary channels (deferred); global banner and alarm drawer (deferred)
 - NI DAQ: fast AI path with 10×R sampling and IIR Butterworth decimation
 - LoadBank real control path (model map → reads/writes)
 

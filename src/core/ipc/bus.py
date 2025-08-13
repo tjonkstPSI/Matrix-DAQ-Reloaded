@@ -11,6 +11,7 @@ except Exception:  # pragma: no cover
 
 
 TELEMETRY_PUB_ENDPOINT = "tcp://127.0.0.1:5556"
+CONTROL_PULL_ENDPOINT = "tcp://127.0.0.1:5557"
 
 
 @dataclass
@@ -30,6 +31,7 @@ class IPCBus:
         self.started = False
         self._ctx = None
         self._pub = None
+        self._pull = None
 
     def start(self) -> None:
         if zmq is None:
@@ -37,11 +39,16 @@ class IPCBus:
         self._ctx = zmq.Context.instance()
         self._pub = self._ctx.socket(zmq.PUB)
         self._pub.bind(TELEMETRY_PUB_ENDPOINT)
+        # Control path: Core binds PULL to receive UI control commands
+        self._pull = self._ctx.socket(zmq.PULL)
+        self._pull.bind(CONTROL_PULL_ENDPOINT)
         self.started = True
 
     def stop(self) -> None:
         if self._pub is not None:
             self._pub.close(0)
+        if self._pull is not None:
+            self._pull.close(0)
         self.started = False
 
     def publish_telemetry(self, payload: bytes) -> None:
@@ -49,6 +56,19 @@ class IPCBus:
             return
         # Topic 'telemetry'
         self._pub.send_multipart([b"telemetry", payload])
+
+    def recv_controls_nonblocking(self) -> list[bytes]:
+        if not self.started or self._pull is None:
+            return []
+        msgs: list[bytes] = []
+        try:
+            import zmq as _zmq
+            while True:
+                msg = self._pull.recv(flags=_zmq.NOBLOCK)
+                msgs.append(msg)
+        except Exception:
+            pass
+        return msgs
 
 
 def create_ui_subscriber() -> SubSockets | None:
@@ -59,5 +79,14 @@ def create_ui_subscriber() -> SubSockets | None:
     sub.connect(TELEMETRY_PUB_ENDPOINT)
     sub.setsockopt(zmq.SUBSCRIBE, b"telemetry")
     return SubSockets(context=ctx, telemetry_sub=sub)
+
+
+def create_ui_control_push():
+    if zmq is None:
+        return None
+    ctx = zmq.Context.instance()
+    push = ctx.socket(zmq.PUSH)
+    push.connect(CONTROL_PULL_ENDPOINT)
+    return {"context": ctx, "control_push": push}
 
 

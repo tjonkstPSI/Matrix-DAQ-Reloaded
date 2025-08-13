@@ -18,6 +18,9 @@ from ..config.loader import load_yaml_config
 from ..plugins.cycle import CyclePlugin
 from .alarms.engine import AlarmEngine
 from .storage.alarm_events import AlarmEventsSink
+from ..plugins.statistics import StatisticsPlugin
+from .storage.stats_snapshots import StatsSnapshotsSink
+from ..plugins.vaisala import VaisalaPlugin
 
 
 @dataclass
@@ -39,6 +42,7 @@ class Orchestrator:
         self.alarm_engine: AlarmEngine | None = None
         self._alarm_tick_logged: bool = False
         self._events_sink: AlarmEventsSink | None = None
+        self._stats_sink: StatsSnapshotsSink | None = None
 
     def start(self) -> None:
         # Placeholder: load configs, initialize IPC bus, register simulated plugins
@@ -119,6 +123,7 @@ class Orchestrator:
             run_base = _t.strftime("%m%d%y_%H%M%S")
             run_dir = (self.configs_dir.parent / f"runs/{run_base}").resolve()
             self._events_sink = AlarmEventsSink(run_dir)
+            self._stats_sink = StatsSnapshotsSink(run_dir)
             print(f"[INFO] AlarmEvents sink: {str(run_dir)}")
         except Exception as e:
             print(f"[WARN] AlarmEvents sink initialization failed: {e}")
@@ -143,12 +148,18 @@ class Orchestrator:
             ccp = self.plugins.get("CCP")
             lb = self.plugins.get("LoadBank")
             cycle = self.plugins.get("Cycle")
+            stats = self.plugins.get("Statistics")
+            vaisala = self.plugins.get("Vaisala")
             if can:
                 can.configure(); can.validate(); can.start()
             if ccp:
                 ccp.configure(); ccp.validate(); ccp.start()
             if lb:
                 lb.configure(); lb.validate(); lb.start()
+            if stats:
+                stats.configure(); stats.validate(); stats.start()
+            if vaisala:
+                vaisala.configure(); vaisala.validate(); vaisala.start()
             if cycle:
                 cycle.configure(); cycle.validate(); cycle.start()
             prev_complete = getattr(cycle, "is_complete")() if cycle else False
@@ -195,13 +206,46 @@ class Orchestrator:
                         prev_complete = now_complete
                         vals.update(getattr(lb, "simulate_step")())
                         units.update(getattr(lb, "units")())
+                    # Vaisala simulated environment values
+                    if vaisala:
+                        vals.update(getattr(vaisala, "simulate_step")())
+                        units.update(getattr(vaisala, "units")())
+                    # Capture current timestamp for this tick
+                    now_ts = time.time()
+                    # Update statistics plugin and handle outputs (persist only)
+                    if stats:
+                        getattr(stats, "update")(vals, units, now_ts)
+                        stat_vals, stat_units, stat_events = getattr(stats, "outputs")(now_ts)
+                        if self._stats_sink is not None and stat_vals and stat_events:
+                            for sev in stat_events:
+                                if sev.get("type") == "stats_snapshot":
+                                    record = {"ts_hms": _format_local_hms(now_ts)}
+                                    record.update(stat_vals)
+                                    try:
+                                        self._stats_sink.append_snapshot(record)
+                                    except Exception:
+                                        pass
+                        # Optionally print stat events once
+                        for sev in stat_events or []:
+                            if sev.get("type") == "stats_skip":
+                                reason = sev.get("reason", "unknown")
+                                print(f"[STATS] Snapshot skipped: {reason}")
+                            elif sev.get("type") == "stats_snapshot":
+                                print(f"[STATS] Snapshot taken at { _format_local_hms(now_ts) }")
                     # Add relative time channel from core
                     elapsed = time.time() - t0
                     vals["Time_Relative_s"] = elapsed
                     units["Time_Relative_s"] = "s"
                     # Evaluate alarms
                     states, summary, events = ({}, {"any_warning": False, "any_shutdown": False}, [])
-                    now_ts = time.time()
+                    # Handle control messages (e.g., manual stats)
+                    for raw in self.bus.recv_controls_nonblocking():
+                        try:
+                            ctrl_msg = json.loads(raw.decode("utf-8"))
+                            if ctrl_msg.get("type") == "stats_snapshot" and stats:
+                                getattr(stats, "request_manual_snapshot")(now_ts)
+                        except Exception:
+                            pass
                     if self.alarm_engine is not None:
                         states, summary, events = self.alarm_engine.evaluate(vals, now_ts)
                         for ev in events:
@@ -250,13 +294,44 @@ class Orchestrator:
                         prev_complete = now_complete
                         vals.update(getattr(lb, "simulate_step")())
                         units.update(getattr(lb, "units")())
+                    if vaisala:
+                        vals.update(getattr(vaisala, "simulate_step")())
+                        units.update(getattr(vaisala, "units")())
+                    # Capture current timestamp for this tick
+                    now_ts = time.time()
+                    # Update statistics plugin and handle outputs (persist only)
+                    if stats:
+                        getattr(stats, "update")(vals, units, now_ts)
+                        stat_vals, stat_units, stat_events = getattr(stats, "outputs")(now_ts)
+                        if self._stats_sink is not None and stat_vals and stat_events:
+                            for sev in stat_events:
+                                if sev.get("type") == "stats_snapshot":
+                                    record = {"ts_hms": _format_local_hms(now_ts)}
+                                    record.update(stat_vals)
+                                    try:
+                                        self._stats_sink.append_snapshot(record)
+                                    except Exception:
+                                        pass
+                        for sev in stat_events or []:
+                            if sev.get("type") == "stats_skip":
+                                reason = sev.get("reason", "unknown")
+                                print(f"[STATS] Snapshot skipped: {reason}")
+                            elif sev.get("type") == "stats_snapshot":
+                                print(f"[STATS] Snapshot taken at { _format_local_hms(now_ts) }")
                     # Add relative time channel from core
                     elapsed = time.time() - t0
                     vals["Time_Relative_s"] = elapsed
                     units["Time_Relative_s"] = "s"
                     # Evaluate alarms
                     states, summary, events = ({}, {"any_warning": False, "any_shutdown": False}, [])
-                    now_ts = time.time()
+                    # Handle control messages
+                    for raw in self.bus.recv_controls_nonblocking():
+                        try:
+                            ctrl_msg = json.loads(raw.decode("utf-8"))
+                            if ctrl_msg.get("type") == "stats_snapshot" and stats:
+                                getattr(stats, "request_manual_snapshot")(now_ts)
+                        except Exception:
+                            pass
                     if self.alarm_engine is not None:
                         states, summary, events = self.alarm_engine.evaluate(vals, now_ts)
                         for ev in events:
@@ -325,8 +400,8 @@ class Orchestrator:
             PluginSpec(id="Cycle", cls=CyclePlugin, config_name="cycle.yaml"),
             PluginSpec(id="LoadBank", cls=LoadBankPlugin, config_name="loadbank.yaml"),
             PluginSpec(id="Modbus", cls=ModbusPlugin, config_name="modbus.yaml"),
-            PluginSpec(id="Statistics", cls=_Stub, config_name="statistics.yaml"),
-            PluginSpec(id="Vaisala", cls=_Stub, config_name="vaisala.yaml"),
+            PluginSpec(id="Statistics", cls=StatisticsPlugin, config_name="statistics.yaml"),
+            PluginSpec(id="Vaisala", cls=VaisalaPlugin, config_name="vaisala.yaml"),
             PluginSpec(id="EngineTest", cls=_Stub, config_name="engine_test.yaml"),
             PluginSpec(id="Channel_Manager", cls=_Stub, config_name="channel_manager.yaml"),
         ]

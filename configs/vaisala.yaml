@@ -9,14 +9,20 @@ connection:
   unit_id: 1
 
 model:
-  selected: null
-  map_file: null
+  selected: "HMT330"           # example model id; for sim it is informational
+  map_file: null               # future: path to register map yaml for real device
 
 polling:
   override_poll_hz: null
 
-calibration_offsets: {}
+calibration_offsets: { "Ambient Temp": 0.0, "Ambient RH": 0.0, "Ambient Pressure": 0.0 }
 
-channels: []
+channels:
+  - alias: "Ambient Temp"
+    unit: "C"
+  - alias: "Ambient RH"
+    unit: "%RH"
+  - alias: "Ambient Pressure"
+    unit: "kPa"
 
 
