@@ -49,6 +49,7 @@ class Orchestrator:
         self._last_run_dir: Path | None = None
         self._recording: bool = False
         self._export_in_progress: bool = False
+        self._plugin_enabled: Dict[str, bool] = {}
 
     def start(self) -> None:
         # Placeholder: load configs, initialize IPC bus, register simulated plugins
@@ -75,8 +76,19 @@ class Orchestrator:
             print("[INFO] Channel Manager config not found or empty; alarms disabled")
         # Load configs for each plugin and run basic validation
         all_ok = True
+        ALWAYS_ON = {"Channel_Manager", "EngineTest"}
         for pid, plugin in self.plugins.items():
             plugin.load_config()
+            enabled = True
+            try:
+                if pid not in ALWAYS_ON:
+                    enabled = bool(plugin.config.get("enabled", True))
+            except Exception:
+                enabled = True
+            self._plugin_enabled[pid] = enabled
+            if not enabled:
+                print(f"[INFO] Plugin '{pid}' disabled by config; skipping init")
+                continue
             status = plugin.validate()
             if not status.ok:
                 all_ok = False
@@ -111,6 +123,9 @@ class Orchestrator:
         # Global alias aggregation/validation
         alias_sets = []
         for pid, plugin in self.plugins.items():
+            if not self._plugin_enabled.get(pid, True):
+                alias_sets.append(set())
+                continue
             try:
                 alias_sets.append(plugin.aliases())
             except Exception:
@@ -126,28 +141,31 @@ class Orchestrator:
         print("[INFO] Core started; recording is idle. Use Start Recording from UI to begin.")
 
     def run(self) -> None:
-        # Simple lifecycle exercise: configure/validate/arm/start/stop simulated Modbus
-        modbus = self.plugins.get("Modbus")
-        if modbus is None:
-            return
-        modbus.configure()
-        status = modbus.validate()
-        if not status.ok:
-            print(f"[ERROR] Modbus validate failed in run(): {status.message}")
-            return
-        # Simulate a short run: generate a few samples
-        modbus.arm()
-        modbus.start()
+        # Initialize plugins; Modbus is optional (can be disabled)
+        modbus = self.plugins.get("Modbus") if self._plugin_enabled.get("Modbus", True) else None
+        if modbus is not None:
+            try:
+                modbus.configure()
+                status = modbus.validate()
+                if not status.ok:
+                    print(f"[ERROR] Modbus validate failed in run(): {status.message}")
+                    modbus = None
+                else:
+                    modbus.arm()
+                    modbus.start()
+            except Exception as e:
+                print(f"[WARN] Modbus initialization failed: {e}")
+                modbus = None
         try:
             # Generate ticks per run_mode, publish telemetry merging plugins
             import time, json
-            can = self.plugins.get("CAN")
-            ccp = self.plugins.get("CCP")
-            lb = self.plugins.get("LoadBank")
-            cycle = self.plugins.get("Cycle")
-            stats = self.plugins.get("Statistics")
-            vaisala = self.plugins.get("Vaisala")
-            nidaq = self.plugins.get("NI_DAQ")
+            can = self.plugins.get("CAN") if self._plugin_enabled.get("CAN", True) else None
+            ccp = self.plugins.get("CCP") if self._plugin_enabled.get("CCP", True) else None
+            lb = self.plugins.get("LoadBank") if self._plugin_enabled.get("LoadBank", True) else None
+            cycle = self.plugins.get("Cycle") if self._plugin_enabled.get("Cycle", True) else None
+            stats = self.plugins.get("Statistics") if self._plugin_enabled.get("Statistics", True) else None
+            vaisala = self.plugins.get("Vaisala") if self._plugin_enabled.get("Vaisala", True) else None
+            nidaq = self.plugins.get("NI_DAQ") if self._plugin_enabled.get("NI_DAQ", True) else None
             if can:
                 can.configure(); can.validate(); can.start()
             if ccp:
@@ -189,8 +207,9 @@ class Orchestrator:
                         break
                     vals = {}
                     units = {}
-                    vals.update(getattr(modbus, "simulate_step")())
-                    units.update(getattr(modbus, "units")())
+                    if modbus is not None:
+                        vals.update(getattr(modbus, "simulate_step")())
+                        units.update(getattr(modbus, "units")())
                     if nidaq:
                         vals.update(getattr(nidaq, "simulate_step")())
                         units.update(getattr(nidaq, "units")())
@@ -282,6 +301,7 @@ class Orchestrator:
                         "states": states,
                         "alarm_summary": summary,
                         "alarm_events": events,
+                        "recording": bool(self._recording),
                     }).encode("utf-8")
                     self.bus.publish_telemetry(payload)
                     # Append to Parquet data stream when recording
@@ -296,8 +316,9 @@ class Orchestrator:
                 while self._running:
                     vals = {}
                     units = {}
-                    vals.update(getattr(modbus, "simulate_step")())
-                    units.update(getattr(modbus, "units")())
+                    if modbus is not None:
+                        vals.update(getattr(modbus, "simulate_step")())
+                        units.update(getattr(modbus, "units")())
                     if nidaq:
                         vals.update(getattr(nidaq, "simulate_step")())
                         units.update(getattr(nidaq, "units")())
@@ -386,6 +407,7 @@ class Orchestrator:
                         "states": states,
                         "alarm_summary": summary,
                         "alarm_events": events,
+                        "recording": bool(self._recording),
                     }).encode("utf-8")
                     self.bus.publish_telemetry(payload)
                     # Append to Parquet data stream when recording
@@ -405,7 +427,7 @@ class Orchestrator:
             for pid in ("CAN", "CCP", "LoadBank", "NI_DAQ", "Vaisala", "Statistics", "Modbus", "Cycle"):
                 try:
                     p = self.plugins.get(pid)
-                    if p:
+                    if p and self._plugin_enabled.get(pid, True):
                         p.stop()
                 except Exception:
                     pass

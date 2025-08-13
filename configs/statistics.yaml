@@ -2,6 +2,7 @@
 
 # Snapshot-based statistics: compute metrics over a configurable window
 # only when manually triggered or when an automatic trigger fires (rising edge).
+enabled: true
 
 snapshot:
   window:

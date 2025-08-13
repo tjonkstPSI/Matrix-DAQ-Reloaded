@@ -1,9 +1,10 @@
 # Author: T. Onkst | Date: 08122025
+enabled: true
 
 # Minimal example thresholds to smoke UI coloring
 channels:
   - alias: "Room Temp"
-    high_warning: 50
+    high_warning: 24
     high_shutdown: 75
     enter_delay_s: 0.0
     clear_delay_s: 0.0
@@ -16,6 +17,13 @@ channels:
 # Author: T. Onkst | Date: 08122025
 
 recording_rate_hz: 10
+
+storage:
+  chunk_duration_s: 1 # 1 second
+  segment_time_limit_s: 14400     # 4 hours
+  segment_size_limit_mb: 100 # 100 MB
+  coalesce_on_finalize: true # True: coalesce all segments into a single file on finalize
+  keep_chunk_files: false # True: keep chunk files after coalesce  
 
 aggregation:
   emit_summary_channels: false

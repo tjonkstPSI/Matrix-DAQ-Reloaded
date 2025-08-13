@@ -55,6 +55,7 @@ def main() -> int:
                 values = data.get("values", {})
                 units = data.get("units", {})
                 states = data.get("states", {})
+                recording = bool(data.get("recording", False))
                 # Mark last message time for connection status
                 import time as _t
                 last_msg_time["t"] = _t.time()
@@ -93,6 +94,16 @@ def main() -> int:
             else:
                 status.setText("Disconnected")
                 status.setStyleSheet("color: red;")
+            # Update recording toggle and Export enabled state based on telemetry flag
+            try:
+                if recording:
+                    btn_record.setText("Stop Recording")
+                    btn_export.setEnabled(False)
+                else:
+                    btn_record.setText("Start Recording")
+                    btn_export.setEnabled(True)
+            except Exception:
+                pass
         except Exception:
             pass
 

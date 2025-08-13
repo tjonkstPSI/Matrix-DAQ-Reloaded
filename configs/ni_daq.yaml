@@ -1,4 +1,5 @@
 # Author: T. Onkst | Date: 08122025
+enabled: true
 
 mode: real
 recording_rate_hz: 10
