@@ -46,6 +46,9 @@ class Orchestrator:
         self._stats_sink: StatsSnapshotsSink | None = None
         self._parquet: ParquetWriter | None = None
         self._run_dir: Path | None = None
+        self._last_run_dir: Path | None = None
+        self._recording: bool = False
+        self._export_in_progress: bool = False
 
     def start(self) -> None:
         # Placeholder: load configs, initialize IPC bus, register simulated plugins
@@ -120,35 +123,7 @@ class Orchestrator:
             raise
         self.bus.start()
         self._running = True
-        # Prepare run directory for event logging (simple timestamped folder)
-        try:
-            import time as _t
-            import yaml as _yaml  # type: ignore
-            run_base = _t.strftime("%m%d%y_%H%M%S")
-            run_dir = (self.configs_dir.parent / f"runs/{run_base}").resolve()
-            self._run_dir = run_dir
-            self._events_sink = AlarmEventsSink(run_dir)
-            self._stats_sink = StatsSnapshotsSink(run_dir)
-            # Initialize Parquet writer and snapshot configs
-            self._parquet = ParquetWriter(run_dir, ParquetWriterSettings())
-            try:
-                self._parquet.snapshot_configs(self.configs_dir)
-            except Exception:
-                pass
-            # Minimal run-level metadata
-            meta = {
-                "run_id": run_base,
-                "run_start_iso8601": _t.strftime("%Y-%m-%dT%H:%M:%S", _t.localtime()),
-                "recording_rate_hz": float(self.channel_cfg.get("recording_rate_hz", self.settings.recording_rate_hz)),
-                "plugins": sorted(list(self.plugins.keys())),
-            }
-            try:
-                (run_dir / "metadata.yaml").write_text(_yaml.safe_dump(meta, sort_keys=False), encoding="utf-8")
-            except Exception:
-                pass
-            print(f"[INFO] Run folder: {str(run_dir)}")
-        except Exception as e:
-            print(f"[WARN] Run folder initialization failed: {e}")
+        print("[INFO] Core started; recording is idle. Use Start Recording from UI to begin.")
 
     def run(self) -> None:
         # Simple lifecycle exercise: configure/validate/arm/start/stop simulated Modbus
@@ -266,14 +241,23 @@ class Orchestrator:
                     units["Time_Relative_s"] = "s"
                     # Evaluate alarms
                     states, summary, events = ({}, {"any_warning": False, "any_shutdown": False}, [])
-                    # Handle control messages (e.g., manual stats)
+                    # Handle control messages (e.g., manual stats, recording control, export)
                     for raw in self.bus.recv_controls_nonblocking():
                         try:
                             ctrl_msg = json.loads(raw.decode("utf-8"))
                             if ctrl_msg.get("type") == "stats_snapshot" and stats:
                                 getattr(stats, "request_manual_snapshot")(now_ts)
-                        except Exception:
-                            pass
+                            elif ctrl_msg.get("type") == "start_recording":
+                                self._begin_recording()
+                            elif ctrl_msg.get("type") == "stop_recording":
+                                self._end_recording()
+                            elif ctrl_msg.get("type") == "export_excel":
+                                self._kickoff_export()
+                        except Exception as e:
+                            try:
+                                print(f"[WARN] Control handling error: {e}")
+                            except Exception:
+                                pass
                     if self.alarm_engine is not None:
                         states, summary, events = self.alarm_engine.evaluate(vals, now_ts)
                         for ev in events:
@@ -300,9 +284,9 @@ class Orchestrator:
                         "alarm_events": events,
                     }).encode("utf-8")
                     self.bus.publish_telemetry(payload)
-                    # Append to Parquet data stream
+                    # Append to Parquet data stream when recording
                     try:
-                        if self._parquet is not None:
+                        if self._recording and self._parquet is not None:
                             self._parquet.append(now_ts, vals, units)
                     except Exception:
                         pass
@@ -367,8 +351,17 @@ class Orchestrator:
                             ctrl_msg = json.loads(raw.decode("utf-8"))
                             if ctrl_msg.get("type") == "stats_snapshot" and stats:
                                 getattr(stats, "request_manual_snapshot")(now_ts)
-                        except Exception:
-                            pass
+                            elif ctrl_msg.get("type") == "start_recording":
+                                self._begin_recording()
+                            elif ctrl_msg.get("type") == "stop_recording":
+                                self._end_recording()
+                            elif ctrl_msg.get("type") == "export_excel":
+                                self._kickoff_export()
+                        except Exception as e:
+                            try:
+                                print(f"[WARN] Control handling error: {e}")
+                            except Exception:
+                                pass
                     if self.alarm_engine is not None:
                         states, summary, events = self.alarm_engine.evaluate(vals, now_ts)
                         for ev in events:
@@ -395,9 +388,9 @@ class Orchestrator:
                         "alarm_events": events,
                     }).encode("utf-8")
                     self.bus.publish_telemetry(payload)
-                    # Append to Parquet data stream
+                    # Append to Parquet data stream when recording
                     try:
-                        if self._parquet is not None:
+                        if self._recording and self._parquet is not None:
                             self._parquet.append(now_ts, vals, units)
                     except Exception:
                         pass
@@ -430,6 +423,57 @@ class Orchestrator:
             except Exception:
                 pass
 
+    def _kickoff_export(self) -> None:
+        if self._export_in_progress:
+            try:
+                print("[INFO] Export already in progress; ignoring duplicate request")
+            except Exception:
+                pass
+            return
+        if self._recording:
+            try:
+                print("[WARN] Cannot export while recording is active. Stop recording first.")
+            except Exception:
+                pass
+            return
+        run_dir = self._run_dir or self._last_run_dir
+        if run_dir is None:
+            try:
+                print("[WARN] Cannot export: run directory not initialized")
+            except Exception:
+                pass
+            return
+        self._export_in_progress = True
+        def _worker() -> None:
+            try:
+                import importlib
+                mod = importlib.import_module("src.tools.export_excel")
+                outputs = mod.export_excel(run_dir)
+                try:
+                    print("[INFO] Excel export completed:")
+                    for p in outputs:
+                        print(f"  - {p}")
+                except Exception:
+                    pass
+            except Exception as e:
+                try:
+                    print(f"[WARN] Excel export failed: {e}")
+                except Exception:
+                    pass
+            finally:
+                self._export_in_progress = False
+        try:
+            import threading
+            t = threading.Thread(target=_worker, daemon=True)
+            t.start()
+            print("[INFO] Started Excel export in background")
+        except Exception as e:
+            self._export_in_progress = False
+            try:
+                print(f"[WARN] Failed to start export thread: {e}")
+            except Exception:
+                pass
+
     def request_stop(self) -> None:
         self._running = False
 
@@ -456,5 +500,96 @@ class Orchestrator:
         ]
         for s in specs:
             self.registry.register(s)
+
+    def _begin_recording(self) -> None:
+        if self._recording:
+            print("[INFO] Recording already active")
+            return
+        try:
+            import time as _t
+            import yaml as _yaml  # type: ignore
+            run_base = _t.strftime("%m%d%y_%H%M%S")
+            run_dir = (self.configs_dir.parent / f"runs/{run_base}").resolve()
+            self._run_dir = run_dir
+            self._last_run_dir = run_dir
+            self._events_sink = AlarmEventsSink(run_dir)
+            self._stats_sink = StatsSnapshotsSink(run_dir)
+            # Build Parquet settings from Channel Manager config if provided
+            settings = self._build_parquet_settings_from_channel_cfg()
+            self._parquet = ParquetWriter(run_dir, settings)
+            try:
+                self._parquet.snapshot_configs(self.configs_dir)
+            except Exception:
+                pass
+            meta = {
+                "run_id": run_base,
+                "run_start_iso8601": _t.strftime("%Y-%m-%dT%H:%M:%S", _t.localtime()),
+                "recording_rate_hz": float(self.channel_cfg.get("recording_rate_hz", self.settings.recording_rate_hz)),
+                "plugins": sorted(list(self.plugins.keys())),
+            }
+            try:
+                (run_dir / "metadata.yaml").write_text(_yaml.safe_dump(meta, sort_keys=False), encoding="utf-8")
+            except Exception:
+                pass
+            self._recording = True
+            print(f"[INFO] Started recording: {str(run_dir)}")
+        except Exception as e:
+            print(f"[WARN] Failed to start recording: {e}")
+
+    def _end_recording(self) -> None:
+        if not self._recording:
+            print("[INFO] Recording already stopped")
+            return
+        try:
+            try:
+                if self._parquet is not None:
+                    self._parquet.finalize()
+            except Exception:
+                pass
+            try:
+                if self._events_sink is not None:
+                    self._events_sink.finalize()
+            except Exception:
+                pass
+            print("[INFO] Recording stopped and files finalized")
+        finally:
+            self._recording = False
+            self._parquet = None
+            self._events_sink = None
+            self._stats_sink = None
+            self._run_dir = None
+
+    def _build_parquet_settings_from_channel_cfg(self) -> ParquetWriterSettings:
+        """Create ParquetWriterSettings from Channel Manager config (optional).
+        Expected YAML (configs/channel_manager.yaml):
+          storage:
+            chunk_duration_s: 1
+            segment_time_limit_s: 14400
+            segment_size_limit_mb: 100
+            coalesce_on_finalize: true
+            keep_chunk_files: false
+        """
+        cfg = self.channel_cfg or {}
+        storage_cfg = cfg.get("storage", {}) or {}
+        defaults = ParquetWriterSettings()
+        def _get_float(key: str, default: float) -> float:
+            try:
+                v = storage_cfg.get(key)
+                return float(v) if v is not None else default
+            except Exception:
+                return default
+        def _get_bool(key: str, default: bool) -> bool:
+            try:
+                v = storage_cfg.get(key)
+                return bool(v) if v is not None else default
+            except Exception:
+                return default
+        return ParquetWriterSettings(
+            chunk_duration_s=_get_float("chunk_duration_s", defaults.chunk_duration_s),
+            segment_time_limit_s=_get_float("segment_time_limit_s", defaults.segment_time_limit_s),
+            segment_size_limit_mb=_get_float("segment_size_limit_mb", defaults.segment_size_limit_mb),
+            coalesce_on_finalize=_get_bool("coalesce_on_finalize", defaults.coalesce_on_finalize),
+            keep_chunk_files=_get_bool("keep_chunk_files", defaults.keep_chunk_files),
+        )
 
 

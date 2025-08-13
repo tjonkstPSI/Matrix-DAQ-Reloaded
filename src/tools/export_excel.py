@@ -54,39 +54,29 @@ def list_parquet_files(data_dir: Path) -> List[Path]:
     return files
 
 
-def get_union_columns(files: List[Path]) -> List[str]:
+def get_columns_for_file(path: Path) -> List[str]:
     base = ["Time_Relative_s", "Time_Absolute_iso8601"]
     others: List[str] = []
-    seen: set[str] = set()
     try:
         import pyarrow.parquet as pq  # type: ignore
-        for f in files:
-            try:
-                pf = pq.ParquetFile(f)
-                for name in pf.schema.names:
-                    if name in base:
-                        continue
-                    if name not in seen:
-                        seen.add(name)
-                        others.append(name)
-            except Exception:
+        pf = pq.ParquetFile(path)
+        for name in pf.schema.names:
+            if name in base:
                 continue
+            if name not in others:
+                others.append(name)
     except Exception:
-        # Fallback: use pandas one file
         try:
             import pandas as pd  # type: ignore
-            if files:
-                cols = list(pd.read_parquet(files[0]).columns)
-                for c in cols:
-                    if c in base:
-                        continue
-                    if c not in seen:
-                        seen.add(c)
-                        others.append(c)
+            cols = list(pd.read_parquet(path).columns)
+            for c in cols:
+                if c in base:
+                    continue
+                if c not in others:
+                    others.append(c)
         except Exception:
             pass
-    final_cols = list(base) + sorted(others)
-    return final_cols
+    return list(base) + sorted(others)
 
 
 def iter_rowgroup_dataframes(path: Path, columns: List[str]):
@@ -167,6 +157,22 @@ def load_units_merged(files: List[Path]) -> Dict[str, str]:
     return merged
 
 
+def read_units_metadata(parquet_path: Path) -> Dict[str, str]:
+    try:
+        import pyarrow.parquet as pq  # type: ignore
+        table = pq.read_table(parquet_path)
+        md = table.schema.metadata or {}
+        raw = md.get(b"units_json")
+        if not raw:
+            return {}
+        try:
+            return json.loads(raw.decode("utf-8"))
+        except Exception:
+            return {}
+    except Exception:
+        return {}
+
+
 def read_jsonl(path: Path) -> Optional[object]:
     try:
         import pandas as pd  # type: ignore
@@ -191,48 +197,45 @@ def export_excel(run_dir: Path, engine: str = "openpyxl", rows_per_file: int = E
     if not files:
         raise FileNotFoundError(f"No Parquet files found under {data_dir}")
 
-    union_cols = get_union_columns(files)
-    units = load_units_merged(files)
     run_meta = load_run_metadata(run_dir)
     exports_dir = run_dir / "exports"
     exports_dir.mkdir(parents=True, exist_ok=True)
 
-    part_index = 1
-    remaining = max(1, int(rows_per_file))
-    total_rows = 0
     created: List[Path] = []
-    current_frames: List["pd.DataFrame"] = []
 
-    def flush_part(df_list: List["pd.DataFrame"], idx: int) -> None:
-        nonlocal created
-        out_name = f"{run_dir.name}.xlsx" if idx == 1 and len(files) == 1 and (total_rows <= rows_per_file) else f"{run_dir.name}.{idx}.xlsx"
-        out_path = exports_dir / out_name
-        with pd.ExcelWriter(out_path, engine=engine) as writer:
-            # Data sheet
-            if df_list:
-                df = pd.concat(df_list, ignore_index=True)
-                df.to_excel(writer, sheet_name="Data", index=False)
-            # Metadata sheet
-            write_metadata_sheet(writer, run_meta, files, total_rows, units)
-            # AlarmEvents sheet
-            ae_df = read_jsonl(run_dir / "alarm_events.jsonl")
-            if ae_df is not None:
-                try:
-                    ae_df.to_excel(writer, sheet_name="AlarmEvents", index=False)
-                except Exception:
-                    pass
-            # StatsSnapshots sheet
-            ss_df = read_jsonl(run_dir / "stats_snapshots.jsonl")
-            if ss_df is not None:
-                try:
-                    ss_df.to_excel(writer, sheet_name="StatsSnapshots", index=False)
-                except Exception:
-                    pass
-        created.append(out_path)
-
-    # Iterate files and row groups, partition into parts
+    # One workbook per Parquet file; split a single file into .1, .2 if it exceeds row limit
     for f in files:
-        for df in iter_rowgroup_dataframes(f, union_cols):
+        cols = get_columns_for_file(f)
+        units = read_units_metadata(f)
+        total_rows = 0
+        part_idx = 1
+        remaining = max(1, int(rows_per_file))
+        frames: List["pd.DataFrame"] = []
+
+        def flush_one(part: int, frames_list: List["pd.DataFrame"]) -> None:
+            out_stem = f"{run_dir.name}__{f.stem}"
+            out_name = f"{out_stem}.xlsx" if part == 1 and total_rows <= rows_per_file else f"{out_stem}.{part}.xlsx"
+            out_path = exports_dir / out_name
+            with pd.ExcelWriter(out_path, engine=engine) as writer:
+                if frames_list:
+                    df = pd.concat(frames_list, ignore_index=True)
+                    df.to_excel(writer, sheet_name="Data", index=False)
+                write_metadata_sheet(writer, run_meta, [f], total_rows, units)
+                ae_df = read_jsonl(run_dir / "alarm_events.jsonl")
+                if ae_df is not None:
+                    try:
+                        ae_df.to_excel(writer, sheet_name="AlarmEvents", index=False)
+                    except Exception:
+                        pass
+                ss_df = read_jsonl(run_dir / "stats_snapshots.jsonl")
+                if ss_df is not None:
+                    try:
+                        ss_df.to_excel(writer, sheet_name="StatsSnapshots", index=False)
+                    except Exception:
+                        pass
+            created.append(out_path)
+
+        for df in iter_rowgroup_dataframes(f, cols):
             if df.empty:
                 continue
             df_len = int(len(df))
@@ -240,19 +243,17 @@ def export_excel(run_dir: Path, engine: str = "openpyxl", rows_per_file: int = E
             start = 0
             while start < df_len:
                 can_take = min(remaining, df_len - start)
-                slice_df = df.iloc[start:start + can_take]
-                current_frames.append(slice_df)
+                frames.append(df.iloc[start:start + can_take])
                 remaining -= can_take
                 start += can_take
                 if remaining <= 0:
-                    flush_part(current_frames, part_index)
-                    part_index += 1
-                    current_frames = []
+                    flush_one(part_idx, frames)
+                    part_idx += 1
+                    frames = []
                     remaining = max(1, int(rows_per_file))
 
-    # Flush final part
-    if current_frames:
-        flush_part(current_frames, part_index)
+        if frames:
+            flush_one(part_idx, frames)
 
     return created
 

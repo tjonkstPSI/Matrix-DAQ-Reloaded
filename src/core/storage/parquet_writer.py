@@ -9,11 +9,11 @@ from typing import Dict, Any, List, Optional
 
 @dataclass
 class ParquetWriterSettings:
-    chunk_duration_s: float = 1.0
-    segment_time_limit_s: float = 30
-    segment_size_limit_mb: float = 100.0
-    coalesce_on_finalize: bool = True
-    keep_chunk_files: bool = False
+    chunk_duration_s: float = 1.0 # 1 second
+    segment_time_limit_s: float = 14400 # 4 hours
+    segment_size_limit_mb: float = 100.0 # 100 MB
+    coalesce_on_finalize: bool = True # True: coalesce all segments into a single file on finalize
+    keep_chunk_files: bool = False # True: keep chunk files after coalesce  
 
 
 class ParquetWriter:

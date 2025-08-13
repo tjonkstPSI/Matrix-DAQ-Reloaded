@@ -217,6 +217,7 @@ config:
     - "Metadata fields"
     - "Calculated expressions"
     - "Segmentation policy"
+      - "Per-plugin enable/disable (enabled: true|false)"
   storage_locations:
     temp_runs: "C:\\ProgramData\\PSI\\Test Data"
     final_runs: "User-selected local folder"
@@ -227,6 +228,8 @@ config:
   core:
     run_mode: "demo | continuous"
     tick_interval_s: "publish interval (e.g., 0.1 for 10 Hz)"
+    plugin_enablement:
+      description: "Each plugin YAML may include an 'enabled' boolean at the root. Orchestrator loads all configs but only configures/starts plugins where enabled=true. Disabled plugins are skipped for alias aggregation and runtime steps."
 
 logging:
   level_default: "info"
@@ -255,8 +258,10 @@ storage:
       - "logs/*.log"
       - "exports/*.xlsx (if user exported)"
   crash_safety:
-    write_mode: "Append-only chunked writes"
+    write_mode: "Append-only chunked writes (1 s) during run; coalesce to single file per segment on stop"
     chunk_duration_s: 1
+    coalesce_on_finalize: true
+    keep_chunk_files: false
     worst_case_loss_s: "< 1"
     recovery: "Recover last committed chunks on restart"
   excel_export:
@@ -270,6 +275,17 @@ storage:
   disk_guardrail:
     min_free_gb: 5
     behavior: "warn_only"
+
+tools:
+  post_run:
+    - name: "inspect_parquet"
+      path: "src/tools/inspect_parquet.py"
+      usage: "py -m src.tools.inspect_parquet [--run runs/...] [--show-head N]"
+      purpose: "Summarize Parquet segments, verify time ranges/monotonicity, display head rows, preview units metadata"
+    - name: "export_excel"
+      path: "src/tools/export_excel.py"
+      usage: "py -m src.tools.export_excel [--run runs/...] [--engine openpyxl|xlsxwriter] [--rows-per-file N]"
+      purpose: "Create Excel workbook(s) with sheets: Metadata, Data, AlarmEvents, StatsSnapshots; auto-split when exceeding row limits"
 
 filenaming:
   base: "MMDDYY_HHMMSS_EngineType_TestType"

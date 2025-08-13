@@ -28,7 +28,11 @@ def main() -> int:
     layout.addWidget(header)
     layout.addWidget(status)
     btn_stats = QPushButton("Log Statistics")
+    btn_record = QPushButton("Start Recording")
+    btn_export = QPushButton("Export Workbook")
     layout.addWidget(btn_stats)
+    layout.addWidget(btn_record)
+    layout.addWidget(btn_export)
     layout.addWidget(table)
     window.resize(420, 240)
     window.show()
@@ -107,6 +111,48 @@ def main() -> int:
             pass
 
     btn_stats.clicked.connect(on_log_stats)
+    
+    def on_export():
+        if ctrl is None:
+            return
+        try:
+            import json
+            msg = json.dumps({"type": "export_excel"}).encode("utf-8")
+            ctrl["control_push"].send(msg)
+        except Exception:
+            pass
+
+    btn_export.clicked.connect(on_export)
+
+    # Simple client-side toggle; assumes success (later can read a status flag from telemetry)
+    state = {"recording": False}
+
+    def on_record_toggle():
+        if ctrl is None:
+            return
+        try:
+            import json
+            btn_record.setEnabled(False)
+            if not state["recording"]:
+                msg = json.dumps({"type": "start_recording"}).encode("utf-8")
+                ctrl["control_push"].send(msg)
+                state["recording"] = True
+                btn_record.setText("Stop Recording")
+                btn_export.setEnabled(False)
+            else:
+                msg = json.dumps({"type": "stop_recording"}).encode("utf-8")
+                ctrl["control_push"].send(msg)
+                state["recording"] = False
+                btn_record.setText("Start Recording")
+                btn_export.setEnabled(True)
+        except Exception:
+            pass
+        finally:
+            # brief debounce
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(250, lambda: btn_record.setEnabled(True))
+
+    btn_record.clicked.connect(on_record_toggle)
     return app.exec()
 
 

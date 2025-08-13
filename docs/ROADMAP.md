@@ -18,7 +18,7 @@ Deliver a Windows desktop app that streams, visualizes, and records engine test 
 - Month 1–2
   - NI DAQ: fast AI path with 10×R acquisition and 4th‑order IIR Butterworth decimation
   - Channel Manager: evaluate per‑channel alarms; AlarmSummary booleans; AlarmEvents log; row coloring in UI table
-  - Excel exporter: Metadata/Data, AlarmEvents, and per‑stat tabs; workbook split policy confirmed
+  - Excel exporter: Metadata/Data, AlarmEvents, and per‑stat tabs; workbook split policy confirmed (DONE: post‑run tool)
   - Continuous core run mode + graceful shutdown; basic run lifecycle logs (DONE)
 
 - Month 2–3
@@ -60,13 +60,16 @@ Deliver a Windows desktop app that streams, visualizes, and records engine test 
 - Statistics: snapshot‑based (manual button + optional rising/falling edge trigger), configurable window (seconds or samples), backward/forward capture, metrics selection including p2p; snapshots persisted to per‑run JSONL; UI control wiring in place
 - IPC control path for UI → Core (manual statistics snapshot)
 - Vaisala (simulation): Ambient Temp/RH/Pressure channels with configurable IP/model placeholders and calibration offsets; wired into telemetry
+- Storage: Parquet writer with 1 s chunked append during run; time/size segmentation; coalesce on finalize to single file per segment; units metadata embedded; config snapshotting to `config_snapshot/`
+- Tools: `inspect_parquet` (validate Parquet outputs) and `export_excel` (Metadata, Data, AlarmEvents, StatsSnapshots; split policy)
 
 ### In progress / next up
-- Recording pipeline: Parquet writer with append‑only chunks, time/size segmentation, per‑run config snapshot
-- Excel export end‑to‑end, including AlarmEvents (JSONL) and Statistics snapshots tabs; metadata sheet
+- Recording pipeline: Parquet writer coalescing polish; orchestrator-initiated export option and UI control
+  - Excel export wiring from UI (current tool is post‑run CLI)
 - Channel Manager: optional AlarmSummary channels (deferred); global banner and alarm drawer (deferred)
 - NI DAQ: real read path hardening (fast AI 10×R average to R; AI temperature at R; DI on‑demand at R; explicit task teardown); UI channel picker (later)
 - LoadBank real control path (model map → reads/writes)
+- Plugin enable/disable: add `enabled: true|false` at root of each plugin YAML; orchestrator skips disabled plugins (config/validate/start/run/aliases)
 
 ### To‑do (detailed)
 - NI DAQ

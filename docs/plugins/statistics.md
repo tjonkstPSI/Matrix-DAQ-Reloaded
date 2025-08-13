@@ -15,12 +15,13 @@ Compute snapshot statistics on demand (manual button) or automatically on a trig
 - Manual logging: UI provides a "Log Statistics" button that emits one line for the selected stats using the current window content
 
 ### Outputs
-- File naming: `<base>_Statistics[ _segNN ].parquet` (+ sidecar YAML); Excel split `.n` applies when exported
+- File naming: `<base>_Statistics[ _segNN ].parquet` (+ sidecar YAML). When primary data coalesces on stop, statistics remain in JSONL (`stats_snapshots.jsonl`) and are included as a sheet in Excel export.
 - Columns (wide by default):
   - Time_Relative_s, Time_Absolute_iso8601
   - For each selected channel and metric, a column named `<alias>_<metric>` (e.g., `Oil Pressure_mean`)
 - Long format optional: rows with columns [time, channel, metric, value]
  - Excel export (when enabled): one worksheet per statistic. Selected stats each get their own tab (e.g., `mean`, `stdev`, `min`, `max`). Each tab contains Time columns and only the channels that include that statistic. A `Metadata` sheet is also included.
+  - Current implementation: Post-run Excel exporter generates `StatsSnapshots` sheet directly from JSONL; per-stat tabs are on the roadmap.
 
 ### Configuration (YAML)
 File: `configs/statistics.yaml`
