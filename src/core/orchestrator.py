@@ -278,6 +278,10 @@ class Orchestrator:
                     for raw in self.bus.recv_controls_nonblocking():
                         try:
                             ctrl_msg = json.loads(raw.decode("utf-8"))
+                            try:
+                                print(f"[CTRL] Received: {ctrl_msg}")
+                            except Exception:
+                                pass
                             if ctrl_msg.get("type") == "stats_snapshot" and stats:
                                 getattr(stats, "request_manual_snapshot")(now_ts)
                             elif ctrl_msg.get("type") == "start_recording":
@@ -286,6 +290,10 @@ class Orchestrator:
                                 self._end_recording()
                             elif ctrl_msg.get("type") == "export_excel":
                                 self._kickoff_export()
+                            elif ctrl_msg.get("type") == "do_write":
+                                self._handle_do_write(ctrl_msg)
+                            elif ctrl_msg.get("type") == "ao_write":
+                                self._handle_ao_write(ctrl_msg)
                         except Exception as e:
                             try:
                                 print(f"[WARN] Control handling error: {e}")
@@ -392,6 +400,10 @@ class Orchestrator:
                     for raw in self.bus.recv_controls_nonblocking():
                         try:
                             ctrl_msg = json.loads(raw.decode("utf-8"))
+                            try:
+                                print(f"[CTRL] Received: {ctrl_msg}")
+                            except Exception:
+                                pass
                             if ctrl_msg.get("type") == "stats_snapshot" and stats:
                                 getattr(stats, "request_manual_snapshot")(now_ts)
                             elif ctrl_msg.get("type") == "start_recording":
@@ -400,6 +412,10 @@ class Orchestrator:
                                 self._end_recording()
                             elif ctrl_msg.get("type") == "export_excel":
                                 self._kickoff_export()
+                            elif ctrl_msg.get("type") == "do_write":
+                                self._handle_do_write(ctrl_msg)
+                            elif ctrl_msg.get("type") == "ao_write":
+                                self._handle_ao_write(ctrl_msg)
                         except Exception as e:
                             try:
                                 print(f"[WARN] Control handling error: {e}")
@@ -483,7 +499,7 @@ class Orchestrator:
         run_dir = self._run_dir or self._last_run_dir
         if run_dir is None:
             try:
-                print("[WARN] Cannot export: run directory not initialized")
+                print("[WARN] Cannot export: run directory not initialized (recording=%s, _run_dir=%s, _last_run_dir=%s)" % (self._recording, self._run_dir, self._last_run_dir))
             except Exception:
                 pass
             return
@@ -517,6 +533,43 @@ class Orchestrator:
                 print(f"[WARN] Failed to start export thread: {e}")
             except Exception:
                 pass
+
+    def _handle_do_write(self, msg: Dict[str, Any]) -> None:
+        alias = str(msg.get("alias", ""))
+        state = int(bool(msg.get("state", 0)))
+        if not alias:
+            return
+        try:
+            if not self._plugin_enabled.get("NI_DAQ", True):
+                print("[WARN] DO write ignored: NI_DAQ disabled")
+                return
+            nidaq = self.plugins.get("NI_DAQ")
+            if nidaq is None:
+                print("[WARN] DO write ignored: NI_DAQ not present")
+                return
+            getattr(nidaq, "write_do")(alias, state)
+        except Exception:
+            pass
+
+    def _handle_ao_write(self, msg: Dict[str, Any]) -> None:
+        alias = str(msg.get("alias", ""))
+        try:
+            value = float(msg.get("value", 0.0))
+        except Exception:
+            value = 0.0
+        if not alias:
+            return
+        try:
+            if not self._plugin_enabled.get("NI_DAQ", True):
+                print("[WARN] AO write ignored: NI_DAQ disabled")
+                return
+            nidaq = self.plugins.get("NI_DAQ")
+            if nidaq is None:
+                print("[WARN] AO write ignored: NI_DAQ not present")
+                return
+            getattr(nidaq, "write_ao")(alias, value)
+        except Exception:
+            pass
 
     def request_stop(self) -> None:
         self._running = False

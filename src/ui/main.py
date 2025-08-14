@@ -30,9 +30,17 @@ def main() -> int:
     btn_stats = QPushButton("Log Statistics")
     btn_record = QPushButton("Start Recording")
     btn_export = QPushButton("Export Workbook")
+    btn_do_on = QPushButton("DO: FuelPump ON")
+    btn_do_off = QPushButton("DO: FuelPump OFF")
+    btn_ao_up = QPushButton("AO: +0.5 V")
+    btn_ao_down = QPushButton("AO: -0.5 V")
     layout.addWidget(btn_stats)
     layout.addWidget(btn_record)
     layout.addWidget(btn_export)
+    layout.addWidget(btn_do_on)
+    layout.addWidget(btn_do_off)
+    layout.addWidget(btn_ao_up)
+    layout.addWidget(btn_ao_down)
     layout.addWidget(table)
     window.resize(420, 240)
     window.show()
@@ -164,6 +172,59 @@ def main() -> int:
             QTimer.singleShot(250, lambda: btn_record.setEnabled(True))
 
     btn_record.clicked.connect(on_record_toggle)
+
+    # Quick controls for NI_DAQ DO/AO (demo wiring)
+    def send_do(state: int):
+        if ctrl is None:
+            return
+        try:
+            import json
+            # Example alias from ni_daq.yaml (adjust to your alias): qDO_FuelPump
+            msg = json.dumps({"type": "do_write", "alias": "qDO_FuelPump", "state": int(bool(state))}).encode("utf-8")
+            ctrl["control_push"].send(msg)
+        except Exception:
+            pass
+
+    def _resolve_default_ao_alias() -> str:
+        try:
+            from pathlib import Path as _Path
+            import yaml as _yaml  # type: ignore
+            project_root = _Path(__file__).resolve().parents[2]
+            cfg_path = project_root / "configs" / "ni_daq.yaml"
+            if not cfg_path.exists():
+                return "qAO_Ch0"
+            data = _yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+            chs = (data.get("channels") or {}).get("ao") or []
+            for item in chs:
+                try:
+                    if bool(item.get("enabled", True)):
+                        alias = str(item.get("alias") or "")
+                        if alias:
+                            return alias
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        return "qAO_Ch0"
+
+    _ao_alias = {"alias": _resolve_default_ao_alias()}
+
+    def send_ao(delta: float):
+        if ctrl is None:
+            return
+        try:
+            import json
+            alias = _ao_alias["alias"] or "qAO_Ch0"
+            send_ao.current = getattr(send_ao, "current", 0.0) + float(delta)
+            msg = json.dumps({"type": "ao_write", "alias": alias, "value": send_ao.current}).encode("utf-8")
+            ctrl["control_push"].send(msg)
+        except Exception:
+            pass
+
+    btn_do_on.clicked.connect(lambda: send_do(1))
+    btn_do_off.clicked.connect(lambda: send_do(0))
+    btn_ao_up.clicked.connect(lambda: send_ao(0.5))
+    btn_ao_down.clicked.connect(lambda: send_ao(-0.5))
     return app.exec()
 
 

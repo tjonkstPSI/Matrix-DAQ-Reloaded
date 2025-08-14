@@ -29,9 +29,13 @@ class NiDAQPlugin(BasePlugin):
         self._task_ai_fast = None
         self._task_ai_temp = None
         self._task_di = None
+        self._task_do = None
+        self._task_ao = None
         self._ai_fast_aliases: List[str] = []
         self._ai_temp_aliases: List[str] = []
         self._di_aliases: List[str] = []
+        self._do_aliases: List[str] = []
+        self._ao_aliases: List[str] = []
 
     def _nidaq_available(self) -> bool:
         try:
@@ -379,6 +383,75 @@ class NiDAQPlugin(BasePlugin):
                         t.close()
                 except Exception:
                     pass
+        # DO lines (on-demand write)
+        if any(bool(ch.get("enabled", True)) for ch in self._do):
+            t = None
+            try:
+                t = Task()
+                local_aliases: List[str] = []
+                for ch in self._do:
+                    if not bool(ch.get("enabled", True)):
+                        continue
+                    phys = str(ch.get("phys", ""))
+                    if not phys:
+                        continue
+                    try:
+                        t.do_channels.add_do_chan(phys)
+                        local_aliases.append(str(ch.get("alias", phys)))
+                    except Exception:
+                        continue
+                if local_aliases:
+                    # No need to start explicitly for on-demand writes; start for lifecycle symmetry
+                    t.start()
+                    self._task_do = t
+                    self._do_aliases = local_aliases
+                    # Write initial states once
+                    try:
+                        self._write_do_hardware()
+                    except Exception:
+                        pass
+                    t = None
+            finally:
+                try:
+                    if t is not None:
+                        t.close()
+                except Exception:
+                    pass
+        # AO voltage (on-demand write)
+        if any(bool(ch.get("enabled", True)) for ch in self._ao):
+            t = None
+            try:
+                t = Task()
+                local_aliases: List[str] = []
+                for ch in self._ao:
+                    if not bool(ch.get("enabled", True)):
+                        continue
+                    phys = str(ch.get("phys", ""))
+                    if not phys:
+                        continue
+                    try:
+                        rng = ch.get("range_v", {}) or {}
+                        vmin = float(rng.get("min", 0.0))
+                        vmax = float(rng.get("max", 10.0))
+                        t.ao_channels.add_ao_voltage_chan(phys, min_val=vmin, max_val=vmax)
+                        local_aliases.append(str(ch.get("alias", phys)))
+                    except Exception:
+                        continue
+                if local_aliases:
+                    t.start()
+                    self._task_ao = t
+                    self._ao_aliases = local_aliases
+                    try:
+                        self._write_ao_hardware()
+                    except Exception:
+                        pass
+                    t = None
+            finally:
+                try:
+                    if t is not None:
+                        t.close()
+                except Exception:
+                    pass
 
     def _read_real(self) -> Dict[str, Any]:
         vals: Dict[str, Any] = {}
@@ -418,12 +491,17 @@ class NiDAQPlugin(BasePlugin):
                         vals[alias] = int(bool(v))
                 elif isinstance(di_vals, list):
                     vals[self._di_aliases[0]] = int(bool(di_vals[0]))
+            # Reflect current DO/AO states (write-only) for telemetry
+            for alias, state in self._do_states.items():
+                vals[alias] = int(state)
+            for alias, state in self._ao_states.items():
+                vals[alias] = float(state)
         except Exception:
             pass
         return vals
 
     def _teardown_tasks(self) -> None:
-        for t in (self._task_ai_fast, self._task_ai_temp, self._task_di):
+        for t in (self._task_ai_fast, self._task_ai_temp, self._task_di, self._task_do, self._task_ao):
             try:
                 if t is not None:
                     t.stop()
@@ -433,11 +511,50 @@ class NiDAQPlugin(BasePlugin):
         self._task_ai_fast = None
         self._task_ai_temp = None
         self._task_di = None
+        self._task_do = None
+        self._task_ao = None
 
     def stop(self) -> None:
         # Ensure NI-DAQmx tasks are properly closed to avoid DaqResourceWarning
         try:
             self._teardown_tasks()
+        except Exception:
+            pass
+
+    # Public command APIs for outputs
+    def write_do(self, alias: str, state: int) -> None:
+        try:
+            self._do_states[str(alias)] = int(bool(state))
+            if self.mode == "real" and self._task_do is not None and self._do_aliases:
+                self._write_do_hardware()
+        except Exception:
+            pass
+
+    def write_ao(self, alias: str, value: float) -> None:
+        try:
+            self._ao_states[str(alias)] = float(value)
+            if self.mode == "real" and self._task_ao is not None and self._ao_aliases:
+                self._write_ao_hardware()
+        except Exception:
+            pass
+
+    # Internal helpers to push current states to hardware in channel order
+    def _write_do_hardware(self) -> None:
+        if self._task_do is None or not self._do_aliases:
+            return
+        try:
+            values = [int(bool(self._do_states.get(alias, 0))) for alias in self._do_aliases]
+            # nidaqmx allows list writes for multiple lines
+            self._task_do.write(values, auto_start=True)
+        except Exception:
+            pass
+
+    def _write_ao_hardware(self) -> None:
+        if self._task_ao is None or not self._ao_aliases:
+            return
+        try:
+            values = [float(self._ao_states.get(alias, 0.0)) for alias in self._ao_aliases]
+            self._task_ao.write(values, auto_start=True)
         except Exception:
             pass
 

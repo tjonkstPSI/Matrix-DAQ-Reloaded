@@ -1,7 +1,7 @@
 # Author: T. Onkst | Date: 08122025
 enabled: true
 
-mode: real
+mode: sim # real or sim
 recording_rate_hz: 10
 decimation:
   filter: IIR_Butterworth
@@ -739,4 +739,10 @@ channels:
     alias: MATRIXMod6_port1_line15
     enabled: false
     initial: 0
-  ao: []
+  ao:
+  - phys: "Dev1/ao0"
+    alias: "qAO_Ch0"
+    enabled: true
+    range_v: { min: 0, max: 10 }
+    initial: 0.0
+    unit: "V"
