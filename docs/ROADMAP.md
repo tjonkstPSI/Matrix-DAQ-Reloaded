@@ -66,7 +66,7 @@ Deliver a Windows desktop app that streams, visualizes, and records engine test 
 - Plugin enable/disable: all except `Channel_Manager` and `EngineTest`; Modbus optional; Calculated Channels implemented with simple symbol mapping
 
 ### In progress / next up
-- NI DAQ real path hardening (fast AI, DI on-demand, errors/retries, teardown)
+- NI DAQ real path hardening (fast AI, DI on-demand, errors/retries, teardown) — ongoing
 - Excel export per-stat tabs (from StatsSnapshots), formatting polish
 - Optional disk space guardrail; config-driven export options
 - Channel Manager: optional AlarmSummary channels (deferred); global banner and alarm drawer (deferred)
@@ -76,8 +76,9 @@ Deliver a Windows desktop app that streams, visualizes, and records engine test 
 
 ### To‑do (detailed)
 - NI DAQ
-  - Implement task creation for AI/DI/DO/AO (start with AI fast path)
+  - Implement task creation for AI/DI/DO/AO (start with AI fast path) (DONE: per-device fast AI tasks)
   - Shared timebase/start trigger; oversample 10×R; 4th‑order IIR Butterworth; decimate to R
+  - Real read path robustness (DONE): per-device task isolation, adaptive timeouts with warm-up suppression, larger device buffers; health telemetry channels optional
   - Crash‑safe buffer; chunked write; watchdog (driver mode on 9188/9189; loopback fallback)
 - CAN/CCP
   - XNET integration (v23.3): database import, multi‑bus, signal selection; timestamps align to R

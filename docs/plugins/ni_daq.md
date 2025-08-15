@@ -42,6 +42,33 @@ Configure and acquire data from NI cDAQ modules for analog input (voltage, therm
   - loopback: toggle_rate_hz = 2, verify timeout_ms = 250, miss_threshold = 3
   - supported_devices (driver mode): network cDAQ such as NI-9185/NI-9188; PCIe/USB devices typically do not support device-side watchdog
 
+#### Watchdog configuration (schema and validation)
+The `watchdog` block in `configs/ni_daq.yaml` is optional. If `enabled: true`, config is validated:
+
+```yaml
+watchdog:
+  enabled: true
+  mode: driver            # driver | digital_loopback
+  refresh_rate_hz: 2      # required for driver mode
+  timeout_ms: 1000        # required for driver mode
+  expir_states: { }       # optional mapping of DO alias -> 0|1 safe state on expiry
+```
+
+For digital loopback mode:
+
+```yaml
+watchdog:
+  enabled: true
+  mode: digital_loopback
+  do_line: "Dev1/port1/line0"     # required
+  di_return: "Dev1/port0/line0"   # required (must be distinct from do_line)
+  toggle_rate_hz: 2                # required (>0)
+  verify_timeout_ms: 250           # required (>0)
+  miss_threshold: 3                # required (>=1)
+```
+
+Validation errors are surfaced by `NiDAQPlugin.validate()` with descriptive messages. Runtime watchdog behavior will be implemented when hardware is available.
+
 ### Channel Scaling and Metadata
 - Per-channel custom scaling applied before alarms (linear M/B and optional polynomial in roadmap)
 - Units derived from scaling; used by alarms and UI
@@ -106,6 +133,33 @@ channels:
   - Fast AI/DI at 10×R in one or more tasks (as required by module grouping)
   - Slow AI (TC/RTD) at ≤ R in separate tasks
 - Share timing: route master SampleClock/StartTrigger from first fast AI task to others where supported
+
+### Read robustness and health (real path)
+- Per-device fast AI tasks: channels are grouped by physical device and read per task to avoid cross-device routing constraints.
+- Adaptive read timeouts with warm-up:
+  - For fast AI reads per device: timeout_fast = max(n/fast_rate + margin, 2.5/recording_rate_hz), where n=oversample factor (default 10).
+  - For AI-Temp: timeout_temp = max(1/recording_rate_hz + margin, 2.5/recording_rate_hz).
+  - For DI: timeout_di = max(1/recording_rate_hz + margin, 2.0/recording_rate_hz).
+  - A warm-up window of approximately n/fast_rate + 0.05 s is honored at task start; read failures during warm-up do not increment health counters.
+- Per-task isolation: each device task read is wrapped in its own try/except so a single device timeout does not prevent other devices from updating.
+- Failure accounting: `consec_failures` increments only when no inputs (fast AI, AI-Temp, DI) succeed during a tick; any successful read resets the counter and updates `last_good_read_ts`.
+- Buffering: fast AI tasks configure `samps_per_chan ≈ 2×fast_rate` to increase on-device buffering headroom.
+- Exposed health telemetry (optional, via config `health.expose_status_channels: true`):
+  - `NI_DAQ/health_ok` (0/1), `NI_DAQ/consec_failures`, `NI_DAQ/last_good_read_age_s`, `NI_DAQ/task_fast_alive`.
+
+#### Failure injection tool (for testing)
+Use the control tool to inject read failures and verify health behavior:
+
+```bash
+py -m src.tools.inject_control --plugin NI_DAQ --mode read_error --count 3
+```
+
+Tune sensitivity in `configs/ni_daq.yaml`:
+
+```yaml
+health: { poll_hz: 2, read_fail_warn_threshold: 10, read_fail_fault_threshold: 30, expose_status_channels: true }
+acquisition: { read_timeout_margin_s: 0.15 }
+```
 
 ### UI Flow
 - Right-click NI DAQ tile → Configure: module discovery, channel list, add/edit channel, scaling, alarms, enable/disable

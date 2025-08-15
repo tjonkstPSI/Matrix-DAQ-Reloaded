@@ -40,7 +40,7 @@ hardware:
 
 plugins:
   - id: "NI_DAQ"
-    description: "NI cDAQ acquisition: discovery helper generates structured YAML (categorized by module family); sim emits configured channels; real path supports AI voltage (10×R oversample+average), AI temperature at R, DI on-demand; scaling/units and aliases from config"
+    description: "NI cDAQ acquisition: discovery helper generates structured YAML (categorized by module family); sim emits configured channels; real path supports AI voltage (10×R oversample+average), AI temperature at R, DI on-demand; per-device fast AI tasks with adaptive timeouts and warm-up; scaling/units and aliases from config"
   - id: "CAN"
     description: "Import DBC/XML, discover/select CAN signals with aliases; configure buses and acquire via NI-XNET"
   - id: "CCP"
@@ -217,6 +217,7 @@ config:
     - "Metadata fields"
     - "Calculated expressions"
     - "Segmentation policy"
+    - "Watchdog settings (optional)"
       - "Per-plugin enable/disable (enabled: true|false)"
   storage_locations:
     temp_runs: "C:\\ProgramData\\PSI\\Test Data"
@@ -407,6 +408,7 @@ system_health:
   watchdog:
     ni_daq:
       enabled: true
+        notes: "Health worker tracks consec_failures and last_good_read_age_s; failures increment only when no device read succeeds in a tick; warm-up window suppresses early counts. Optional telemetry channels exposed via config."
       modes:
         driver:
           refresh_rate_hz_default: 2

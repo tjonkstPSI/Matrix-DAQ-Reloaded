@@ -294,6 +294,8 @@ class Orchestrator:
                                 self._handle_do_write(ctrl_msg)
                             elif ctrl_msg.get("type") == "ao_write":
                                 self._handle_ao_write(ctrl_msg)
+                            elif ctrl_msg.get("type") == "plugin_inject_fail":
+                                self._handle_inject_fail(ctrl_msg)
                         except Exception as e:
                             try:
                                 print(f"[WARN] Control handling error: {e}")
@@ -416,6 +418,8 @@ class Orchestrator:
                                 self._handle_do_write(ctrl_msg)
                             elif ctrl_msg.get("type") == "ao_write":
                                 self._handle_ao_write(ctrl_msg)
+                            elif ctrl_msg.get("type") == "plugin_inject_fail":
+                                self._handle_inject_fail(ctrl_msg)
                         except Exception as e:
                             try:
                                 print(f"[WARN] Control handling error: {e}")
@@ -573,6 +577,27 @@ class Orchestrator:
 
     def request_stop(self) -> None:
         self._running = False
+
+    def _handle_inject_fail(self, msg: Dict[str, Any]) -> None:
+        plugin = str(msg.get("plugin", ""))
+        mode = str(msg.get("mode", "read_error"))
+        count = int(msg.get("count", 1))
+        duration_s = float(msg.get("duration_s", 0.0))
+        if not plugin:
+            return
+        try:
+            p = self.plugins.get(plugin)
+            if not p:
+                print(f"[WARN] Inject fail ignored: plugin not found: {plugin}")
+                return
+            if hasattr(p, "inject_failure"):
+                getattr(p, "inject_failure")(mode, count, duration_s)
+                print(f"[INFO] Injected failure into {plugin}: mode={mode} count={count} duration_s={duration_s}")
+        except Exception as e:
+            try:
+                print(f"[WARN] Inject fail error: {e}")
+            except Exception:
+                pass
 
     def stop(self) -> None:
         self._running = False

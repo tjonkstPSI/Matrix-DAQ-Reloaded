@@ -1,8 +1,20 @@
 # Author: T. Onkst | Date: 08122025
 enabled: true
 
-mode: sim # real or sim
-recording_rate_hz: 10
+mode: real # real or sim
+recording_rate_hz: 100
+
+health: { poll_hz: 2, read_fail_warn_threshold: 10, read_fail_fault_threshold: 30, expose_status_channels: true }
+acquisition:
+  read_timeout_margin_s: 0.5
+
+watchdog:
+  enabled: false            # Set true to enable when hardware is available
+  mode: driver              # driver | digital_loopback
+  refresh_rate_hz: 2        # driver mode
+  timeout_ms: 1000          # driver mode
+  expir_states: {}          # optional mapping of DO alias -> 0|1 safe state on watchdog expiry
+
 decimation:
   filter: IIR_Butterworth
   cutoff_hz: auto
@@ -49,8 +61,8 @@ channels:
       b: 0.0
       unit: V
   - phys: AGENTMod2/ai0
-    alias: AGENTMod2_ai0
-    enabled: false
+    alias: qPR_EngOil
+    enabled: True
     range_v:
       min: 0
       max: 10
@@ -387,7 +399,7 @@ channels:
     unit: C
   - phys: MATRIXMod1/ai0
     alias: qTP_Amb
-    enabled: True
+    enabled: false
     sensor:
       type: TC
       subtype: K
@@ -742,7 +754,7 @@ channels:
   ao:
   - phys: "Dev1/ao0"
     alias: "qAO_Ch0"
-    enabled: true
+    enabled: True
     range_v: { min: 0, max: 10 }
     initial: 0.0
     unit: "V"
