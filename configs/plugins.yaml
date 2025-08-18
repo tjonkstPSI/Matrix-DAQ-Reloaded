@@ -1,0 +1,13 @@
+selected_plugins:
+- NI_DAQ
+- Calculated_Channels
+- CAN
+- EngineTest
+- CCP
+- Channel_Manager
+data_root: C:/Projects/Python/Matrix_v2_retry/runs
+test_cell: '0'
+data_mode: sim
+imported_paths:
+- C:/Projects/Python/Matrix_v2_retry/configs/calculated_channels.yaml
+- C:/Projects/Python/Matrix_v2_retry/configs/can.yaml
