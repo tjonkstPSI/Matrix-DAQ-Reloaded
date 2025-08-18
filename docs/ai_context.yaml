@@ -67,15 +67,15 @@ workflows:
     name: "Session setup"
     trigger: "User"
     steps:
-      - "Select plugins"
-      - "Import previous configuration (optional)"
-      - "Set local data root and test folder postfix"
+      - "Show splash screen with version and logo while loading"
+      - "Launch configuration dialog: select plugins, choose data root folder, enter Test Cell name, toggle data mode (real|sim), optional: import previous configuration"
+      - "On 'Launch': apply selections, write temp launch settings, open Console"
       - "Console shows plugin health (green/red)"
       - "Streaming starts (not recording)"
   - id: "WF-LOCK_START_STOP"
     name: "Lock and run"
     steps:
-      - "Lock test: prompt EngineTest metadata; Pre-Test Comments"
+      - "Lock test: prompt EngineTest metadata; capture Pre-Test Comments"
       - "Start Test: begin recording at rate R (≤100 Hz)"
       - "Segment rollover by time or size when thresholds exceeded"
       - "Stop Recording: prompt Post-Test Comments"
@@ -211,6 +211,7 @@ config:
     - "configs/vaisala.yaml"
     - "configs/engine_test.yaml"
     - "configs/channel_manager.yaml"
+    - "configs/plugins.yaml"  # launch selections persisted here
   parameters:
     - "Channel sets"
     - "Rates"
@@ -218,7 +219,9 @@ config:
     - "Calculated expressions"
     - "Segmentation policy"
     - "Watchdog settings (optional)"
-      - "Per-plugin enable/disable (enabled: true|false)"
+    - "Per-plugin enable/disable (enabled: true|false)"
+    - "Launch defaults: selected plugins, data root, Test Cell, data mode (real|sim)"
+    - "Launch selections persisted to configs/plugins.yaml (do not persist sim override)"
   storage_locations:
     temp_runs: "C:\\ProgramData\\PSI\\Test Data"
     final_runs: "User-selected local folder"
@@ -392,12 +395,34 @@ ui:
       shutdown: "red"
   status:
     connection_indicator: "Connected/Disconnected via freshness of telemetry (< 1 s)"
+    splash_screen:
+      shows: ["Logo", "Version string"]
+      duration: "until Core + UI ready"
+    launch_configuration_dialog:
+      fields: ["Plugin multi-select", "Data root (folder browser)", "Test Cell (text)", "Data mode (real|sim)", "Import configs from previous run (file dialog)"]
+      actions: ["Launch", "Exit"]
+      behavior:
+        - "Launch applies selections (including setting per-plugin mode=sim at runtime only when data mode=sim) and opens Console"
+        - "Exit closes the application"
+    console:
+      indicators: ["Recording (on/off)", "Current status (Ready/Idle, Locking, Locked, Test Running, Saving)", "Last error message"]
+      status_label_mapping:
+        Ready/Idle: ["ConsoleReady"]
+        Locking: ["Configuring"]
+        Locked: ["Locked"]
+        Test Running: ["Recording", "SegmentRollover"]
+        Saving: ["Stopping", "Exporting"]
   plugin_tiles:
     right_click_menu: ["Configure", "Show Error", "Reset Error"]
     health_colors: { green: "OK", red: "Error" }
   controls:
+    primary: ["Lock Test", "Start Test", "Stop Test", "Export Workbook", "Log Statistics (manual)"]
     loadbank: ["fan_on_off (always on policy)", "setpoint", "accept"]
     analog_out: ["selected 0–10 V channels"]
+  configure_dialogs:
+    behavior:
+      - "Per-plugin Configure opens a dialog reflecting that plugin's YAML; save writes back to configs/<plugin>.yaml"
+      - "Validation errors are shown inline; on save success, plugin may be reloaded or flagged for relaunch depending on change scope"
 
 error_handling:
   io_retry: "Per plugin retry with backoff"
