@@ -31,6 +31,11 @@ Deliver a Windows desktop app that streams, visualizes, and records engine test 
   - Statistics: rolling/fixed windows; selectable metrics; manual Log Statistics; per‑stat Excel tabs
   - Calculated Channels: restricted Python eval; rolling helpers; boolean latching; dependency ordering
   - UI: dual windows; plots with up to 3 Y axes; alarm drawer; controls panel polish
+    - Launch configuration dialog (plugin selection, data root, test cell, data mode, import configs)
+    - Data display selection (up to 2), opened as separate windows
+    - Console layout compact: vertical plugin list; tiles ordered `Channel_Manager`, `EngineTest`, then others alphabetically
+    - Tile color policy: green=healthy/valid, red=error/invalid, grey=disconnected
+    - Primary stateful control: Lock Test → Start Test → Stop Test; Close Plugins action resets to launcher
   - Watchdog: driver mode on 9188/9189; loopback fallback; fault behavior (stop/save)
 
 - Month 4–5
@@ -70,7 +75,7 @@ Deliver a Windows desktop app that streams, visualizes, and records engine test 
 - Excel export per-stat tabs (from StatsSnapshots), formatting polish
 - Optional disk space guardrail; config-driven export options
 - Channel Manager: optional AlarmSummary channels (deferred); global banner and alarm drawer (deferred)
-- NI DAQ: real read path hardening (fast AI 10×R average to R; AI temperature at R; DI on‑demand at R; explicit task teardown); UI channel picker (later)
+- NI DAQ: real read path hardening (fast AI 10×R average to R; AI temperature at R; DI on‑demand at R; explicit task teardown; backlog‑aware adaptive drain; larger input buffers; per‑task isolation); UI channel picker (later)
 - LoadBank real control path (model map → reads/writes)
 - Plugin enable/disable: add `enabled: true|false` at root of each plugin YAML; orchestrator skips disabled plugins (config/validate/start/run/aliases)
 
@@ -78,7 +83,8 @@ Deliver a Windows desktop app that streams, visualizes, and records engine test 
 - NI DAQ
   - Implement task creation for AI/DI/DO/AO (start with AI fast path) (DONE: per-device fast AI tasks)
   - Shared timebase/start trigger; oversample 10×R; 4th‑order IIR Butterworth; decimate to R
-  - Real read path robustness (DONE): per-device task isolation, adaptive timeouts with warm-up suppression, larger device buffers; health telemetry channels optional
+  - Real read path robustness (DONE): per-device task isolation, adaptive timeouts with warm-up suppression, larger device buffers; backlog-aware adaptive drain to prevent -200279; health telemetry channels optional
+  - Future (optional): per-device fast‑AI acquisition thread reading DAQmx continuously into a queue; Core tick consumes/decimates latest n samples
   - Crash‑safe buffer; chunked write; watchdog (driver mode on 9188/9189; loopback fallback)
 - CAN/CCP
   - XNET integration (v23.3): database import, multi‑bus, signal selection; timestamps align to R

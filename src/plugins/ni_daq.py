@@ -60,6 +60,12 @@ class NiDAQPlugin(BasePlugin):
         self._fast_warmup_until: float = 0.0
         # Watchdog config (validation only for now)
         self._watchdog_cfg: Dict[str, Any] = {}
+        # Short-lived diagnostics counters for fast AI reads (per device)
+        self._fast_diag_counts: Dict[str, int] = {}
+        # Short-lived error diagnostics counters for fast AI reads (per device)
+        self._fast_err_counts: Dict[str, int] = {}
+        # Last-read timestamps per fast device (for adaptive read sizing)
+        self._fast_last_read_ts: Dict[str, float] = {}
 
     def _nidaq_available(self) -> bool:
         try:
@@ -423,8 +429,18 @@ class NiDAQPlugin(BasePlugin):
                             continue
                     if local_aliases:
                         try:
-                            t.timing.cfg_samp_clk_timing(rate=fast_rate, sample_mode=AcquisitionType.CONTINUOUS, samps_per_chan=int(max(1, 2 * int(fast_rate))))
-                            print(f"[NIDAQ] AI_V timing: device={device} rate={fast_rate} samps_per_chan={int(max(1, 2 * int(fast_rate)))}")
+                            t.timing.cfg_samp_clk_timing(
+                                rate=fast_rate,
+                                sample_mode=AcquisitionType.CONTINUOUS,
+                                samps_per_chan=int(max(1, 2 * int(fast_rate)))
+                            )
+                            # Increase input buffer to provide more headroom against jitter (e.g., NI-9239 on 9189)
+                            try:
+                                t.in_stream.input_buf_size = int(max(1, 10 * int(fast_rate)))
+                                buf_sz = int(max(1, 10 * int(fast_rate)))
+                            except Exception:
+                                buf_sz = int(max(1, 2 * int(fast_rate)))
+                            print(f"[NIDAQ] AI_V timing: device={device} rate={fast_rate} samps_per_chan={int(max(1, 2 * int(fast_rate)))} buf={buf_sz}")
                         except Exception as e:
                             try:
                                 print(f"[NIDAQ] AI_V timing error: device={device} {e}")
@@ -441,6 +457,14 @@ class NiDAQPlugin(BasePlugin):
                                 pass
                             raise
                         self._fast_tasks.append({"task": t, "device": device, "aliases": local_aliases, "alias_to_cfg": alias_to_cfg})
+                        # Reset diagnostics counter for this device
+                        try:
+                            self._fast_diag_counts[device] = 0
+                            self._fast_err_counts[device] = 0
+                            import time as _t
+                            self._fast_last_read_ts[device] = _t.time()
+                        except Exception:
+                            pass
                         # Do not set t=None so we keep the task open; will be closed in teardown
                         t = None
                 finally:
@@ -650,29 +674,108 @@ class NiDAQPlugin(BasePlugin):
                     task = ft.get("task")
                     aliases = ft.get("aliases", [])
                     alias_to_cfg = ft.get("alias_to_cfg", {})
+                    device = str(ft.get("device", ""))
                     if task is None or not aliases:
                         continue
                     try:
-                        samples = task.read(number_of_samples_per_channel=n, timeout=timeout_fast)
+                        import time as _t
+                        t0r = _t.time()
+                        # Capture available samples before read for diagnostics
+                        try:
+                            avail_before = int(getattr(task.in_stream, "avail_samp_per_chan", 0))
+                        except Exception:
+                            avail_before = -1
+                        # Adaptive read sizing: read at least n, but match produced samples since last read
+                        try:
+                            last_ts = float(self._fast_last_read_ts.get(device, t0r))
+                        except Exception:
+                            last_ts = t0r
+                        produced = int(max(0.0, (t0r - last_ts)) * max(1.0, self._fast_rate) + 0.5)
+                        # Drain backlog aggressively: prefer available buffer count
+                        read_count = max(n, produced, max(0, avail_before))
+                        # Clamp to avoid overly large drains at once
+                        read_count = min(read_count, int(20 * n))
+                        samples = task.read(number_of_samples_per_channel=int(read_count), timeout=timeout_fast)
+                        dt_ms = (_t.time() - t0r) * 1000.0
+                        # Update last-read timestamp on success
+                        try:
+                            self._fast_last_read_ts[device] = t0r
+                        except Exception:
+                            pass
                         if isinstance(samples, list) and samples and isinstance(samples[0], list):
                             for idx, alias in enumerate(aliases):
                                 ch_samples = samples[idx]
-                                avg = sum(ch_samples) / float(len(ch_samples) or 1)
+                                # Average the most recent n samples to preserve decimation behavior
+                                take = ch_samples[-n:] if len(ch_samples) >= n else ch_samples
+                                avg = sum(take) / float(len(take) or 1)
                                 ch = alias_to_cfg.get(alias, {})
                                 sc = ch.get("scaling") or {}
                                 m = float(sc.get("m", 1.0)); b = float(sc.get("b", 0.0))
                                 vals[alias] = m * avg + b
                             any_success = True
                         elif isinstance(samples, list):
-                            avg = sum(samples) / float(len(samples) or 1)
+                            take = samples[-n:] if len(samples) >= n else samples
+                            avg = sum(take) / float(len(take) or 1)
                             alias = aliases[0]
                             ch = alias_to_cfg.get(alias, {})
                             sc = ch.get("scaling") or {}
                             m = float(sc.get("m", 1.0)); b = float(sc.get("b", 0.0))
                             vals[alias] = m * avg + b
                             any_success = True
-                    except Exception:
-                        # Isolate failures of one device/task from others
+                        # Diagnostics: log first 20 reads per device
+                        try:
+                            cnt = int(self._fast_diag_counts.get(device, 0))
+                            if cnt < 20:
+                                def _shape(x: Any) -> str:
+                                    try:
+                                        import numpy as _np  # type: ignore
+                                        if isinstance(x, _np.ndarray):
+                                            return f"np.ndarray{x.shape}"
+                                    except Exception:
+                                        pass
+                                    if isinstance(x, list):
+                                        if x and isinstance(x[0], list):
+                                            return f"list[{len(x)}x{len(x[0])}]"
+                                        return f"list[{len(x)}]"
+                                    return type(x).__name__
+                                print(f"[NIDAQ] AI_V read diag: device={device} dt_ms={dt_ms:.1f} shape={_shape(samples)} read_count={int(read_count)} timeout={timeout_fast:.3f} avail_before={avail_before}")
+                                self._fast_diag_counts[device] = cnt + 1
+                        except Exception:
+                            pass
+                    except Exception as e:
+                        # Isolate failures of one device/task from others; emit first 20 diagnostics
+                        try:
+                            import time as _t
+                            dt_ms = (_t.time() - t0r) * 1000.0
+                        except Exception:
+                            dt_ms = 0.0
+                        try:
+                            # Always log first 10 errors per device verbosely
+                            ec = int(self._fast_err_counts.get(device, 0))
+                            if ec < 10:
+                                # Try to pull DAQmx error code when available
+                                try:
+                                    from nidaqmx.errors import DaqError  # type: ignore
+                                except Exception:
+                                    DaqError = None  # type: ignore
+                                err_code = getattr(e, "error_code", None)
+                                err_msg = str(e)
+                                try:
+                                    avail_now = int(getattr(task.in_stream, "avail_samp_per_chan", 0))
+                                except Exception:
+                                    avail_now = -1
+                                if DaqError is not None and isinstance(e, DaqError):
+                                    print(f"[NIDAQ] AI_V read error: device={device} dt_ms={dt_ms:.1f} code={err_code} timeout={timeout_fast:.3f} avail_before={avail_before} avail_now={avail_now} msg={err_msg}")
+                                else:
+                                    print(f"[NIDAQ] AI_V read error: device={device} dt_ms={dt_ms:.1f} timeout={timeout_fast:.3f} avail_before={avail_before} avail_now={avail_now} msg={err_msg}")
+                                self._fast_err_counts[device] = ec + 1
+                            # Also continue lightweight diag counter for parity
+                            cnt = int(self._fast_diag_counts.get(device, 0))
+                            if cnt < 20:
+                                print(f"[NIDAQ] AI_V read diag: device={device} dt_ms={dt_ms:.1f} ERROR (timeout={timeout_fast:.3f})")
+                                self._fast_diag_counts[device] = cnt + 1
+                        except Exception:
+                            pass
                         pass
             # AI temperature
             if self._task_ai_temp is not None and self._ai_temp_aliases:

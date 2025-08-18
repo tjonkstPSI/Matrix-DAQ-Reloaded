@@ -29,6 +29,7 @@ except Exception:
 @dataclass
 class LaunchSelections:
     selected_plugins: List[str]
+    selected_displays: List[str]
     data_root: str
     test_cell: str
     data_mode: str  # 'real' | 'sim'
@@ -71,6 +72,29 @@ def _load_plugin_ids_from_context() -> List[str]:
         return base
 
 
+def _load_display_templates_from_context() -> List[str]:
+    ctx = _project_root() / "docs" / "ai_context.yaml"
+    try:
+        import yaml  # type: ignore
+        data = yaml.safe_load(ctx.read_text(encoding="utf-8"))
+        ui = data.get("ui", {}) or {}
+        displays = ui.get("displays", {}) or {}
+        templates = displays.get("templates", []) or []
+        # Ensure list of strings
+        out = [str(x) for x in templates if isinstance(x, str)]
+        return out or [
+            "AllChannelsTable (grouped by type)",
+            "PlotsBlank (user selects channels)",
+            "DialsGauges (configurable)",
+        ]
+    except Exception:
+        return [
+            "AllChannelsTable (grouped by type)",
+            "PlotsBlank (user selects channels)",
+            "DialsGauges (configurable)",
+        ]
+
+
 def _plugins_yaml_path() -> Path:
     return _project_root() / "configs" / "plugins.yaml"
 
@@ -93,6 +117,7 @@ def save_selections(sel: LaunchSelections) -> None:
     selected_with_required = list({*sel.selected_plugins, *ALWAYS_ON})
     doc = {
         "selected_plugins": selected_with_required,
+        "selected_displays": list(sel.selected_displays or []),
         "data_root": str(sel.data_root),
         "test_cell": str(sel.test_cell),
         # Persist data_mode selection for convenience; runtime will override per-plugin without writing plugin YAMLs
@@ -114,6 +139,7 @@ class LaunchDialog(QDialog):
         self.resize(720, 520)
         self._imported: List[str] = []
         self._plugin_ids = _load_plugin_ids_from_context()
+        self._display_templates = _load_display_templates_from_context()
         self._init_ui()
         self._load_previous()
 
@@ -127,6 +153,13 @@ class LaunchDialog(QDialog):
             item = QListWidgetItem(pid)
             self.list_plugins.addItem(item)
         v.addWidget(self.list_plugins)
+        # Displays multi-select (up to two) — directly below plugins
+        v.addWidget(QLabel("Select Data Displays (up to 2):"))
+        self.list_displays = QListWidget()
+        self.list_displays.setSelectionMode(QListWidget.MultiSelection)
+        for name in self._display_templates:
+            self.list_displays.addItem(QListWidgetItem(name))
+        v.addWidget(self.list_displays)
         # Data root + browse
         row1 = QHBoxLayout()
         row1.addWidget(QLabel("Data Root:"))
@@ -178,8 +211,9 @@ class LaunchDialog(QDialog):
             tc = str(prev.get("test_cell", ""))
             dm = str(prev.get("data_mode", "real")).lower()
             selected = set([str(x) for x in (prev.get("selected_plugins") or [])])
+            disp_sel = set([str(x) for x in (prev.get("selected_displays") or [])])
         except Exception:
-            pr, tc, dm, selected = "", "", "real", set()
+            pr, tc, dm, selected, disp_sel = "", "", "real", set(), set()
         self.edit_data_root.setText(pr)
         self.edit_test_cell.setText(tc)
         idx = max(0, self.combo_mode.findText("sim" if dm == "sim" else "real"))
@@ -187,6 +221,10 @@ class LaunchDialog(QDialog):
         for i in range(self.list_plugins.count()):
             it = self.list_plugins.item(i)
             if it.text() in selected:
+                it.setSelected(True)
+        for i in range(self.list_displays.count()):
+            it = self.list_displays.item(i)
+            if it.text() in disp_sel:
                 it.setSelected(True)
 
     def _choose_data_root(self) -> None:
@@ -211,17 +249,24 @@ class LaunchDialog(QDialog):
         selected: List[str] = []
         for it in self.list_plugins.selectedItems():
             selected.append(it.text())
+        selected_displays: List[str] = []
+        for it in self.list_displays.selectedItems():
+            selected_displays.append(it.text())
         data_root = self.edit_data_root.text().strip()
         test_cell = self.edit_test_cell.text().strip()
         data_mode = self.combo_mode.currentText().strip().lower()
         if not selected:
             QMessageBox.warning(self, "Missing selection", "Please select at least one plugin.")
             return
+        if len(selected_displays) > 2:
+            QMessageBox.warning(self, "Too many displays", "Select up to two data displays.")
+            return
         if not data_root:
             QMessageBox.warning(self, "Missing data root", "Please choose a data root folder.")
             return
         save_selections(LaunchSelections(
             selected_plugins=selected,
+            selected_displays=selected_displays,
             data_root=data_root,
             test_cell=test_cell,
             data_mode=data_mode,

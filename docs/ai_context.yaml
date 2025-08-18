@@ -41,6 +41,9 @@ hardware:
 plugins:
   - id: "NI_DAQ"
     description: "NI cDAQ acquisition: discovery helper generates structured YAML (categorized by module family); sim emits configured channels; real path supports AI voltage (10×R oversample+average), AI temperature at R, DI on-demand; per-device fast AI tasks with adaptive timeouts and warm-up; scaling/units and aliases from config"
+    engineering_notes:
+      - "Fast-AI robustness: increase device input buffer and adaptively drain based on backlog to avoid -200279 on network cDAQ + NI‑9239"
+      - "Future option: move fast‑AI reads to a lightweight acquisition thread per device; continuously drain task buffer into a per-device queue; Core tick consumes latest samples and decimates to n (most recent 10×R) for publication"
   - id: "CAN"
     description: "Import DBC/XML, discover/select CAN signals with aliases; configure buses and acquire via NI-XNET"
   - id: "CCP"
@@ -231,7 +234,7 @@ config:
     destination: "Run folder under config_snapshot/ (per-plugin YAML copies)"
   core:
     run_mode: "demo | continuous"
-    tick_interval_s: "publish interval (e.g., 0.1 for 10 Hz)"
+    tick_interval_s: "publish interval (e.g., 0.1 for 10 Hz). Drives telemetry/record row cadence; recommended align to 1/R"
     plugin_enablement:
       description: "Each plugin YAML may include an 'enabled' boolean at the root. Orchestrator loads all configs but only configures/starts plugins where enabled=true. Disabled plugins are skipped for alias aggregation and runtime steps."
 
@@ -399,10 +402,10 @@ ui:
       shows: ["Logo", "Version string"]
       duration: "until Core + UI ready"
     launch_configuration_dialog:
-      fields: ["Plugin multi-select", "Data root (folder browser)", "Test Cell (text)", "Data mode (real|sim)", "Import configs from previous run (file dialog)"]
+      fields: ["Plugin multi-select", "Select Data Displays (up to 2)", "Data root (folder browser)", "Test Cell (text)", "Data mode (real|sim)", "Import configs from previous run (file dialog)"]
       actions: ["Launch", "Exit"]
       behavior:
-        - "Launch applies selections (including setting per-plugin mode=sim at runtime only when data mode=sim) and opens Console"
+        - "Launch applies selections (including setting per-plugin mode=sim at runtime only when data mode=sim) and opens Console; selected Data Displays open as separate windows"
         - "Exit closes the application"
     console:
       indicators: ["Recording (on/off)", "Current status (Ready/Idle, Locking, Locked, Test Running, Saving)", "Last error message"]
@@ -414,9 +417,12 @@ ui:
         Saving: ["Stopping", "Exporting"]
   plugin_tiles:
     right_click_menu: ["Configure", "Show Error", "Reset Error"]
-    health_colors: { green: "OK", red: "Error" }
+    health_colors: { green: "OK/valid", red: "Error/invalid", grey: "Disconnected" }
   controls:
     primary: ["Lock Test", "Start Test", "Stop Test", "Export Workbook", "Log Statistics (manual)"]
+    primary_button: "Stateful: Lock Test → Start Test → Stop Test"
+    console_actions:
+      - "Close Plugins: closes Console and all display windows, returns to Launch Configuration"
     loadbank: ["fan_on_off (always on policy)", "setpoint", "accept"]
     analog_out: ["selected 0–10 V channels"]
   configure_dialogs:

@@ -30,6 +30,7 @@ Configure and acquire data from NI cDAQ modules for analog input (voltage, therm
 - Fast channels: `ai_voltage` sampled at 10×R and anti‑alias averaged to R (sim and real); DI read at R (on‑demand) for now
 - Slow channels: `ai_temp` (TC/RTD) at ≤ R; configure CJC/wires where supported; fallback to voltage if unsupported
 - Error handling: invalid/unsupported physical channels are skipped; DAQmx tasks are explicitly closed on stop to avoid resource warnings
+- Cadence note: row cadence is set by Core `tick_interval_s` (recommended ≈ 1/R); each NI‑DAQ value is an average over ~1/R from the 10×R fast samples
 
 ### Watchdog (Chassis Connectivity Check)
 - Purpose: continuously verify NI cDAQ connectivity and detect host↔device link loss.
@@ -143,7 +144,8 @@ channels:
   - A warm-up window of approximately n/fast_rate + 0.05 s is honored at task start; read failures during warm-up do not increment health counters.
 - Per-task isolation: each device task read is wrapped in its own try/except so a single device timeout does not prevent other devices from updating.
 - Failure accounting: `consec_failures` increments only when no inputs (fast AI, AI-Temp, DI) succeed during a tick; any successful read resets the counter and updates `last_good_read_ts`.
-- Buffering: fast AI tasks configure `samps_per_chan ≈ 2×fast_rate` to increase on-device buffering headroom.
+- Buffering: fast AI tasks configure `samps_per_chan ≈ 2×fast_rate` and increase `input_buf_size ≈ 10×fast_rate` for headroom.
+- Adaptive drain: read size per tick is `max(n, produced_since_last, avail_samp_per_chan)` (clamped to 20×n) to actively drain backlog and prevent `-200279`.
 - Exposed health telemetry (optional, via config `health.expose_status_channels: true`):
   - `NI_DAQ/health_ok` (0/1), `NI_DAQ/consec_failures`, `NI_DAQ/last_good_read_age_s`, `NI_DAQ/task_fast_alive`.
 
@@ -169,6 +171,7 @@ acquisition: { read_timeout_margin_s: 0.15 }
   - Loopback mode: select DO/DI lines, set toggle rate and thresholds; Test Watchdog (start/stop) with live status
 - Validation on save; errors surfaced inline; tile status turns green/red accordingly
 - Show Error / Reset Error available from context menu
+- Console tiles color policy: green (healthy/valid), red (error/invalid), grey (disconnected); NI_DAQ tile turns green on valid YAML and healthy reads
 
 ### Outputs and Metadata
 - Channel metadata recorded in sidecar YAML (alias, id, units, scaling, category, hardware `device` path)

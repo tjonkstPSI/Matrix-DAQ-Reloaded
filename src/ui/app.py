@@ -85,7 +85,14 @@ def main(argv: list[str] | None = None) -> int:
             if dlg.exec() != QDialog.Accepted:
                 app.quit()
                 return
-        win.show()
+        # Show the console window after launch
+        try:
+            from .widgets.console import ConsoleWindow
+            # Keep a persistent reference to prevent premature GC
+            app._console = ConsoleWindow()  # type: ignore[attr-defined]
+            app._console.show()
+        except Exception:
+            win.show()
 
     # Short delay to show splash; later we can tie this to real initialization
     QTimer.singleShot(1200, _show_main)
