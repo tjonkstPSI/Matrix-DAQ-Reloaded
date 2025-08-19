@@ -1,9 +1,9 @@
 enabled: true
 required_fields:
-  engine_type: 53L
-  engine_serial_number: '12345'
-  test_type: Durability
-  test_operator: TO
-  project_number: '1234'
+  engine_type: test
+  engine_serial_number: test
+  test_type: test
+  test_operator: test
+  project_number: test
 pre_test_comments: ''
 post_test_comments: ''

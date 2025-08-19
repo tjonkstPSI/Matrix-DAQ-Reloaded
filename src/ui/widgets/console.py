@@ -76,7 +76,9 @@ class ConsoleWindow(QMainWindow):
         self.btn_primary = QPushButton("Lock Test"); self.btn_primary.setEnabled(False)
         self.btn_primary.clicked.connect(self._on_primary_clicked)  # type: ignore
         self.btn_export = QPushButton("Export Workbook"); self.btn_export.setEnabled(False)
+        self.btn_export.clicked.connect(self._on_export_clicked)  # type: ignore
         self.btn_stats = QPushButton("Log Statistics"); self.btn_stats.setEnabled(False)
+        self.btn_stats.clicked.connect(self._on_stats_clicked)  # type: ignore
         for b in (self.btn_primary, self.btn_export, self.btn_stats):
             cv.addWidget(b)
         v.addWidget(controls_box)
@@ -232,6 +234,11 @@ class ConsoleWindow(QMainWindow):
         connected = (now - self._last_rx_ts) < 1.0 if self._last_rx_ts > 0 else False
         can_lock = connected and all(self._plugin_config_ok(pid) for pid in self._tiles.keys())
         self.btn_primary.setEnabled(can_lock)
+        # Export allowed only when connected and not recording
+        self.btn_export.setEnabled(connected and not rec)
+        # Log Statistics allowed only when connected, recording, and Statistics plugin selected
+        has_stats = "Statistics" in self._tiles
+        self.btn_stats.setEnabled(connected and rec and has_stats)
         # Toggle label based on recording flag and an internal lock flag
         label = "Start Recording" if self._locked and not rec else ("Stop Recording" if self._locked and rec else "Lock Test")
         if self.btn_primary.text() != label:
@@ -275,6 +282,47 @@ class ConsoleWindow(QMainWindow):
                 table = self._display_windows["AllChannelsTable"].centralWidget()
                 if hasattr(table, "update_data"):
                     table.update_data(vals, units)
+        except Exception:
+            pass
+
+    def _on_export_clicked(self) -> None:
+        # Request Excel export from Core; Core will export latest run (run_dir or last_run_dir)
+        ctrl = None
+        try:
+            from src.core.ipc.bus import create_ui_control_push
+            ctrl = create_ui_control_push()
+        except Exception:
+            ctrl = None
+        if ctrl is None:
+            return
+        try:
+            msg = json.dumps({"type": "export_excel"}).encode("utf-8")
+            ctrl["control_push"].send(msg)
+            self.btn_export.setEnabled(False)
+            try:
+                self.txt_messages.append("[INFO] Export requested; running in background…")
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def _on_stats_clicked(self) -> None:
+        # Request manual stats snapshot from Core
+        ctrl = None
+        try:
+            from src.core.ipc.bus import create_ui_control_push
+            ctrl = create_ui_control_push()
+        except Exception:
+            ctrl = None
+        if ctrl is None:
+            return
+        try:
+            msg = json.dumps({"type": "stats_snapshot"}).encode("utf-8")
+            ctrl["control_push"].send(msg)
+            try:
+                self.txt_messages.append("[INFO] Manual statistics snapshot requested.")
+            except Exception:
+                pass
         except Exception:
             pass
 
