@@ -79,6 +79,12 @@ Deliver a Windows desktop app that streams, visualizes, and records engine test 
 - LoadBank real control path (model map → reads/writes)
 - Plugin enable/disable: add `enabled: true|false` at root of each plugin YAML; orchestrator skips disabled plugins (config/validate/start/run/aliases)
 
+#### Continuous improvements (queued)
+- Core: Non-blocking Start Recording to avoid brief telemetry stall/"Disconnected" flicker in UI
+  - Keep main tick publishing while run folder, sinks, and Parquet writer initialize (background thread)
+  - Optionally publish this tick first, then process control messages
+  - UI: small grace window (e.g., 2 s) during transition to suppress transient grey tiles
+
 ### To‑do (detailed)
 - NI DAQ
   - Implement task creation for AI/DI/DO/AO (start with AI fast path) (DONE: per-device fast AI tasks)

@@ -272,7 +272,8 @@ def export_excel(run_dir: Path, engine: str = "openpyxl", rows_per_file: int = E
         frames: List["pd.DataFrame"] = []
 
         def flush_one(part: int, frames_list: List["pd.DataFrame"]) -> None:
-            out_stem = f"{run_dir.name}__{f.stem}"
+            # Build Excel base name: Data_<run_folder_name> to match Parquet coalesced stem
+            out_stem = f"Data_{run_dir.name}"
             out_name = f"{out_stem}.xlsx" if part == 1 and total_rows <= rows_per_file else f"{out_stem}.{part}.xlsx"
             out_path = exports_dir / out_name
             with pd.ExcelWriter(out_path, engine=engine) as writer:

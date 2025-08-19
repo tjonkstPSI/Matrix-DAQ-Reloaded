@@ -201,6 +201,26 @@ class ParquetWriter:
             if not seg_dirs:
                 return
             multi = len(seg_dirs) > 1
+            # Load run metadata to customize output file names
+            run_meta = {}
+            try:
+                import yaml as _yaml  # type: ignore
+                meta_p = self.run_dir / "metadata.yaml"
+                if meta_p.exists():
+                    run_meta = _yaml.safe_load(meta_p.read_text(encoding="utf-8")) or {}
+            except Exception:
+                run_meta = {}
+            run_stem = f"Data_{self.run_dir.name}"
+            try:
+                # Prefer explicit fields to reconstruct name if needed
+                tc = str(run_meta.get("test_cell", "")).strip()
+                et = str(run_meta.get("engine_type", "")).strip()
+                es = str(run_meta.get("engine_serial_number", "")).strip()
+                tt = str(run_meta.get("test_type", "")).strip()
+                if tc and et and es and tt:
+                    run_stem = f"Data_{tc}_{self.run_dir.name.split('_',1)[1]}" if '_' in self.run_dir.name else f"Data_{self.run_dir.name}"
+            except Exception:
+                pass
             for seg_dir in seg_dirs:
                 # Collect chunk files (sorted)
                 chunk_files = sorted([f for f in seg_dir.iterdir() if f.suffix.lower() == ".parquet" and f.is_file()])
@@ -223,7 +243,7 @@ class ParquetWriter:
                     idx = int(seg_dir.name.split("_")[1])
                 except Exception:
                     idx = 1
-                out_name = "data.parquet" if not multi else f"data_{idx}.parquet"
+                out_name = f"{run_stem}.parquet" if not multi else f"{run_stem}_{idx}.parquet"
                 out_path = self.data_dir / out_name
                 writer = None
                 try:

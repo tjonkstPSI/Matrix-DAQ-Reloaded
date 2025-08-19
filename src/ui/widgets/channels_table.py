@@ -23,7 +23,7 @@ class ChannelsTable(QWidget):
         self.table.setHorizontalHeaderLabels(["Alias", "Value", "Unit"])
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Fixed)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -45,14 +45,14 @@ class ChannelsTable(QWidget):
                 self.table.setItem(row, 0, QTableWidgetItem(str(alias)))
                 self.table.setItem(row, 1, QTableWidgetItem(""))
                 self.table.setItem(row, 2, QTableWidgetItem(str(units.get(alias, ""))))
-            # After initial population, autosize and then fix widths
-            self.table.resizeColumnsToContents()
+            # After initial population, set fixed width for Value column (10 digits + 2 decimals)
             if not self._columns_fixed:
-                for col in range(3):
-                    w = self.table.columnWidth(col)
-                    self.table.horizontalHeader().setSectionResizeMode(col, QHeaderView.Fixed)
-                    self.table.setColumnWidth(col, w)
-                    self._max_col_px[col] = max(self._max_col_px[col], w)
+                fm = self.table.fontMetrics()
+                padding = 24
+                template = "0000000000.00"  # 10 digits + decimal + 2 decimals
+                w_val = fm.horizontalAdvance(template) + padding
+                self.table.setColumnWidth(1, w_val)
+                # Keep Alias column stretch and Unit autosizing
                 self._columns_fixed = True
         # Update values and units
         for row, alias in enumerate(self._aliases):
@@ -74,26 +74,6 @@ class ChannelsTable(QWidget):
                 self.table.item(row, 2).setText(str(u))
             except Exception:
                 pass
-            # Dynamically grow column widths if content is wider than current
-            try:
-                fm = self.table.fontMetrics()
-                padding = 24
-                # Alias
-                w0 = fm.horizontalAdvance(str(alias)) + padding
-                if w0 > self._max_col_px[0]:
-                    self._max_col_px[0] = w0
-                    self.table.setColumnWidth(0, w0)
-                # Value
-                w1 = fm.horizontalAdvance(text) + padding
-                if w1 > self._max_col_px[1]:
-                    self._max_col_px[1] = w1
-                    self.table.setColumnWidth(1, w1)
-                # Unit
-                w2 = fm.horizontalAdvance(str(units.get(alias, ""))) + padding
-                if w2 > self._max_col_px[2]:
-                    self._max_col_px[2] = w2
-                    self.table.setColumnWidth(2, w2)
-            except Exception:
-                pass
+            # Value column width is fixed; keep alias stretch and unit auto
 
 

@@ -35,6 +35,9 @@ class ConsoleWindow(QMainWindow):
         # Telemetry state
         self._last_rx_ts: float = 0.0
         self._last_payload: Dict[str, Any] = {}
+        # Run state
+        self._locked: bool = False
+        self._prev_rec: bool = False
         # UI
         self._init_ui()
         # Telemetry
@@ -71,6 +74,7 @@ class ConsoleWindow(QMainWindow):
         cv.setContentsMargins(8, 8, 8, 8)
         cv.setSpacing(8)
         self.btn_primary = QPushButton("Lock Test"); self.btn_primary.setEnabled(False)
+        self.btn_primary.clicked.connect(self._on_primary_clicked)  # type: ignore
         self.btn_export = QPushButton("Export Workbook"); self.btn_export.setEnabled(False)
         self.btn_stats = QPushButton("Log Statistics"); self.btn_stats.setEnabled(False)
         for b in (self.btn_primary, self.btn_export, self.btn_stats):
@@ -217,8 +221,21 @@ class ConsoleWindow(QMainWindow):
             rec = bool(self._last_payload.get("recording", False))
         except Exception:
             rec = False
+        # If recording just stopped, return to ready/idle (unlock)
+        if self._prev_rec and not rec:
+            self._locked = False
+        self._prev_rec = rec
         self.lbl_rec.setText("Recording: On" if rec else "Recording: Off")
         self.lbl_rec.setStyleSheet("color: #2ecc71;" if rec else "color: #bdc3c7;")
+        # Update primary button enable/state
+        # Enabled when connected and required plugins have valid configs
+        connected = (now - self._last_rx_ts) < 1.0 if self._last_rx_ts > 0 else False
+        can_lock = connected and all(self._plugin_config_ok(pid) for pid in self._tiles.keys())
+        self.btn_primary.setEnabled(can_lock)
+        # Toggle label based on recording flag and an internal lock flag
+        label = "Start Recording" if self._locked and not rec else ("Stop Recording" if self._locked and rec else "Lock Test")
+        if self.btn_primary.text() != label:
+            self.btn_primary.setText(label)
         # Update plugin tiles with health/config policy
         for pid, tile in self._tiles.items():
             if not connected:
@@ -260,6 +277,58 @@ class ConsoleWindow(QMainWindow):
                     table.update_data(vals, units)
         except Exception:
             pass
+
+    def _on_primary_clicked(self) -> None:
+        # Three-state behavior: Lock → Start → Stop
+        rec = False
+        try:
+            rec = bool(self._last_payload.get("recording", False))
+        except Exception:
+            rec = False
+        locked = bool(self._locked)
+        if not locked:
+            # Show Lock dialog (EngineTest metadata)
+            try:
+                from .lock_dialog import LockDialog
+            except Exception:
+                LockDialog = None  # type: ignore
+            if LockDialog is None:
+                return
+            dlg = LockDialog(self)
+            if dlg.exec() == QDialog.Accepted:
+                # Mark locked; next press will Start Recording
+                self._locked = True
+                self.btn_primary.setText("Start Recording")
+            return
+        # If locked and not recording → start
+        ctrl = None
+        try:
+            from src.core.ipc.bus import create_ui_control_push
+            ctrl = create_ui_control_push()
+        except Exception:
+            ctrl = None
+        if locked and not rec:
+            if ctrl is None:
+                return
+            try:
+                msg = json.dumps({"type": "start_recording"}).encode("utf-8")
+                ctrl["control_push"].send(msg)
+                self.btn_primary.setText("Stop Recording")
+            except Exception:
+                pass
+            return
+        # If locked and recording → stop
+        if locked and rec:
+            if ctrl is None:
+                return
+            try:
+                msg = json.dumps({"type": "stop_recording"}).encode("utf-8")
+                ctrl["control_push"].send(msg)
+                # Immediately revert to ready/idle so operator can change metadata
+                self._locked = False
+                self.btn_primary.setText("Lock Test")
+            except Exception:
+                pass
 
     # Helpers
     def _plugin_config_ok(self, plugin_id: str) -> bool:

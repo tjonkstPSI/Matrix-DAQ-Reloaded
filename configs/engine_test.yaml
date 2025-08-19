@@ -1,14 +1,9 @@
-# Author: T. Onkst | Date: 08122025
 enabled: true
-
 required_fields:
-  engine_type: null
-  engine_serial_number: null
-  test_type: null
-  test_operator: null
-  project_number: null
-
-pre_test_comments: ""
-post_test_comments: ""
-
-
+  engine_type: 53L
+  engine_serial_number: '12345'
+  test_type: Durability
+  test_operator: TO
+  project_number: '1234'
+pre_test_comments: ''
+post_test_comments: ''

@@ -630,8 +630,41 @@ class Orchestrator:
         try:
             import time as _t
             import yaml as _yaml  # type: ignore
-            run_base = _t.strftime("%m%d%y_%H%M%S")
-            run_dir = (self.configs_dir.parent / f"runs/{run_base}").resolve()
+            # Build run folder name: testcell_mmddyy_hhmmss_enginetype_engineserialnumber_testtype
+            mmddyy = _t.strftime("%m%d%y")
+            hhmmss = _t.strftime("%H%M%S")
+            # Load test_cell from launch selections
+            test_cell = "unknown"
+            try:
+                plug_cfg_path = (self.configs_dir / "plugins.yaml").resolve()
+                plug_cfg = _yaml.safe_load(plug_cfg_path.read_text(encoding="utf-8")) or {}
+                test_cell = str(plug_cfg.get("test_cell", "unknown")).strip() or "unknown"
+            except Exception:
+                pass
+            # Load EngineTest metadata fields
+            engine_type = "unknown"; engine_sn = "unknown"; test_type = "unknown"
+            try:
+                et_path = (self.configs_dir / "engine_test.yaml").resolve()
+                et_cfg = _yaml.safe_load(et_path.read_text(encoding="utf-8")) or {}
+                req = et_cfg.get("required_fields") or {}
+                engine_type = str(req.get("engine_type", "unknown")).strip() or "unknown"
+                engine_sn = str(req.get("engine_serial_number", "unknown")).strip() or "unknown"
+                test_type = str(req.get("test_type", "unknown")).strip() or "unknown"
+            except Exception:
+                pass
+            def _sanitize(part: str) -> str:
+                try:
+                    ok = []
+                    for ch in str(part):
+                        if ch.isalnum() or ch in (" ", "_", "-", "."):
+                            ok.append(ch)
+                    s = ("".join(ok)).strip()
+                    # Avoid empty segments
+                    return s if s else "unknown"
+                except Exception:
+                    return "unknown"
+            run_name = f"{_sanitize(test_cell)}_{mmddyy}_{hhmmss}_{_sanitize(engine_type)}_{_sanitize(engine_sn)}_{_sanitize(test_type)}"
+            run_dir = (self.configs_dir.parent / f"runs/{run_name}").resolve()
             self._run_dir = run_dir
             self._last_run_dir = run_dir
             self._events_sink = AlarmEventsSink(run_dir)
@@ -644,10 +677,14 @@ class Orchestrator:
             except Exception:
                 pass
             meta = {
-                "run_id": run_base,
+                "run_id": run_name,
                 "run_start_iso8601": _t.strftime("%Y-%m-%dT%H:%M:%S", _t.localtime()),
                 "recording_rate_hz": float(self.channel_cfg.get("recording_rate_hz", self.settings.recording_rate_hz)),
                 "plugins": sorted(list(self.plugins.keys())),
+                "test_cell": test_cell,
+                "engine_type": engine_type,
+                "engine_serial_number": engine_sn,
+                "test_type": test_type,
             }
             try:
                 (run_dir / "metadata.yaml").write_text(_yaml.safe_dump(meta, sort_keys=False), encoding="utf-8")

@@ -1,10 +1,10 @@
 selected_plugins:
-- CAN
-- Calculated_Channels
 - EngineTest
+- CAN
 - Channel_Manager
 - Vaisala
 - NI_DAQ
+- Calculated_Channels
 selected_displays:
 - AllChannelsTable (grouped by type)
 data_root: C:/Projects/Python/Matrix_v2_retry/runs
