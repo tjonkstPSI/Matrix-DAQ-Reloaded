@@ -36,7 +36,13 @@ class ChannelsTable(QWidget):
         if not isinstance(values, dict):
             return
         units = units if isinstance(units, dict) else {}
-        aliases = sorted(values.keys())
+        keys = set(values.keys())
+        if isinstance(units, dict):
+            try:
+                keys |= set(units.keys())
+            except Exception:
+                pass
+        aliases = sorted(keys)
         if aliases != self._aliases:
             # Rebuild table rows
             self._aliases = aliases

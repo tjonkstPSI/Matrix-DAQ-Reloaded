@@ -1,9 +1,8 @@
 selected_plugins:
-- CAN
-- Calculated_Channels
 - Channel_Manager
+- Calculated_Channels
 - NI_DAQ
-- Vaisala
+- Statistics
 - EngineTest
 selected_displays:
 - AllChannelsTable (grouped by type)

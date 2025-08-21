@@ -64,6 +64,10 @@ class ConsoleWindow(QMainWindow):
         self._tiles: Dict[str, QFrame] = {}
         for pid in self._load_selected_plugins():
             tile = self._create_tile(pid, color="#888888", subtitle="Unknown")
+            # Enable Configure on NI_DAQ via right-click
+            if pid == "NI_DAQ":
+                tile.setContextMenuPolicy(Qt.CustomContextMenu)
+                tile.customContextMenuRequested.connect(self._show_nidaq_menu)  # type: ignore
             pv.addWidget(tile)
             self._tiles[pid] = tile
         v.addWidget(plugins_box)
@@ -169,6 +173,28 @@ class ConsoleWindow(QMainWindow):
         frame._lbl_sub = lbl_sub  # type: ignore
         return frame
 
+    def _show_nidaq_menu(self, pos) -> None:
+        # Context menu for NI_DAQ tile: Configure
+        try:
+            from PySide6.QtWidgets import QMenu
+        except Exception:
+            return
+        sender = self.sender()
+        if not sender or not isinstance(sender, QFrame):
+            return
+        menu = QMenu(self)
+        act_cfg = menu.addAction("Configure…")
+        act = menu.exec_(sender.mapToGlobal(pos))
+        if act == act_cfg:
+            try:
+                from .nidaq_config import NiDaqConfigDialog
+            except Exception:
+                NiDaqConfigDialog = None  # type: ignore
+            if NiDaqConfigDialog is None:
+                return
+            dlg = NiDaqConfigDialog(self)
+            dlg.exec()
+
     def _set_tile(self, tile: QFrame, color: str, subtitle: str) -> None:
         tile.setStyleSheet(f"QFrame {{ background-color: {color}; border-radius: 6px; }}")
         # Hide subtitle for compact OK state
@@ -190,6 +216,8 @@ class ConsoleWindow(QMainWindow):
         self._poll_timer.setInterval(100)  # 10 Hz poll for messages
         self._poll_timer.timeout.connect(self._poll_telemetry)  # type: ignore
         self._poll_timer.start()
+        # Progress dialog placeholder
+        self._merge_dlg = None
 
     def _poll_telemetry(self) -> None:
         if self._sub is None:
@@ -201,14 +229,15 @@ class ConsoleWindow(QMainWindow):
                     topic, payload = self._sub.recv_multipart(flags=zmq.NOBLOCK)
                 except Exception:
                     break
-                if topic != b"telemetry":
-                    continue
                 try:
                     msg = json.loads(payload.decode("utf-8"))
                 except Exception:
                     continue
-                self._last_payload = msg
-                self._last_rx_ts = time.time()
+                if topic == b"telemetry":
+                    self._last_payload = msg
+                    self._last_rx_ts = time.time()
+                elif topic == b"status":
+                    self._handle_status_msg(msg)
         except Exception:
             pass
 
@@ -284,6 +313,41 @@ class ConsoleWindow(QMainWindow):
                     table.update_data(vals, units)
         except Exception:
             pass
+
+    def _handle_status_msg(self, msg: Dict[str, Any]) -> None:
+        t = str(msg.get("type", ""))
+        if t == "merge_progress":
+            try:
+                from PySide6.QtWidgets import QProgressDialog
+            except Exception:
+                QProgressDialog = None  # type: ignore
+            if QProgressDialog is None:
+                return
+            pct = float(msg.get("percent", 0.0))
+            detail = str(msg.get("detail", ""))
+            if self._merge_dlg is None:
+                self._merge_dlg = QProgressDialog("Combining files…", None, 0, 100, self)
+                self._merge_dlg.setWindowTitle("Finalizing Data")
+                self._merge_dlg.setAutoClose(False)
+                self._merge_dlg.setAutoReset(False)
+                self._merge_dlg.setModal(False)
+                self._merge_dlg.show()
+            self._merge_dlg.setValue(int(max(0, min(100, pct*100))))
+            if detail:
+                self._merge_dlg.setLabelText(f"Combining files… {int(pct*100)}%\n{detail}")
+        elif t == "merge_done":
+            ok = bool(msg.get("ok", True))
+            if self._merge_dlg is not None:
+                self._merge_dlg.setValue(100 if ok else 0)
+                self._merge_dlg.close()
+                self._merge_dlg = None
+            try:
+                if ok:
+                    self.txt_messages.append("[INFO] Data combine complete.")
+                else:
+                    self.txt_messages.append(f"[WARN] Data combine failed: {msg.get('error','unknown')}")
+            except Exception:
+                pass
 
     def _on_export_clicked(self) -> None:
         # Request Excel export from Core; Core will export latest run (run_dir or last_run_dir)

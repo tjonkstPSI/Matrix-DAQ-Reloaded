@@ -296,3 +296,110 @@ class ParquetWriter:
 
 
 
+
+    def merge_async(self, on_progress=None, on_done=None) -> None:
+        """Run coalescing in a background thread with optional progress callbacks.
+        on_progress(percent: float, detail: str), on_done(ok: bool, error: Optional[str])"""
+        if not self._arrow_ok or not self.settings.coalesce_on_finalize:
+            if on_done:
+                try:
+                    on_done(True, None)
+                except Exception:
+                    pass
+            return
+        def _worker() -> None:
+            try:
+                import re as _re
+                import pandas as _pd  # type: ignore
+                import pyarrow as _pa  # type: ignore
+                import pyarrow.parquet as _pq  # type: ignore
+                import json as _json
+                if not self.data_dir.exists():
+                    if on_done: on_done(True, None)
+                    return
+                seg_dirs = []
+                for p in sorted(self.data_dir.iterdir()):
+                    if p.is_dir() and _re.match(r"^seg_\d+$", p.name):
+                        seg_dirs.append(p)
+                if not seg_dirs:
+                    if on_done: on_done(True, None)
+                    return
+                # Scan chunk counts
+                all_chunks = []
+                total = 0
+                for seg_dir in seg_dirs:
+                    chunks = sorted([f for f in seg_dir.iterdir() if f.is_file() and f.suffix.lower()==".parquet"])
+                    all_chunks.append((seg_dir, chunks))
+                    total += len(chunks)
+                done = 0
+                # Build union schema columns
+                cols = set(["Time_Relative_s", "Time_Absolute_iso8601"])
+                for _, chunks in all_chunks:
+                    for cf in chunks:
+                        try:
+                            cdf = _pd.read_parquet(cf)
+                            for c in list(cdf.columns): cols.add(str(c))
+                        except Exception:
+                            continue
+                final_cols = ["Time_Relative_s", "Time_Absolute_iso8601"] + sorted([c for c in cols if c not in ("Time_Relative_s","Time_Absolute_iso8601")])
+                # Output stem
+                run_stem = f"Data_{self.run_dir.name}"
+                try:
+                    import yaml as _yaml  # type: ignore
+                    meta_p = self.run_dir / "metadata.yaml"
+                    if meta_p.exists():
+                        _ = _yaml.safe_load(meta_p.read_text(encoding="utf-8")) or {}
+                except Exception:
+                    pass
+                # Merge
+                for seg_dir, chunks in all_chunks:
+                    if not chunks: continue
+                    try:
+                        idx = int(seg_dir.name.split("_")[1])
+                    except Exception:
+                        idx = 1
+                    out_name = f"{run_stem}.parquet" if len(seg_dirs)==1 else f"{run_stem}_{idx}.parquet"
+                    out_path = self.data_dir / out_name
+                    writer = None
+                    try:
+                        for cf in chunks:
+                            try:
+                                df = _pd.read_parquet(cf)
+                            except Exception:
+                                done += 1
+                                if on_progress: on_progress(min(1.0, done/max(1,total)), cf.name)
+                                continue
+                            df = df.reindex(columns=final_cols)
+                            tbl = _pa.Table.from_pandas(df, preserve_index=False)
+                            if writer is None:
+                                meta = {b"units_json": _json.dumps(self._observed_units).encode("utf-8")}
+                                writer = _pq.ParquetWriter(out_path, tbl.schema.with_metadata(meta))
+                            try:
+                                tbl = tbl.cast(writer.schema, safe=False)
+                            except Exception:
+                                pass
+                            writer.write_table(tbl)
+                            done += 1
+                            if on_progress: on_progress(min(1.0, done/max(1,total)), cf.name)
+                    finally:
+                        try:
+                            if writer is not None: writer.close()
+                        except Exception: pass
+                    if not self.settings.keep_chunk_files:
+                        for cf in chunks:
+                            try: cf.unlink(missing_ok=True)  # type: ignore[arg-type]
+                            except Exception: pass
+                        try: seg_dir.rmdir()
+                        except Exception: pass
+                if on_done: on_done(True, None)
+            except Exception as e:
+                if on_done:
+                    try: on_done(False, str(e))
+                    except Exception: pass
+        try:
+            import threading
+            threading.Thread(target=_worker, daemon=True).start()
+        except Exception:
+            if on_done:
+                try: on_done(False, "failed_to_start_thread")
+                except Exception: pass

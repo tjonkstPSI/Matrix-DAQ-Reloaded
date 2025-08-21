@@ -24,6 +24,7 @@ class PubSockets:
 class SubSockets:
     context: any
     telemetry_sub: any
+    status_sub: any
 
 
 class IPCBus:
@@ -57,6 +58,12 @@ class IPCBus:
         # Topic 'telemetry'
         self._pub.send_multipart([b"telemetry", payload])
 
+    def publish_status(self, payload: bytes) -> None:
+        if not self.started or self._pub is None:
+            return
+        # Topic 'status'
+        self._pub.send_multipart([b"status", payload])
+
     def recv_controls_nonblocking(self) -> list[bytes]:
         if not self.started or self._pull is None:
             return []
@@ -77,8 +84,10 @@ def create_ui_subscriber() -> SubSockets | None:
     ctx = zmq.Context.instance()
     sub = ctx.socket(zmq.SUB)
     sub.connect(TELEMETRY_PUB_ENDPOINT)
+    # Subscribe to both telemetry and status topics
     sub.setsockopt(zmq.SUBSCRIBE, b"telemetry")
-    return SubSockets(context=ctx, telemetry_sub=sub)
+    sub.setsockopt(zmq.SUBSCRIBE, b"status")
+    return SubSockets(context=ctx, telemetry_sub=sub, status_sub=sub)
 
 
 def create_ui_control_push():

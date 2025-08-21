@@ -296,6 +296,9 @@ class Orchestrator:
                                 self._handle_ao_write(ctrl_msg)
                             elif ctrl_msg.get("type") == "plugin_inject_fail":
                                 self._handle_inject_fail(ctrl_msg)
+                            elif ctrl_msg.get("type") == "reload_plugin":
+                                pid = str(ctrl_msg.get("plugin", ""))
+                                self._reload_plugin(pid)
                         except Exception as e:
                             try:
                                 print(f"[WARN] Control handling error: {e}")
@@ -327,6 +330,14 @@ class Orchestrator:
                         "alarm_events": events,
                         "recording": bool(self._recording),
                     }).encode("utf-8")
+                    # One-time NI_DAQ value count diagnostic
+                    try:
+                        c = int(getattr(self, "_core_pub_diag_count", 0))
+                        if c < 5:
+                            print(f"[CORE] publish: total values={len(vals or {})}")
+                            setattr(self, "_core_pub_diag_count", c + 1)
+                    except Exception:
+                        pass
                     self.bus.publish_telemetry(payload)
                     # Append to Parquet data stream when recording
                     try:
@@ -418,6 +429,9 @@ class Orchestrator:
                                 self._handle_do_write(ctrl_msg)
                             elif ctrl_msg.get("type") == "ao_write":
                                 self._handle_ao_write(ctrl_msg)
+                            elif ctrl_msg.get("type") == "reload_plugin":
+                                pid = str(ctrl_msg.get("plugin", ""))
+                                self._reload_plugin(pid)
                             elif ctrl_msg.get("type") == "plugin_inject_fail":
                                 self._handle_inject_fail(ctrl_msg)
                         except Exception as e:
@@ -575,6 +589,37 @@ class Orchestrator:
         except Exception:
             pass
 
+    def _reload_plugin(self, plugin_id: str) -> None:
+        if not plugin_id:
+            return
+        try:
+            p = self.plugins.get(plugin_id)
+            if p is None:
+                print(f"[WARN] Reload ignored: plugin not found: {plugin_id}")
+                return
+            # Stop plugin
+            try:
+                p.stop()
+            except Exception:
+                pass
+            # Reload config and restart
+            try:
+                p.load_config()
+            except Exception as e:
+                print(f"[WARN] Reload: failed to load config for {plugin_id}: {e}")
+            try:
+                p.configure()
+                status = p.validate()
+                if not getattr(status, 'ok', True):
+                    print(f"[ERROR] Reload validate failed for {plugin_id}: {getattr(status,'message','')}")
+                    return
+                p.start()
+                print(f"[INFO] Reloaded plugin: {plugin_id}")
+            except Exception as e:
+                print(f"[WARN] Reload failed for {plugin_id}: {e}")
+        except Exception:
+            pass
+
     def request_stop(self) -> None:
         self._running = False
 
@@ -702,7 +747,8 @@ class Orchestrator:
         try:
             try:
                 if self._parquet is not None:
-                    self._parquet.finalize()
+                    # Flush buffers only; perform coalesce asynchronously below
+                    self._parquet._flush_chunk(self._parquet._buf_second_key)  # type: ignore[attr-defined]
             except Exception:
                 pass
             try:
@@ -713,10 +759,33 @@ class Orchestrator:
             print("[INFO] Recording stopped and files finalized")
         finally:
             self._recording = False
+            # Kick off background coalesce with progress updates
+            pw = self._parquet
             self._parquet = None
             self._events_sink = None
             self._stats_sink = None
             self._run_dir = None
+            if pw is not None:
+                run_dir = pw.run_dir
+                def _on_progress(pct: float, detail: str) -> None:
+                    try:
+                        import json
+                        msg = json.dumps({"type":"merge_progress","run": str(run_dir), "percent": float(pct), "detail": detail}).encode("utf-8")
+                        self.bus.publish_status(msg)
+                    except Exception:
+                        pass
+                def _on_done(ok: bool, error: str | None) -> None:
+                    try:
+                        import json
+                        msg = json.dumps({"type":"merge_done","run": str(run_dir), "ok": bool(ok), "error": error}).encode("utf-8")
+                        self.bus.publish_status(msg)
+                    except Exception:
+                        pass
+                try:
+                    pw.merge_async(_on_progress, _on_done)
+                    print("[INFO] Started parquet merge in background")
+                except Exception as e:
+                    print(f"[WARN] Failed to start background merge: {e}")
 
     def _build_parquet_settings_from_channel_cfg(self) -> ParquetWriterSettings:
         """Create ParquetWriterSettings from Channel Manager config (optional).

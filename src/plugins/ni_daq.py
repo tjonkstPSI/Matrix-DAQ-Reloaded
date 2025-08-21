@@ -34,6 +34,14 @@ class NiDAQPlugin(BasePlugin):
         self._ai_fast_aliases: List[str] = []  # legacy (unused in multi-task mode)
         # Multi-task fast AI per device
         self._fast_tasks: List[Dict[str, Any]] = []  # [{"task": Task, "device": str, "aliases": [...], "alias_to_cfg": {...}}]
+        # Multi-task temperature AI per device (TC/RTD)
+        self._temp_tasks: List[Dict[str, Any]] = []  # [{"task": Task, "device": str, "aliases": [...]}]
+        # Per-device DI/DO/AO tasks
+        self._di_tasks: List[Dict[str, Any]] = []   # [{"task": Task, "device": str, "aliases": [...]}]
+        self._do_tasks: List[Dict[str, Any]] = []   # [{"task": Task, "device": str, "aliases": [...]}]
+        self._ao_tasks: List[Dict[str, Any]] = []   # [{"task": Task, "device": str, "aliases": [...]}]
+        # Diagnostics counters
+        self._di_read_diag_count: int = 0
         self._ai_temp_aliases: List[str] = []
         self._di_aliases: List[str] = []
         self._do_aliases: List[str] = []
@@ -58,6 +66,9 @@ class NiDAQPlugin(BasePlugin):
         self._fast_rate: float = 0.0
         self._read_timeout_margin_s: float = 0.05
         self._fast_warmup_until: float = 0.0
+        # Threaded fast-AI acquisition (optional; decouples DAQmx reads from Core tick)
+        self._threaded_fast_ai: bool = False
+        self._fast_reader_threads: List[Dict[str, Any]] = []  # [{device, thread, stop, lock, buffers:{alias: deque}}]
         # Watchdog config (validation only for now)
         self._watchdog_cfg: Dict[str, Any] = {}
         # Short-lived diagnostics counters for fast AI reads (per device)
@@ -66,6 +77,8 @@ class NiDAQPlugin(BasePlugin):
         self._fast_err_counts: Dict[str, int] = {}
         # Last-read timestamps per fast device (for adaptive read sizing)
         self._fast_last_read_ts: Dict[str, float] = {}
+        # One-time debug print guard for path selection
+        self._fast_path_printed: bool = False
 
     def _nidaq_available(self) -> bool:
         try:
@@ -88,6 +101,11 @@ class NiDAQPlugin(BasePlugin):
         try:
             acq = (self.config.get("acquisition") or {})
             self._read_timeout_margin_s = float(acq.get("read_timeout_margin_s", self._read_timeout_margin_s))
+            self._threaded_fast_ai = bool(acq.get("threaded_fast_ai", False))
+            try:
+                print(f"[NIDAQ] configure: threaded_fast_ai={self._threaded_fast_ai}")
+            except Exception:
+                pass
         except Exception:
             pass
         # Health configuration
@@ -117,6 +135,14 @@ class NiDAQPlugin(BasePlugin):
                     all_aliases.append(str(alias))
         if len(all_aliases) != len(set(all_aliases)):
             return PluginStatus(ok=False, message="Duplicate aliases within NI DAQ configuration")
+        # Inventory vs config sanity check (real mode only)
+        if self.mode == "real" and self._nidaq_available():
+            try:
+                inv = self._enumerate_system()
+                if not self._inventory_matches_config(inv):
+                    return PluginStatus(ok=False, message="Hardware inventory mismatch with ni_daq.yaml. Open Configure to regenerate from inventory.")
+            except Exception:
+                pass
         # Validate watchdog schema if provided
         wd_status = self._validate_watchdog_cfg()
         if not wd_status.ok:
@@ -217,6 +243,23 @@ class NiDAQPlugin(BasePlugin):
     # -------------------------
     # Validation helpers
     # -------------------------
+    def _inventory_matches_config(self, inv: Dict[str, Any]) -> bool:
+        try:
+            # Build sets of physical channels from inventory (flatten across devices)
+            inv_ai = set([str(x) for d in inv.get("devices", []) for x in (d.get("ai") or [])])
+            inv_di = set([str(x) for d in inv.get("devices", []) for x in (d.get("di") or [])])
+            inv_do = set([str(x) for d in inv.get("devices", []) for x in (d.get("do") or [])])
+            inv_ao = set([str(x) for d in inv.get("devices", []) for x in (d.get("ao") or [])])
+            # Build sets from current config (all channels, enabled or not)
+            ch = self.config.get("channels", {}) or {}
+            cfg_ai = set([str(c.get("phys")) for c in (ch.get("ai_voltage") or []) if c.get("phys")])
+            cfg_ai |= set([str(c.get("phys")) for c in (ch.get("ai_temp") or []) if c.get("phys")])
+            cfg_di = set([str(c.get("phys")) for c in (ch.get("di") or []) if c.get("phys")])
+            cfg_do = set([str(c.get("phys")) for c in (ch.get("do") or []) if c.get("phys")])
+            cfg_ao = set([str(c.get("phys")) for c in (ch.get("ao") or []) if c.get("phys")])
+            return inv_ai == cfg_ai and inv_di == cfg_di and inv_do == cfg_do and inv_ao == cfg_ao
+        except Exception:
+            return True
     def _validate_watchdog_cfg(self) -> PluginStatus:
         cfg = self._watchdog_cfg
         if not cfg:
@@ -292,6 +335,17 @@ class NiDAQPlugin(BasePlugin):
         if self.mode == "real" and self._nidaq_available():
             try:
                 self._create_tasks_real()
+                # Start per-device fast-AI reader threads when enabled
+                try:
+                    print(f"[NIDAQ] start: mode={self.mode} threaded_fast_ai={self._threaded_fast_ai} fast_tasks={len(self._fast_tasks)}")
+                except Exception:
+                    pass
+                if self._threaded_fast_ai:
+                    self._start_fast_reader_threads()
+                    try:
+                        print(f"[NIDAQ] start: fast reader threads active={len(self._fast_reader_threads)}")
+                    except Exception:
+                        pass
             except Exception:
                 # Fall back silently to no-op tasks; validation already warns
                 self._task_ai_fast = None
@@ -480,172 +534,263 @@ class NiDAQPlugin(BasePlugin):
             except Exception:
                 self._fast_warmup_until = 0.0
         # AI temperature (TC/RTD)
-        if any(bool(ch.get("enabled", True)) for ch in self._ai_temp):
-            t = None
-            try:
-                t = Task()
+        try:
+            enabled_ai_temp = [
+                str(ch.get("alias", ch.get("phys", "")))
+                for ch in self._ai_temp
+                if bool(ch.get("enabled", True))
+            ]
+            if enabled_ai_temp:
                 try:
-                    from nidaqmx.constants import (ThermocoupleType, TemperatureUnits, CJCSource, RTDType, ResistanceConfiguration)  # type: ignore
+                    print(f"[NIDAQ] AI_T enabled aliases: {enabled_ai_temp}")
                 except Exception:
-                    ThermocoupleType = TemperatureUnits = CJCSource = RTDType = ResistanceConfiguration = None  # type: ignore
-                local_aliases: List[str] = []
-                for ch in self._ai_temp:
-                    if not bool(ch.get("enabled", True)):
-                        continue
-                    phys = str(ch.get("phys", ""))
-                    if not phys:
-                        continue
-                    sensor = ch.get("sensor", {}) or {}
-                    stype = str(sensor.get("type", "TC")).upper()
+                    pass
+        except Exception:
+            pass
+        # Group AI temperature channels per-device and create per-device tasks
+        enabled_temp = [ch for ch in self._ai_temp if bool(ch.get("enabled", True))]
+        if enabled_temp:
+            from collections import defaultdict
+            groups_t: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+            for ch in enabled_temp:
+                phys = str(ch.get("phys", ""))
+                if not phys:
+                    continue
+                device = phys.split("/", 1)[0]
+                groups_t[device].append(ch)
+            self._temp_tasks = []
+            for device, chans in groups_t.items():
+                t = None
+                try:
+                    t = Task()
+                    local_aliases: List[str] = []
                     try:
-                        if stype == "RTD" and RTDType is not None:
-                            subtype = str(sensor.get("subtype", "PT100")).upper()
-                            wires = int(sensor.get("wires", 3))
-                            rtd_map = {"PT100": RTDType.PT100} if hasattr(RTDType, "PT100") else {}
-                            rtd_type = rtd_map.get(subtype, list(rtd_map.values())[0] if rtd_map else None)
-                            cfg = ResistanceConfiguration.THREE_WIRE if wires == 3 else (
-                                ResistanceConfiguration.FOUR_WIRE if wires == 4 else ResistanceConfiguration.TWO_WIRE)
-                            t.ai_channels.add_ai_rtd_chan(phys, rtd_type=rtd_type, resistance_config=cfg, units=TemperatureUnits.DEG_C)
-                        else:
-                            # Default TC K unless specified
-                            tc_sub = str(sensor.get("subtype", "K")).upper()
-                            tc_map = {}
-                            if ThermocoupleType is not None:
-                                tc_map = {k.name: k for k in ThermocoupleType}
-                            tc_enum = tc_map.get(tc_sub)
-                            if tc_enum is not None and TemperatureUnits is not None and CJCSource is not None:
-                                t.ai_channels.add_ai_thrmcpl_chan(phys, tc_type=tc_enum, units=TemperatureUnits.DEG_C, cjc_source=CJCSource.BUILT_IN)
+                        from nidaqmx.constants import (
+                            ThermocoupleType,
+                            TemperatureUnits,
+                            CJCSource,
+                            RTDType,
+                            ResistanceConfiguration,
+                            ExcitationSource,
+                        )  # type: ignore
+                    except Exception:
+                        ThermocoupleType = TemperatureUnits = CJCSource = RTDType = ResistanceConfiguration = ExcitationSource = None  # type: ignore
+                    for ch in chans:
+                        phys = str(ch.get("phys", ""))
+                        if not phys:
+                            continue
+                        sensor = ch.get("sensor", {}) or {}
+                        stype = str(sensor.get("type", "TC")).upper()
+                        try:
+                            print(f"[NIDAQ] AI_T add attempt: device={device} phys={phys} type={stype} sensor={sensor}")
+                        except Exception:
+                            pass
+                        try:
+                            if (
+                                stype == "RTD"
+                                and RTDType is not None
+                                and TemperatureUnits is not None
+                                and ResistanceConfiguration is not None
+                            ):
+                                subtype = str(sensor.get("subtype", "PT100")).upper()
+                                wires = int(sensor.get("wires", 3))
+                                try:
+                                    rtd_enum_map = {m.name: m for m in RTDType}
+                                except Exception:
+                                    rtd_enum_map = {}
+                                rtd_type = rtd_enum_map.get(subtype) or rtd_enum_map.get("PT100") or (next(iter(rtd_enum_map.values())) if rtd_enum_map else None)
+                                wire_cfg_map = {
+                                    2: ResistanceConfiguration.TWO_WIRE,
+                                    3: ResistanceConfiguration.THREE_WIRE,
+                                    4: ResistanceConfiguration.FOUR_WIRE,
+                                }
+                                cfg = wire_cfg_map.get(wires, ResistanceConfiguration.THREE_WIRE)
+                                if rtd_type is not None:
+                                    excit_current = float(sensor.get("excitation_current_a", 0.001))
+                                    if ExcitationSource is not None:
+                                        t.ai_channels.add_ai_rtd_chan(
+                                            phys,
+                                            rtd_type=rtd_type,
+                                            resistance_config=cfg,
+                                            units=TemperatureUnits.DEG_C,
+                                            current_excit_source=ExcitationSource.INTERNAL,
+                                            current_excit_val=excit_current,
+                                        )
+                                    else:
+                                        t.ai_channels.add_ai_rtd_chan(
+                                            phys,
+                                            rtd_type=rtd_type,
+                                            resistance_config=cfg,
+                                            units=TemperatureUnits.DEG_C,
+                                        )
+                                else:
+                                    t.ai_channels.add_ai_voltage_chan(phys, min_val=-1.0, max_val=1.0)
                             else:
-                                t.ai_channels.add_ai_voltage_chan(phys, min_val=-1.0, max_val=1.0)
-                        local_aliases.append(str(ch.get("alias", phys)))
-                    except Exception:
-                        # Skip this sensor channel on error
-                        continue
-                if local_aliases:
-                    try:
-                        t.timing.cfg_samp_clk_timing(rate=rec_rate, sample_mode=AcquisitionType.CONTINUOUS, samps_per_chan=int(rec_rate))
-                        print(f"[NIDAQ] AI_T timing: rate={rec_rate} samps_per_chan={int(rec_rate)}")
-                    except Exception as e:
+                                tc_sub = str(sensor.get("subtype", "K")).upper()
+                                tc_map = {}
+                                if ThermocoupleType is not None:
+                                    try:
+                                        tc_map = {k.name: k for k in ThermocoupleType}
+                                    except Exception:
+                                        tc_map = {}
+                                tc_enum = tc_map.get(tc_sub)
+                                if tc_enum is not None and TemperatureUnits is not None and CJCSource is not None:
+                                    t.ai_channels.add_ai_thrmcpl_chan(
+                                        phys,
+                                        thermocouple_type=tc_enum,
+                                        units=TemperatureUnits.DEG_C,
+                                        cjc_source=CJCSource.BUILT_IN,
+                                    )
+                                else:
+                                    t.ai_channels.add_ai_voltage_chan(phys, min_val=-1.0, max_val=1.0)
+                            local_aliases.append(str(ch.get("alias", phys)))
+                        except Exception as e:
+                            try:
+                                print(f"[NIDAQ] AI_T add error: device={device} phys={phys} err={e}")
+                            except Exception:
+                                pass
+                    if local_aliases:
+                        # On-demand temperature measurement: no sample clock, optional no explicit start
                         try:
-                            print(f"[NIDAQ] AI_T timing error: {e}")
+                            print(f"[NIDAQ] AI_T on-demand: device={device} channels={len(local_aliases)}")
                         except Exception:
                             pass
-                        raise
+                        self._temp_tasks.append({"task": t, "device": device, "aliases": local_aliases})
+                        t = None
+                finally:
                     try:
+                        if t is not None:
+                            t.close()
+                    except Exception:
+                        pass
+        # DI lines per-device
+        enabled_di = [ch for ch in self._di if bool(ch.get("enabled", True))]
+        if enabled_di:
+            from collections import defaultdict
+            groups_di: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+            for ch in enabled_di:
+                phys = str(ch.get("phys", ""))
+                if not phys:
+                    continue
+                device = phys.split("/", 1)[0]
+                groups_di[device].append(ch)
+            self._di_tasks = []
+            for device, chans in groups_di.items():
+                t = None
+                try:
+                    t = Task()
+                    local_aliases: List[str] = []
+                    try:
+                        print(f"[NIDAQ] DI create: device={device} lines={len(chans)}")
+                    except Exception:
+                        pass
+                    for ch in chans:
+                        phys = str(ch.get("phys", ""))
+                        if not phys:
+                            continue
+                        try:
+                            t.di_channels.add_di_chan(phys)
+                            local_aliases.append(str(ch.get("alias", phys)))
+                        except Exception:
+                            continue
+                    if local_aliases:
                         t.start()
-                        print("[NIDAQ] AI_T task started")
-                    except Exception as e:
                         try:
-                            print(f"[NIDAQ] AI_T start error: {e}")
+                            print(f"[NIDAQ] DI task started: device={device} lines={len(local_aliases)}")
                         except Exception:
                             pass
-                        raise
-                    self._task_ai_temp = t
-                    self._ai_temp_aliases = local_aliases
-                    t = None
-            finally:
-                try:
-                    if t is not None:
-                        t.close()
-                except Exception:
-                    pass
-        # DI lines
-        if any(bool(ch.get("enabled", True)) for ch in self._di):
-            t = None
-            try:
-                t = Task()
-                local_aliases: List[str] = []
-                for ch in self._di:
-                    if not bool(ch.get("enabled", True)):
-                        continue
-                    phys = str(ch.get("phys", ""))
-                    if not phys:
-                        continue
+                        self._di_tasks.append({"task": t, "device": device, "aliases": local_aliases})
+                        t = None
+                finally:
                     try:
-                        t.di_channels.add_di_chan(phys)
-                        local_aliases.append(str(ch.get("alias", phys)))
-                    except Exception:
-                        continue
-                if local_aliases:
-                    t.start()  # on-demand read is fine; start still needed for lifecycle
-                    self._task_di = t
-                    self._di_aliases = local_aliases
-                    t = None
-            finally:
-                try:
-                    if t is not None:
-                        t.close()
-                except Exception:
-                    pass
-        # DO lines (on-demand write)
-        if any(bool(ch.get("enabled", True)) for ch in self._do):
-            t = None
-            try:
-                t = Task()
-                local_aliases: List[str] = []
-                for ch in self._do:
-                    if not bool(ch.get("enabled", True)):
-                        continue
-                    phys = str(ch.get("phys", ""))
-                    if not phys:
-                        continue
-                    try:
-                        t.do_channels.add_do_chan(phys)
-                        local_aliases.append(str(ch.get("alias", phys)))
-                    except Exception:
-                        continue
-                if local_aliases:
-                    # No need to start explicitly for on-demand writes; start for lifecycle symmetry
-                    t.start()
-                    self._task_do = t
-                    self._do_aliases = local_aliases
-                    # Write initial states once
-                    try:
-                        self._write_do_hardware()
+                        if t is not None:
+                            t.close()
                     except Exception:
                         pass
-                    t = None
-            finally:
+        # DO lines per-device
+        enabled_do = [ch for ch in self._do if bool(ch.get("enabled", True))]
+        if enabled_do:
+            from collections import defaultdict
+            groups_do: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+            for ch in enabled_do:
+                phys = str(ch.get("phys", ""))
+                if not phys:
+                    continue
+                device = phys.split("/", 1)[0]
+                groups_do[device].append(ch)
+            self._do_tasks = []
+            for device, chans in groups_do.items():
+                t = None
                 try:
-                    if t is not None:
-                        t.close()
-                except Exception:
-                    pass
-        # AO voltage (on-demand write)
-        if any(bool(ch.get("enabled", True)) for ch in self._ao):
-            t = None
-            try:
-                t = Task()
-                local_aliases: List[str] = []
-                for ch in self._ao:
-                    if not bool(ch.get("enabled", True)):
-                        continue
-                    phys = str(ch.get("phys", ""))
-                    if not phys:
-                        continue
+                    t = Task()
+                    local_aliases: List[str] = []
+                    for ch in chans:
+                        phys = str(ch.get("phys", ""))
+                        if not phys:
+                            continue
+                        try:
+                            t.do_channels.add_do_chan(phys)
+                            local_aliases.append(str(ch.get("alias", phys)))
+                        except Exception:
+                            continue
+                    if local_aliases:
+                        t.start()
+                        self._do_tasks.append({"task": t, "device": device, "aliases": local_aliases})
+                        # Initialize outputs once
+                        try:
+                            self._write_do_hardware()
+                        except Exception:
+                            pass
+                        t = None
+                finally:
                     try:
-                        rng = ch.get("range_v", {}) or {}
-                        vmin = float(rng.get("min", 0.0))
-                        vmax = float(rng.get("max", 10.0))
-                        t.ao_channels.add_ao_voltage_chan(phys, min_val=vmin, max_val=vmax)
-                        local_aliases.append(str(ch.get("alias", phys)))
-                    except Exception:
-                        continue
-                if local_aliases:
-                    t.start()
-                    self._task_ao = t
-                    self._ao_aliases = local_aliases
-                    try:
-                        self._write_ao_hardware()
+                        if t is not None:
+                            t.close()
                     except Exception:
                         pass
-                    t = None
-            finally:
+        # AO voltage per-device
+        enabled_ao = [ch for ch in self._ao if bool(ch.get("enabled", True))]
+        if enabled_ao:
+            from collections import defaultdict
+            groups_ao: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+            for ch in enabled_ao:
+                phys = str(ch.get("phys", ""))
+                if not phys:
+                    continue
+                device = phys.split("/", 1)[0]
+                groups_ao[device].append(ch)
+            self._ao_tasks = []
+            for device, chans in groups_ao.items():
+                t = None
                 try:
-                    if t is not None:
-                        t.close()
-                except Exception:
-                    pass
+                    t = Task()
+                    local_aliases: List[str] = []
+                    for ch in chans:
+                        phys = str(ch.get("phys", ""))
+                        if not phys:
+                            continue
+                        try:
+                            rng = ch.get("range_v", {}) or {}
+                            vmin = float(rng.get("min", 0.0))
+                            vmax = float(rng.get("max", 10.0))
+                            t.ao_channels.add_ao_voltage_chan(phys, min_val=vmin, max_val=vmax)
+                            local_aliases.append(str(ch.get("alias", phys)))
+                        except Exception:
+                            continue
+                    if local_aliases:
+                        t.start()
+                        self._ao_tasks.append({"task": t, "device": device, "aliases": local_aliases})
+                        try:
+                            self._write_ao_hardware()
+                        except Exception:
+                            pass
+                        t = None
+                finally:
+                    try:
+                        if t is not None:
+                            t.close()
+                    except Exception:
+                        pass
 
     def _read_real(self) -> Dict[str, Any]:
         vals: Dict[str, Any] = {}
@@ -668,143 +813,237 @@ class NiDAQPlugin(BasePlugin):
             timeout_fast = max((n / fast_rate) + margin, 2.5 / max(1.0, rec_rate))
             timeout_temp = max((1.0 / max(1.0, rec_rate)) + margin, 2.5 / max(1.0, rec_rate))
             timeout_di = max((1.0 / max(1.0, rec_rate)) + margin, 2.0 / max(1.0, rec_rate))
-            # Read each fast AI task per device with isolation
+            # Fast AI path
             if self._fast_tasks:
-                for ft in self._fast_tasks:
-                    task = ft.get("task")
-                    aliases = ft.get("aliases", [])
-                    alias_to_cfg = ft.get("alias_to_cfg", {})
-                    device = str(ft.get("device", ""))
-                    if task is None or not aliases:
-                        continue
-                    try:
-                        import time as _t
-                        t0r = _t.time()
-                        # Capture available samples before read for diagnostics
+                if self._threaded_fast_ai and self._fast_reader_threads:
+                    if not self._fast_path_printed:
                         try:
-                            avail_before = int(getattr(task.in_stream, "avail_samp_per_chan", 0))
-                        except Exception:
-                            avail_before = -1
-                        # Adaptive read sizing: read at least n, but match produced samples since last read
-                        try:
-                            last_ts = float(self._fast_last_read_ts.get(device, t0r))
-                        except Exception:
-                            last_ts = t0r
-                        produced = int(max(0.0, (t0r - last_ts)) * max(1.0, self._fast_rate) + 0.5)
-                        # Drain backlog aggressively: prefer available buffer count
-                        read_count = max(n, produced, max(0, avail_before))
-                        # Clamp to avoid overly large drains at once
-                        read_count = min(read_count, int(20 * n))
-                        samples = task.read(number_of_samples_per_channel=int(read_count), timeout=timeout_fast)
-                        dt_ms = (_t.time() - t0r) * 1000.0
-                        # Update last-read timestamp on success
-                        try:
-                            self._fast_last_read_ts[device] = t0r
+                            print("[NIDAQ] read: using THREADED fast-AI path")
                         except Exception:
                             pass
-                        if isinstance(samples, list) and samples and isinstance(samples[0], list):
-                            for idx, alias in enumerate(aliases):
-                                ch_samples = samples[idx]
-                                # Average the most recent n samples to preserve decimation behavior
-                                take = ch_samples[-n:] if len(ch_samples) >= n else ch_samples
+                        self._fast_path_printed = True
+                    # Consume from per-device buffers (latest n)
+                    produced_aliases: List[str] = []
+                    deque_lengths: List[str] = []
+                    for ft in self._fast_reader_threads:
+                        try:
+                            alias_to_buf = ft.get("buffers", {}) or {}
+                            alias_to_cfg = None
+                            # One-time per-device buffer keys/id print (first 5 cycles total)
+                            try:
+                                cb = int(getattr(self, "_thr_buf_keys_count", 0))
+                                if cb < 5:
+                                    print(f"[NIDAQ] read(thr): buffers device={ft.get('device','?')} keys={list(alias_to_buf.keys())} id={id(alias_to_buf)}")
+                                    setattr(self, "_thr_buf_keys_count", cb + 1)
+                            except Exception:
+                                pass
+                            # Find cfg map from original fast_tasks
+                            device = str(ft.get("device", ""))
+                            for t in self._fast_tasks:
+                                if str(t.get("device", "")) == device:
+                                    alias_to_cfg = t.get("alias_to_cfg", {})
+                                    break
+                            lock = ft.get("lock")
+                            if alias_to_cfg is None:
+                                alias_to_cfg = {}
+                            # Snapshot under lock and compute averages
+                            if lock is not None:
+                                lock.acquire()
+                            try:
+                                for alias, dq in (alias_to_buf or {}).items():
+                                    deque_lengths.append(f"{alias}:{len(dq)}")
+                                    data = list(dq)[-n:] if dq else []
+                                    if not data:
+                                        continue
+                                    avg = sum(data) / float(len(data) or 1)
+                                    ch = alias_to_cfg.get(alias, {})
+                                    sc = ch.get("scaling") or {}
+                                    m = float(sc.get("m", 1.0)); b = float(sc.get("b", 0.0))
+                                    vals[alias] = m * avg + b
+                                    produced_aliases.append(alias)
+                                    any_success = True
+                            finally:
+                                if lock is not None:
+                                    lock.release()
+                        except Exception:
+                            pass
+                    # One-time diagnostic of what the consumer produced
+                    try:
+                        c = int(getattr(self, "_thr_vals_diag_count", 0))
+                        if c < 5:
+                            print(f"[NIDAQ] read(thr): produced {len(produced_aliases)} alias(es): {produced_aliases[:5]} deques={deque_lengths[:5]}")
+                            setattr(self, "_thr_vals_diag_count", c + 1)
+                    except Exception:
+                        pass
+                else:
+                    if not self._fast_path_printed:
+                        try:
+                            print("[NIDAQ] read: using LEGACY fast-AI path")
+                        except Exception:
+                            pass
+                        self._fast_path_printed = True
+                    # Legacy tick-coupled read path (no threads)
+                    for ft in self._fast_tasks:
+                        task = ft.get("task")
+                        aliases = ft.get("aliases", [])
+                        alias_to_cfg = ft.get("alias_to_cfg", {})
+                        device = str(ft.get("device", ""))
+                        if task is None or not aliases:
+                            continue
+                        try:
+                            import time as _t
+                            t0r = _t.time()
+                            # Capture available samples before read for diagnostics
+                            try:
+                                avail_before = int(getattr(task.in_stream, "avail_samp_per_chan", 0))
+                            except Exception:
+                                avail_before = -1
+                            # Adaptive read sizing: read at least n, but match produced samples since last read
+                            try:
+                                last_ts = float(self._fast_last_read_ts.get(device, t0r))
+                            except Exception:
+                                last_ts = t0r
+                            produced = int(max(0.0, (t0r - last_ts)) * max(1.0, self._fast_rate) + 0.5)
+                            # Drain backlog aggressively: prefer available buffer count
+                            read_count = max(n, produced, max(0, avail_before))
+                            # Clamp to avoid overly large drains at once
+                            read_count = min(read_count, int(20 * n))
+                            samples = task.read(number_of_samples_per_channel=int(read_count), timeout=timeout_fast)
+                            dt_ms = (_t.time() - t0r) * 1000.0
+                            # Update last-read timestamp on success
+                            try:
+                                self._fast_last_read_ts[device] = t0r
+                            except Exception:
+                                pass
+                            if isinstance(samples, list) and samples and isinstance(samples[0], list):
+                                for idx, alias in enumerate(aliases):
+                                    ch_samples = samples[idx]
+                                    take = ch_samples[-n:] if len(ch_samples) >= n else ch_samples
+                                    avg = sum(take) / float(len(take) or 1)
+                                    ch = alias_to_cfg.get(alias, {})
+                                    sc = ch.get("scaling") or {}
+                                    m = float(sc.get("m", 1.0)); b = float(sc.get("b", 0.0))
+                                    vals[alias] = m * avg + b
+                                any_success = True
+                            elif isinstance(samples, list):
+                                take = samples[-n:] if len(samples) >= n else samples
                                 avg = sum(take) / float(len(take) or 1)
+                                alias = aliases[0]
                                 ch = alias_to_cfg.get(alias, {})
                                 sc = ch.get("scaling") or {}
                                 m = float(sc.get("m", 1.0)); b = float(sc.get("b", 0.0))
                                 vals[alias] = m * avg + b
-                            any_success = True
-                        elif isinstance(samples, list):
-                            take = samples[-n:] if len(samples) >= n else samples
-                            avg = sum(take) / float(len(take) or 1)
-                            alias = aliases[0]
-                            ch = alias_to_cfg.get(alias, {})
-                            sc = ch.get("scaling") or {}
-                            m = float(sc.get("m", 1.0)); b = float(sc.get("b", 0.0))
-                            vals[alias] = m * avg + b
-                            any_success = True
-                        # Diagnostics: log first 20 reads per device
-                        try:
-                            cnt = int(self._fast_diag_counts.get(device, 0))
-                            if cnt < 20:
-                                def _shape(x: Any) -> str:
+                                any_success = True
+                            # Diagnostics: log first 20 reads per device
+                            try:
+                                cnt = int(self._fast_diag_counts.get(device, 0))
+                                if cnt < 20:
+                                    def _shape(x: Any) -> str:
+                                        try:
+                                            import numpy as _np  # type: ignore
+                                            if isinstance(x, _np.ndarray):
+                                                return f"np.ndarray{x.shape}"
+                                        except Exception:
+                                            pass
+                                        if isinstance(x, list):
+                                            if x and isinstance(x[0], list):
+                                                return f"list[{len(x)}x{len(x[0])}]"
+                                            return f"list[{len(x)}]"
+                                        return type(x).__name__
+                                    print(f"[NIDAQ] AI_V read diag: device={device} dt_ms={dt_ms:.1f} shape={_shape(samples)} read_count={int(read_count)} timeout={timeout_fast:.3f} avail_before={avail_before}")
+                                    self._fast_diag_counts[device] = cnt + 1
+                            except Exception:
+                                pass
+                        except Exception as e:
+                            try:
+                                import time as _t
+                                dt_ms = (_t.time() - t0r) * 1000.0
+                            except Exception:
+                                dt_ms = 0.0
+                            try:
+                                ec = int(self._fast_err_counts.get(device, 0))
+                                if ec < 10:
                                     try:
-                                        import numpy as _np  # type: ignore
-                                        if isinstance(x, _np.ndarray):
-                                            return f"np.ndarray{x.shape}"
+                                        from nidaqmx.errors import DaqError  # type: ignore
                                     except Exception:
-                                        pass
-                                    if isinstance(x, list):
-                                        if x and isinstance(x[0], list):
-                                            return f"list[{len(x)}x{len(x[0])}]"
-                                        return f"list[{len(x)}]"
-                                    return type(x).__name__
-                                print(f"[NIDAQ] AI_V read diag: device={device} dt_ms={dt_ms:.1f} shape={_shape(samples)} read_count={int(read_count)} timeout={timeout_fast:.3f} avail_before={avail_before}")
-                                self._fast_diag_counts[device] = cnt + 1
-                        except Exception:
-                            pass
-                    except Exception as e:
-                        # Isolate failures of one device/task from others; emit first 20 diagnostics
-                        try:
-                            import time as _t
-                            dt_ms = (_t.time() - t0r) * 1000.0
-                        except Exception:
-                            dt_ms = 0.0
-                        try:
-                            # Always log first 10 errors per device verbosely
-                            ec = int(self._fast_err_counts.get(device, 0))
-                            if ec < 10:
-                                # Try to pull DAQmx error code when available
+                                        DaqError = None  # type: ignore
+                                    err_code = getattr(e, "error_code", None)
+                                    err_msg = str(e)
+                                    try:
+                                        avail_now = int(getattr(task.in_stream, "avail_samp_per_chan", 0))
+                                    except Exception:
+                                        avail_now = -1
+                                    if DaqError is not None and isinstance(e, DaqError):
+                                        print(f"[NIDAQ] AI_V read error: device={device} dt_ms={dt_ms:.1f} code={err_code} timeout={timeout_fast:.3f} avail_before={avail_before} avail_now={avail_now} msg={err_msg}")
+                                    else:
+                                        print(f"[NIDAQ] AI_V read error: device={device} dt_ms={dt_ms:.1f} timeout={timeout_fast:.3f} avail_before={avail_before} avail_now={avail_now} msg={err_msg}")
+                                    self._fast_err_counts[device] = ec + 1
+                                cnt = int(self._fast_diag_counts.get(device, 0))
+                                if cnt < 20:
+                                    print(f"[NIDAQ] AI_V read diag: device={device} dt_ms={dt_ms:.1f} ERROR (timeout={timeout_fast:.3f})")
+                                    self._fast_diag_counts[device] = cnt + 1
+                            except Exception:
+                                pass
+            # AI temperature per-device
+            if self._temp_tasks:
+                for tt in self._temp_tasks:
+                    task = tt.get("task")
+                    aliases = list(tt.get("aliases", []) or [])
+                    if task is None or not aliases:
+                        continue
+                    try:
+                        temp_samples = task.read(number_of_samples_per_channel=1, timeout=timeout_temp)
+                        if isinstance(temp_samples, list) and temp_samples and isinstance(temp_samples[0], list):
+                            for idx, alias in enumerate(aliases):
                                 try:
-                                    from nidaqmx.errors import DaqError  # type: ignore
+                                    vals[alias] = float(temp_samples[idx][0])
+                                    any_success = True
                                 except Exception:
-                                    DaqError = None  # type: ignore
-                                err_code = getattr(e, "error_code", None)
-                                err_msg = str(e)
-                                try:
-                                    avail_now = int(getattr(task.in_stream, "avail_samp_per_chan", 0))
-                                except Exception:
-                                    avail_now = -1
-                                if DaqError is not None and isinstance(e, DaqError):
-                                    print(f"[NIDAQ] AI_V read error: device={device} dt_ms={dt_ms:.1f} code={err_code} timeout={timeout_fast:.3f} avail_before={avail_before} avail_now={avail_now} msg={err_msg}")
-                                else:
-                                    print(f"[NIDAQ] AI_V read error: device={device} dt_ms={dt_ms:.1f} timeout={timeout_fast:.3f} avail_before={avail_before} avail_now={avail_now} msg={err_msg}")
-                                self._fast_err_counts[device] = ec + 1
-                            # Also continue lightweight diag counter for parity
-                            cnt = int(self._fast_diag_counts.get(device, 0))
-                            if cnt < 20:
-                                print(f"[NIDAQ] AI_V read diag: device={device} dt_ms={dt_ms:.1f} ERROR (timeout={timeout_fast:.3f})")
-                                self._fast_diag_counts[device] = cnt + 1
-                        except Exception:
-                            pass
+                                    continue
+                        elif isinstance(temp_samples, list):
+                            try:
+                                vals[aliases[0]] = float(temp_samples[0])
+                                any_success = True
+                            except Exception:
+                                pass
+                    except Exception:
                         pass
-            # AI temperature
-            if self._task_ai_temp is not None and self._ai_temp_aliases:
-                try:
-                    temp_samples = self._task_ai_temp.read(number_of_samples_per_channel=1, timeout=timeout_temp)
-                    if isinstance(temp_samples, list) and temp_samples and isinstance(temp_samples[0], list):
-                        for idx, alias in enumerate(self._ai_temp_aliases):
-                            vals[alias] = float(temp_samples[idx][0])
-                        any_success = True
-                    elif isinstance(temp_samples, list):
-                        vals[self._ai_temp_aliases[0]] = float(temp_samples[0])
-                        any_success = True
-                except Exception:
-                    pass
-            # DI on-demand
-            if self._task_di is not None and self._di_aliases:
-                try:
-                    di_vals = self._task_di.read(number_of_samples_per_channel=1, timeout=timeout_di)
-                    # Normalize to per-line scalar 0/1
-                    if isinstance(di_vals, list) and di_vals and isinstance(di_vals[0], list):
-                        for idx, alias in enumerate(self._di_aliases):
-                            v = di_vals[idx][0]
-                            vals[alias] = int(bool(v))
-                        any_success = True
-                    elif isinstance(di_vals, list):
-                        vals[self._di_aliases[0]] = int(bool(di_vals[0]))
-                        any_success = True
-                except Exception:
-                    pass
+            # DI on-demand per-device
+            if self._di_tasks:
+                for dt in self._di_tasks:
+                    task = dt.get("task")
+                    aliases = list(dt.get("aliases", []) or [])
+                    device = str(dt.get("device", ""))
+                    if task is None or not aliases:
+                        continue
+                    try:
+                        di_vals = task.read(number_of_samples_per_channel=1, timeout=timeout_di)
+                        if isinstance(di_vals, list) and di_vals and isinstance(di_vals[0], list):
+                            for idx, alias in enumerate(aliases):
+                                v = di_vals[idx][0]
+                                vals[alias] = int(bool(v))
+                                any_success = True
+                        elif isinstance(di_vals, list):
+                            vals[aliases[0]] = int(bool(di_vals[0]))
+                            any_success = True
+                        # Diagnostics for first few DI reads overall
+                        try:
+                            if self._di_read_diag_count < 5:
+                                shape = f"list[{len(di_vals)}]"
+                                if isinstance(di_vals, list) and di_vals and isinstance(di_vals[0], list):
+                                    shape = f"list[{len(di_vals)}x{len(di_vals[0])}]"
+                                sample_preview = []
+                                if isinstance(di_vals, list):
+                                    if di_vals and isinstance(di_vals[0], list):
+                                        sample_preview = [int(bool(x[0])) for x in di_vals[:min(3, len(di_vals))]]
+                                    else:
+                                        sample_preview = [int(bool(di_vals[0]))]
+                                print(f"[NIDAQ] DI read diag: device={device} shape={shape} aliases={aliases[:3]} values={sample_preview}")
+                                self._di_read_diag_count += 1
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
             # Reflect current DO/AO states (write-only) for telemetry
             for alias, state in self._do_states.items():
                 vals[alias] = int(state)
@@ -844,6 +1083,8 @@ class NiDAQPlugin(BasePlugin):
     def _teardown_tasks(self) -> None:
         # Close fast tasks per device
         try:
+            # Stop fast reader threads if running
+            self._stop_fast_reader_threads()
             for ft in self._fast_tasks or []:
                 t = ft.get("task")
                 try:
@@ -853,6 +1094,7 @@ class NiDAQPlugin(BasePlugin):
                     pass
         except Exception:
             pass
+        # Close legacy single tasks if present
         for t in (self._task_ai_fast, self._task_ai_temp, self._task_di, self._task_do, self._task_ao):
             try:
                 if t is not None:
@@ -860,12 +1102,58 @@ class NiDAQPlugin(BasePlugin):
                     t.close()
             except Exception:
                 pass
+        # Close per-device temp tasks
+        try:
+            for tt in self._temp_tasks or []:
+                t = tt.get("task")
+                try:
+                    if t is not None:
+                        t.stop(); t.close()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        # Close per-device DI/DO/AO tasks
+        try:
+            for dt in self._di_tasks or []:
+                t = dt.get("task")
+                try:
+                    if t is not None:
+                        t.stop(); t.close()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        try:
+            for d0 in self._do_tasks or []:
+                t = d0.get("task")
+                try:
+                    if t is not None:
+                        t.stop(); t.close()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        try:
+            for ao in self._ao_tasks or []:
+                t = ao.get("task")
+                try:
+                    if t is not None:
+                        t.stop(); t.close()
+                except Exception:
+                    pass
+        except Exception:
+            pass
         self._task_ai_fast = None
         self._task_ai_temp = None
         self._task_di = None
         self._task_do = None
         self._task_ao = None
         self._fast_tasks = []
+        self._temp_tasks = []
+        self._di_tasks = []
+        self._do_tasks = []
+        self._ao_tasks = []
 
     def stop(self) -> None:
         # Ensure NI-DAQmx tasks are properly closed to avoid DaqResourceWarning
@@ -881,12 +1169,201 @@ class NiDAQPlugin(BasePlugin):
                 self._health_thread.join(timeout=0.5)
         except Exception:
             pass
+        # Ensure we can restart the health worker on reload/start
+        self._health_thread = None
+        self._health_stop = None
+
+    def _start_fast_reader_threads(self) -> None:
+        """Start per-device reader threads that continuously drain DAQmx into deques."""
+        try:
+            import threading
+            from collections import deque
+            try:
+                print(f"[NIDAQ] starting fast reader threads for {len(self._fast_tasks)} device(s)")
+            except Exception:
+                pass
+            self._fast_reader_threads = []
+            n = max(1, self._oversample_factor)
+            for group in self._fast_tasks or []:
+                task = group.get("task")
+                device = str(group.get("device", ""))
+                aliases = list(group.get("aliases", []) or [])
+                try:
+                    print(f"[NIDAQ] fast reader pre-spawn: device={device} aliases={len(aliases)} task_none={task is None}")
+                except Exception:
+                    pass
+                if task is None or not aliases:
+                    continue
+                state = {
+                    "device": device,
+                    "task": task,
+                    "stop": threading.Event(),
+                    "lock": threading.Lock(),
+                    "buffers": {alias: deque(maxlen=int(5*n)) for alias in aliases},  # keep a few windows
+                }
+                try:
+                    print(f"[NIDAQ] spawn buffers: device={device} keys={list(state['buffers'].keys())} id={id(state['buffers'])}")
+                except Exception:
+                    pass
+                def _loop(dev: str, tsk, st, lk, bufs):  # type: ignore
+                    import time as _t
+                    margin = float(self._read_timeout_margin_s)
+                    fast_rate = max(1.0, float(self._fast_rate) or 1.0)
+                    # Use modest timeouts to avoid blocking
+                    timeout_fast = max((n / fast_rate) + margin, 2.5 / max(1.0, float(self.config.get("recording_rate_hz", 10.0))))
+                    last_ts = _t.time()
+                    # One-time startup log
+                    try:
+                        print(f"[NIDAQ] Fast reader thread started: device={dev} timeout={timeout_fast:.3f}")
+                    except Exception:
+                        pass
+                    while not st.is_set():
+                        try:
+                            avail = 0
+                            try:
+                                avail = int(getattr(tsk.in_stream, "avail_samp_per_chan", 0))
+                            except Exception:
+                                avail = 0
+                            now = _t.time()
+                            produced = int(max(0.0, (now - last_ts)) * fast_rate + 0.5)
+                            read_count = max(n, produced, avail)
+                            read_count = min(read_count, int(100 * n))  # higher clamp for catch-up
+                            if read_count <= 0:
+                                st.wait(0.005)
+                                continue
+                            t0r = _t.time()
+                            samples = tsk.read(number_of_samples_per_channel=int(read_count), timeout=timeout_fast)
+                            dt_ms = (_t.time() - t0r) * 1000.0
+                            last_ts = now
+                            # Demultiplex samples into buffers
+                            if isinstance(samples, list) and samples and isinstance(samples[0], list):
+                                lk.acquire()
+                                try:
+                                    for idx, alias in enumerate(list(bufs.keys())):
+                                        ch_samples = samples[idx] if idx < len(samples) else []
+                                        for v in ch_samples:
+                                            bufs[alias].append(float(v))
+                                finally:
+                                    lk.release()
+                                # Update health
+                                try:
+                                    self._health["last_good_read_ts"] = now
+                                    self._health["consec_failures"] = 0
+                                    self._health["last_error"] = ""
+                                except Exception:
+                                    pass
+                                # Diagnostic (first few per device)
+                                try:
+                                    c = int(self._fast_diag_counts.get(dev, 0))
+                                    if c < 5:
+                                        def _shape(x: Any) -> str:
+                                            try:
+                                                import numpy as _np  # type: ignore
+                                                if isinstance(x, _np.ndarray):
+                                                    return f"np.ndarray{x.shape}"
+                                            except Exception:
+                                                pass
+                                            if isinstance(x, list):
+                                                if x and isinstance(x[0], list):
+                                                    return f"list[{len(x)}x{len(x[0])}]"
+                                                return f"list[{len(x)}]"
+                                            return type(x).__name__
+                                        print(f"[NIDAQ] Fast reader read: device={dev} dt_ms={dt_ms:.1f} read_count={int(read_count)} avail={avail} shape={_shape(samples)}")
+                                        self._fast_diag_counts[dev] = c + 1
+                                except Exception:
+                                    pass
+                            else:
+                                # Single-channel list
+                                lk.acquire()
+                                try:
+                                    alias = list(bufs.keys())[0] if bufs else None
+                                    if alias is not None:
+                                        for v in (samples or []):
+                                            bufs[alias].append(float(v))
+                                finally:
+                                    lk.release()
+                                try:
+                                    self._health["last_good_read_ts"] = now
+                                    self._health["consec_failures"] = 0
+                                    self._health["last_error"] = ""
+                                except Exception:
+                                    pass
+                                # Diagnostic (first few per device)
+                                try:
+                                    c = int(self._fast_diag_counts.get(dev, 0))
+                                    if c < 5:
+                                        ln = len(samples) if isinstance(samples, list) else 0
+                                        print(f"[NIDAQ] Fast reader read: device={dev} dt_ms={dt_ms:.1f} read_count={int(read_count)} avail={avail} shape=list[{ln}]")
+                                        self._fast_diag_counts[dev] = c + 1
+                                except Exception:
+                                    pass
+                        except Exception as e:
+                            # Count failures but keep looping
+                            try:
+                                self._health["consec_failures"] = int(self._health.get("consec_failures", 0)) + 1
+                                self._health["last_error"] = "read_error"
+                            except Exception:
+                                pass
+                            # Error diagnostics (first few per device)
+                            try:
+                                c = int(self._fast_err_counts.get(dev, 0))
+                                if c < 5:
+                                    err_code = getattr(e, "error_code", None)
+                                    try:
+                                        avail_now = int(getattr(tsk.in_stream, "avail_samp_per_chan", 0))
+                                    except Exception:
+                                        avail_now = -1
+                                    print(f"[NIDAQ] Fast reader error: device={dev} code={err_code} avail_now={avail_now} msg={e}")
+                                    self._fast_err_counts[dev] = c + 1
+                            except Exception:
+                                pass
+                            st.wait(0.01)
+                try:
+                    t = threading.Thread(target=_loop, args=(device, task, state["stop"], state["lock"], state["buffers"]), daemon=True)
+                    t.start()
+                    state["thread"] = t
+                    try:
+                        print(f"[NIDAQ] Fast reader thread spawned: device={device}")
+                    except Exception:
+                        pass
+                    self._fast_reader_threads.append(state)
+                except Exception as e:
+                    try:
+                        import traceback as _tb
+                        print(f"[NIDAQ] fast reader spawn failed: device={device} err={e}\n{_tb.format_exc()}")
+                    except Exception:
+                        pass
+        except Exception as e:
+            try:
+                print(f"[NIDAQ] starting fast reader threads failed: {e}")
+            except Exception:
+                pass
+            self._fast_reader_threads = []
+
+    def _stop_fast_reader_threads(self) -> None:
+        try:
+            for st in self._fast_reader_threads or []:
+                try:
+                    ev = st.get("stop")
+                    if ev is not None:
+                        ev.set()
+                except Exception:
+                    pass
+                try:
+                    th = st.get("thread")
+                    if th is not None:
+                        th.join(timeout=0.5)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        self._fast_reader_threads = []
 
     # Public command APIs for outputs
     def write_do(self, alias: str, state: int) -> None:
         try:
             self._do_states[str(alias)] = int(bool(state))
-            if self.mode == "real" and self._task_do is not None and self._do_aliases:
+            if self.mode == "real" and self._do_tasks:
                 self._write_do_hardware()
         except Exception:
             pass
@@ -894,28 +1371,37 @@ class NiDAQPlugin(BasePlugin):
     def write_ao(self, alias: str, value: float) -> None:
         try:
             self._ao_states[str(alias)] = float(value)
-            if self.mode == "real" and self._task_ao is not None and self._ao_aliases:
+            if self.mode == "real" and self._ao_tasks:
                 self._write_ao_hardware()
         except Exception:
             pass
 
     # Internal helpers to push current states to hardware in channel order
     def _write_do_hardware(self) -> None:
-        if self._task_do is None or not self._do_aliases:
+        if not self._do_tasks:
             return
         try:
-            values = [int(bool(self._do_states.get(alias, 0))) for alias in self._do_aliases]
-            # nidaqmx allows list writes for multiple lines
-            self._task_do.write(values, auto_start=True)
+            for dt in self._do_tasks:
+                task = dt.get("task")
+                aliases = list(dt.get("aliases", []) or [])
+                if task is None or not aliases:
+                    continue
+                values = [int(bool(self._do_states.get(alias, 0))) for alias in aliases]
+                task.write(values, auto_start=True)
         except Exception:
             pass
 
     def _write_ao_hardware(self) -> None:
-        if self._task_ao is None or not self._ao_aliases:
+        if not self._ao_tasks:
             return
         try:
-            values = [float(self._ao_states.get(alias, 0.0)) for alias in self._ao_aliases]
-            self._task_ao.write(values, auto_start=True)
+            for at in self._ao_tasks:
+                task = at.get("task")
+                aliases = list(at.get("aliases", []) or [])
+                if task is None or not aliases:
+                    continue
+                values = [float(self._ao_states.get(alias, 0.0)) for alias in aliases]
+                task.write(values, auto_start=True)
         except Exception:
             pass
 
@@ -923,7 +1409,7 @@ class NiDAQPlugin(BasePlugin):
     def _start_health_worker(self) -> None:
         try:
             import threading, time
-            if self._health_thread is not None:
+            if self._health_thread is not None and getattr(self._health_thread, "is_alive", lambda: False)():
                 return
             self._health_stop = threading.Event()
             def _loop() -> None:
