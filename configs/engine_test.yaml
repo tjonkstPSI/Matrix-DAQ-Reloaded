@@ -1,9 +1,9 @@
 enabled: true
 required_fields:
-  engine_type: 14L
-  engine_serial_number: '12345'
-  test_type: Spark Sweep
+  engine_type: 4X
+  engine_serial_number: '1234'
+  test_type: Other Testing
   test_operator: TO
   project_number: '1234'
-pre_test_comments: This is a test
+pre_test_comments: ccp recording test
 post_test_comments: ''

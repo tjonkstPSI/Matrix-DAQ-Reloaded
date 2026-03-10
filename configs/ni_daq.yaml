@@ -1,5 +1,5 @@
 mode: real
-recording_rate_hz: 10.0
+recording_rate_hz: 1.0
 decimation:
   filter: IIR_Butterworth
   cutoff_hz: auto
@@ -7,7 +7,7 @@ channels:
   ai_voltage:
   - phys: AGENTMod1/ai0
     alias: AGENTMod1_ai0_V
-    enabled: true
+    enabled: false
     scaling:
       unit: V
   - phys: AGENTMod1/ai1
@@ -17,7 +17,7 @@ channels:
       unit: V
   - phys: AGENTMod1/ai2
     alias: qPR_CompIn1
-    enabled: false
+    enabled: true
     scaling:
       unit: V
   - phys: AGENTMod1/ai3
@@ -32,7 +32,7 @@ channels:
       unit: V
   - phys: AGENTMod2/ai1
     alias: AGENTMod2_ai1_V
-    enabled: true
+    enabled: false
     scaling:
       unit: V
   - phys: AGENTMod2/ai2
@@ -106,7 +106,7 @@ channels:
     scaling:
       unit: V
   - phys: MATRIXMod3/ai0
-    alias: MATRIXMod3_ai0_V
+    alias: qPR_Amb
     enabled: true
     scaling:
       unit: V
@@ -126,7 +126,7 @@ channels:
     scaling:
       unit: V
   - phys: MATRIXMod4/ai0
-    alias: MATRIXMod4_ai0_V
+    alias: qFL_Coolant
     enabled: true
     scaling:
       unit: V
@@ -147,7 +147,7 @@ channels:
       unit: V
   ai_temp:
   - phys: AGENTMod7/ai0
-    alias: AGENTMod7_ai0_RTD
+    alias: qTP_Amb
     enabled: true
     unit: C
     sensor:
@@ -255,7 +255,7 @@ channels:
       wires: 3
       excitation_current_a: 0.001
   - phys: MATRIXMod1/ai0
-    alias: MATRIXMod1_ai0_TC
+    alias: qTP_CoolantIn
     enabled: true
     unit: C
     sensor:
@@ -480,7 +480,7 @@ channels:
       subtype: K
   di:
   - phys: MATRIXMod6/port0/line0
-    alias: MATRIXMod6_port0_line0_DI
+    alias: qDI_In1
     enabled: true
     initial: 0
   - phys: MATRIXMod6/port0/line1
@@ -545,7 +545,7 @@ channels:
     initial: 0
   do:
   - phys: MATRIXMod6/port1/line0
-    alias: MATRIXMod6_port1_line0_DO
+    alias: qDO_Out1
     enabled: true
     initial: 0
   - phys: MATRIXMod6/port1/line1
@@ -610,7 +610,7 @@ channels:
     initial: 0
   ao:
   - phys: MATRIXMod5/ao0
-    alias: MATRIXMod5_ao0_V
+    alias: qVO_ValvePos
     enabled: true
     scaling:
       unit: V

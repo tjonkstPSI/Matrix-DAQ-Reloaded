@@ -1,8 +1,20 @@
 mode: real
-recording_rate_hz: 10
+recording_rate_hz: 20.0
+
+acquisition:
+  threaded_fast_ai: true
+  read_timeout_margin_s: 1.0
+
+health:
+  poll_hz: 2
+  read_fail_warn_threshold: 10
+  read_fail_fault_threshold: 30
+  expose_status_channels: true
+
 decimation:
   filter: IIR_Butterworth
   cutoff_hz: auto
+
 channels:
   ai_voltage:
   - phys: AGENTMod1/ai0
