@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Set
+import threading
 
 from .base import BasePlugin, PluginStatus
 
@@ -127,6 +128,13 @@ class CalculatedChannelsPlugin(BasePlugin):
         self._items: List[CalcItem] = []
         self._evaluator = SafeExprEvaluator(ALLOWED_FUNCS)
         self._units: Dict[str, str] = {}
+        self._snapshot_values: Dict[str, Any] = {}
+        self._latest_source_values: Dict[str, Any] = {}
+        self._snapshot_lock = threading.Lock()
+        self._source_lock = threading.Lock()
+        self._worker_thread = None
+        self._worker_stop = threading.Event()
+        self._worker_period_s: float = 0.05
 
     def configure(self) -> None:
         cfg = self.config or {}
@@ -144,6 +152,11 @@ class CalculatedChannelsPlugin(BasePlugin):
             items.append(CalcItem(alias=str(alias), expr=str(expr), symbols=dict(symbols), unit=unit, enabled=enabled))
         self._items = items
         self._units = {it.alias: it.unit for it in self._items if it.enabled}
+        try:
+            hz = float(self.config.get("recording_rate_hz", 10.0))
+        except Exception:
+            hz = 10.0
+        self._worker_period_s = max(0.01, 1.0 / max(1.0, hz))
 
     def validate(self) -> PluginStatus:
         # Basic structure validation
@@ -171,7 +184,38 @@ class CalculatedChannelsPlugin(BasePlugin):
     def units(self) -> Dict[str, str]:
         return dict(self._units)
 
+    def start(self) -> None:
+        self._worker_stop.clear()
+        self._worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
+        self._worker_thread.start()
+
+    def stop(self) -> None:
+        self._worker_stop.set()
+        t = self._worker_thread
+        if t is not None and t.is_alive():
+            try:
+                t.join(timeout=0.5)
+            except Exception:
+                pass
+        self._worker_thread = None
+
     def simulate_step(self, source_values: Dict[str, Any]) -> Dict[str, Any]:
+        # Non-blocking on core tick: cache latest source and return latest computed snapshot.
+        with self._source_lock:
+            self._latest_source_values = dict(source_values)
+        with self._snapshot_lock:
+            return dict(self._snapshot_values)
+
+    def _worker_loop(self) -> None:
+        while not self._worker_stop.is_set():
+            with self._source_lock:
+                src = dict(self._latest_source_values)
+            vals = self._compute_step_values(src)
+            with self._snapshot_lock:
+                self._snapshot_values = vals
+            self._worker_stop.wait(self._worker_period_s)
+
+    def _compute_step_values(self, source_values: Dict[str, Any]) -> Dict[str, Any]:
         """Evaluate calculations against provided source values and any prior calcs in order."""
         out: Dict[str, Any] = {}
         for it in self._items:

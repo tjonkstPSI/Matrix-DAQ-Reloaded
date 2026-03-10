@@ -1,9 +1,22 @@
-<!-- Author: T. Onkst | Date: 08112025 -->
+<!-- Author: T. Onkst | Date: 03092026 -->
 
 ## CCP Plugin Specification
 
 ### Purpose
 Configure and communicate with an ECU using CCP (CAN Calibration Protocol) over NI-XNET/CAN. Import A2L files, handle seed/key unlock via vendor DLL, allow operators to select measurement variables (no per-variable aliases; use A2L names), optionally apply a user-defined prefix for naming, and record aligned to the system recording rate R (≤ 100 Hz). Calibration writes are out-of-scope (read-only).
+
+### Current Implementation Status (Matrix_v2_retry)
+- Implemented and validated in-app:
+  - Real-mode NI-XNET connect path
+  - `GET_SEED` + algorithmic access-key unlock (CAL/DAQ modes)
+  - `SHORT_UP` polling over A2L measurement addresses
+  - UI config dialog + live plugin reload
+  - Runtime diagnostics channels and stage logs
+- Not required for current path:
+  - Vendor seed/key DLL integration (deprecated for this project)
+- Deferred:
+  - DAQ/ODT streaming setup path
+  - Write/calibration operations
 
 ### Scope
 - Transport: CAN (classic) via NI-9862 and NI-XNET
@@ -23,6 +36,9 @@ Configure and communicate with an ECU using CCP (CAN Calibration Protocol) over 
 - Safety:
   - Unlock only upon explicit operator action (Unlock button) or when write is requested
   - Automatically relock on Stop Test or plugin teardown
+
+Implementation note:
+- Current integration uses algorithmic unlock with ECU access key (`security.access_key` or `CCP_ACCESS_KEY` env var). DLL-based key derivation remains optional/deferred.
 
 ### Variable Discovery, Selection, and Naming
 - Import one or more A2L files; if multiple ECU variants exist, operator selects the target variant
@@ -53,29 +69,44 @@ File: `configs/ccp.yaml`
 recording_rate_hz: 100                 # R (per run); from Channel Manager
 
 session:
-  bus: "CAN1"                           # link to a CAN interface
-  station_address: 0x01                 # ECU station address
-  timeout_ms: 50
-  max_retries: 3
+  interface: "CAN1"
+  baudrate: 250000
+  tx_id: 0x0CFF50F9
+  rx_id: 0x0CFF5100
+  station_address: 0x0
+  is_extended: true
 
 security:
-  dll_path: "C:/Vendor/seedkey.dll"
-  function: "calc_key"                  # function(seed_bytes) -> key_bytes
-  calling_convention: "cdecl"           # or stdcall
-  test_seed_hex: "0011223344556677"     # optional dry-run test vector
+  seed_resource: 0x01
+  seed_ctr: 0x07
+  connect_ctr: 0x19
+  unlock_ctr: 0x08
+  access_key: ""                         # optional if CCP_ACCESS_KEY env var is set
+  seed_endian: "big"                     # big | little | reverse
+  sec_type: "CAL"                        # CAL | DAQ
+  unlock_pad: 0x55
+  force_unlock: true
+  set_s_status: true
+  s_status: 0x83
 
 a2l:
-  files:
-    - path: "C:/Configs/ccp/engine.a2l"
-  variant: null                         # optional variant selection
+  path: "C:/Configs/ccp/engine.a2l"
+
+poll_interval_ms: 100
+poll_channels_per_tick: 1
+io_timeout_s: 0.05
+poll_endian: big
+mta_addr_endian: big
+addr_ext_high: false
+reconnect_interval_s: 2.0
 
 measurements:
-  naming_prefix: "emaster"              # optional; if omitted, final names are A2L names
+  naming_prefix: "CCP_"
   list:
-    - name: "RPM"                        # from A2L; final = prefix+name or name
+    - name: "RPM"
       unit_override: null
       enabled: true
-    - name: "Oil_Temperature"
+    - name: "Vbat"
       enabled: true
 
 writes: []                                # read-only scope; no calibration writes
@@ -102,6 +133,17 @@ writes: []                                # read-only scope; no calibration writ
 ### Outputs and Metadata
 - For each measurement: record alias, original A2L name, unit, conversion, address/ODT info (if available), and ECU variant
 - For writes: log write attempts (value, time, result) to per-run logs; optionally include a write audit CSV (TBD)
+
+Additional diagnostics channels:
+- `CCP/connected`, `CCP/state_code`, `CCP/connect_attempts`, `CCP/connect_ok`
+- `CCP/unlock_ok`, `CCP/poll_success`, `CCP/poll_fail`
+- `CCP/last_seed_status`, `CCP/last_rc`, `CCP/ctr_mismatch`
+
+### Deferred Optimization Backlog
+- Reduce `CCP/poll_fail` rate under real ECU load while preserving current responsiveness.
+- Reduce stale data frequency (`CCP/freshness_state_code` warn/stale transitions), especially for high-priority channels such as `CCP_Vsw`.
+- Add adaptive timeout and/or bounded backoff tuning for SHORT_UP to improve stability during bus jitter.
+- Add rolling CCP health metrics (for example, success-rate window and consecutive-fail counters) to separate transient noise from sustained degradation.
 
 ### Error Conditions (Examples)
 - Unlock failure (key rejected) → UI error; retry or inspect DLL

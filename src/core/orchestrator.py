@@ -191,6 +191,8 @@ class Orchestrator:
             interval = float(self.core_cfg.get("tick_interval_s", 0.1))
             i = 0
             t0 = time.time()
+            last_tick_start_mono: float | None = None
+            next_tick_deadline = time.monotonic() + max(0.001, interval)
             
             def _format_local_hms(epoch_seconds: float) -> str:
                 """Return local workstation time as HH:MM:SS.fff for an epoch timestamp."""
@@ -210,6 +212,10 @@ class Orchestrator:
                 for _ in range(demo_ticks):
                     if not self._running:
                         break
+                    tick_start_mono = time.monotonic()
+                    tick_dt_s = interval if last_tick_start_mono is None else max(0.0, tick_start_mono - last_tick_start_mono)
+                    tick_jitter_s = tick_dt_s - interval
+                    last_tick_start_mono = tick_start_mono
                     vals = {}
                     units = {}
                     if modbus is not None:
@@ -272,6 +278,12 @@ class Orchestrator:
                     elapsed = time.time() - t0
                     vals["Time_Relative_s"] = elapsed
                     units["Time_Relative_s"] = "s"
+                    vals["Core/tick_dt_s"] = float(tick_dt_s)
+                    units["Core/tick_dt_s"] = "s"
+                    vals["Core/tick_jitter_s"] = float(tick_jitter_s)
+                    units["Core/tick_jitter_s"] = "s"
+                    vals["Core/tick_overrun"] = 1.0 if tick_dt_s > (interval * 1.10) else 0.0
+                    units["Core/tick_overrun"] = ""
                     # Evaluate alarms
                     states, summary, events = ({}, {"any_warning": False, "any_shutdown": False}, [])
                     # Handle control messages (e.g., manual stats, recording control, export)
@@ -296,6 +308,8 @@ class Orchestrator:
                                 self._handle_ao_write(ctrl_msg)
                             elif ctrl_msg.get("type") == "plugin_inject_fail":
                                 self._handle_inject_fail(ctrl_msg)
+                            elif ctrl_msg.get("type") == "ccp_test":
+                                self._kickoff_ccp_test(ctrl_msg)
                             elif ctrl_msg.get("type") == "reload_plugin":
                                 pid = str(ctrl_msg.get("plugin", ""))
                                 self._reload_plugin(pid)
@@ -345,10 +359,21 @@ class Orchestrator:
                             self._parquet.append(now_ts, vals, units)
                     except Exception:
                         pass
-                    time.sleep(interval)
+                    sleep_s = max(0.0, next_tick_deadline - time.monotonic())
+                    if sleep_s > 0.0:
+                        time.sleep(sleep_s)
+                    now_mono = time.monotonic()
+                    if now_mono > next_tick_deadline + interval:
+                        next_tick_deadline = now_mono + interval
+                    else:
+                        next_tick_deadline += interval
                     i += 1
             else:
                 while self._running:
+                    tick_start_mono = time.monotonic()
+                    tick_dt_s = interval if last_tick_start_mono is None else max(0.0, tick_start_mono - last_tick_start_mono)
+                    tick_jitter_s = tick_dt_s - interval
+                    last_tick_start_mono = tick_start_mono
                     vals = {}
                     units = {}
                     if modbus is not None:
@@ -407,6 +432,12 @@ class Orchestrator:
                     elapsed = time.time() - t0
                     vals["Time_Relative_s"] = elapsed
                     units["Time_Relative_s"] = "s"
+                    vals["Core/tick_dt_s"] = float(tick_dt_s)
+                    units["Core/tick_dt_s"] = "s"
+                    vals["Core/tick_jitter_s"] = float(tick_jitter_s)
+                    units["Core/tick_jitter_s"] = "s"
+                    vals["Core/tick_overrun"] = 1.0 if tick_dt_s > (interval * 1.10) else 0.0
+                    units["Core/tick_overrun"] = ""
                     # Evaluate alarms
                     states, summary, events = ({}, {"any_warning": False, "any_shutdown": False}, [])
                     # Handle control messages
@@ -434,6 +465,8 @@ class Orchestrator:
                                 self._reload_plugin(pid)
                             elif ctrl_msg.get("type") == "plugin_inject_fail":
                                 self._handle_inject_fail(ctrl_msg)
+                            elif ctrl_msg.get("type") == "ccp_test":
+                                self._kickoff_ccp_test(ctrl_msg)
                         except Exception as e:
                             try:
                                 print(f"[WARN] Control handling error: {e}")
@@ -472,7 +505,14 @@ class Orchestrator:
                             self._parquet.append(now_ts, vals, units)
                     except Exception:
                         pass
-                    time.sleep(interval)
+                    sleep_s = max(0.0, next_tick_deadline - time.monotonic())
+                    if sleep_s > 0.0:
+                        time.sleep(sleep_s)
+                    now_mono = time.monotonic()
+                    if now_mono > next_tick_deadline + interval:
+                        next_tick_deadline = now_mono + interval
+                    else:
+                        next_tick_deadline += interval
                     i += 1
         finally:
             # Stop plugins and bus gracefully
@@ -617,6 +657,66 @@ class Orchestrator:
                 print(f"[INFO] Reloaded plugin: {plugin_id}")
             except Exception as e:
                 print(f"[WARN] Reload failed for {plugin_id}: {e}")
+        except Exception:
+            pass
+
+    def _kickoff_ccp_test(self, msg: Dict[str, Any]) -> None:
+        run_id = str(msg.get("run_id", ""))
+        try:
+            import threading
+        except Exception:
+            return
+        if bool(getattr(self, "_ccp_test_running", False)):
+            self._publish_ccp_test(run_id, "start", False, "CCP test already running", done=True)
+            return
+
+        ccp = self.plugins.get("CCP")
+        if ccp is None or not self._plugin_enabled.get("CCP", True):
+            self._publish_ccp_test(run_id, "start", False, "CCP plugin is not enabled", done=True)
+            return
+
+        def _emit(step: str, ok: bool, detail: str, done: bool = False) -> None:
+            self._publish_ccp_test(run_id, step, ok, detail, done=done)
+
+        def _worker() -> None:
+            setattr(self, "_ccp_test_running", True)
+            try:
+                _emit("start", True, "Starting CCP connection test...")
+                try:
+                    ccp.load_config()
+                    ccp.configure()
+                except Exception as e:
+                    _emit("load_config", False, f"Failed to load/configure CCP: {e}", done=True)
+                    return
+                if hasattr(ccp, "run_connection_test"):
+                    getattr(ccp, "run_connection_test")(_emit)
+                else:
+                    _emit("unsupported", False, "CCP plugin does not support connection test", done=True)
+            except Exception as e:
+                _emit("error", False, f"CCP test exception: {e}", done=True)
+            finally:
+                setattr(self, "_ccp_test_running", False)
+
+        try:
+            t = threading.Thread(target=_worker, daemon=True)
+            t.start()
+        except Exception as e:
+            self._publish_ccp_test(run_id, "start", False, f"Failed to start CCP test thread: {e}", done=True)
+
+    def _publish_ccp_test(self, run_id: str, step: str, ok: bool, detail: str, done: bool = False) -> None:
+        try:
+            import json
+            payload = json.dumps(
+                {
+                    "type": "ccp_test",
+                    "run_id": run_id,
+                    "step": str(step),
+                    "ok": bool(ok),
+                    "detail": str(detail),
+                    "done": bool(done),
+                }
+            ).encode("utf-8")
+            self.bus.publish_status(payload)
         except Exception:
             pass
 

@@ -35,6 +35,7 @@ class ConsoleWindow(QMainWindow):
         # Telemetry state
         self._last_rx_ts: float = 0.0
         self._last_payload: Dict[str, Any] = {}
+        self._conn_latched: bool = False
         # Run state
         self._locked: bool = False
         self._prev_rec: bool = False
@@ -68,6 +69,15 @@ class ConsoleWindow(QMainWindow):
             if pid == "NI_DAQ":
                 tile.setContextMenuPolicy(Qt.CustomContextMenu)
                 tile.customContextMenuRequested.connect(self._show_nidaq_menu)  # type: ignore
+            if pid == "CCP":
+                tile.setContextMenuPolicy(Qt.CustomContextMenu)
+                tile.customContextMenuRequested.connect(self._show_ccp_menu)  # type: ignore
+            if pid == "CAN":
+                tile.setContextMenuPolicy(Qt.CustomContextMenu)
+                tile.customContextMenuRequested.connect(self._show_can_menu)  # type: ignore
+            if pid == "Modbus":
+                tile.setContextMenuPolicy(Qt.CustomContextMenu)
+                tile.customContextMenuRequested.connect(self._show_modbus_menu)  # type: ignore
             pv.addWidget(tile)
             self._tiles[pid] = tile
         v.addWidget(plugins_box)
@@ -195,6 +205,72 @@ class ConsoleWindow(QMainWindow):
             dlg = NiDaqConfigDialog(self)
             dlg.exec()
 
+    def _show_ccp_menu(self, pos) -> None:
+        # Context menu for CCP tile: Configure
+        try:
+            from PySide6.QtWidgets import QMenu
+        except Exception:
+            return
+        sender = self.sender()
+        if not sender or not isinstance(sender, QFrame):
+            return
+        menu = QMenu(self)
+        act_cfg = menu.addAction("Configure…")
+        act = menu.exec_(sender.mapToGlobal(pos))
+        if act == act_cfg:
+            try:
+                from .ccp_config import CCPConfigDialog
+            except Exception:
+                CCPConfigDialog = None  # type: ignore
+            if CCPConfigDialog is None:
+                return
+            dlg = CCPConfigDialog(self)
+            dlg.exec()
+
+    def _show_can_menu(self, pos) -> None:
+        # Context menu for CAN tile: Configure
+        try:
+            from PySide6.QtWidgets import QMenu
+        except Exception:
+            return
+        sender = self.sender()
+        if not sender or not isinstance(sender, QFrame):
+            return
+        menu = QMenu(self)
+        act_cfg = menu.addAction("Configure…")
+        act = menu.exec_(sender.mapToGlobal(pos))
+        if act == act_cfg:
+            try:
+                from .can_config import CANConfigDialog
+            except Exception:
+                CANConfigDialog = None  # type: ignore
+            if CANConfigDialog is None:
+                return
+            dlg = CANConfigDialog(self)
+            dlg.exec()
+
+    def _show_modbus_menu(self, pos) -> None:
+        # Context menu for Modbus tile: Configure
+        try:
+            from PySide6.QtWidgets import QMenu
+        except Exception:
+            return
+        sender = self.sender()
+        if not sender or not isinstance(sender, QFrame):
+            return
+        menu = QMenu(self)
+        act_cfg = menu.addAction("Configure…")
+        act = menu.exec_(sender.mapToGlobal(pos))
+        if act == act_cfg:
+            try:
+                from .modbus_config import ModbusConfigDialog
+            except Exception:
+                ModbusConfigDialog = None  # type: ignore
+            if ModbusConfigDialog is None:
+                return
+            dlg = ModbusConfigDialog(self)
+            dlg.exec()
+
     def _set_tile(self, tile: QFrame, color: str, subtitle: str) -> None:
         tile.setStyleSheet(f"QFrame {{ background-color: {color}; border-radius: 6px; }}")
         # Hide subtitle for compact OK state
@@ -243,7 +319,17 @@ class ConsoleWindow(QMainWindow):
 
     def _refresh_status(self) -> None:
         now = time.time()
-        connected = (now - self._last_rx_ts) < 1.0 if self._last_rx_ts > 0 else False
+        age = (now - self._last_rx_ts) if self._last_rx_ts > 0 else 1e9
+        # Use hysteresis so brief telemetry stalls do not cause UI flicker.
+        connect_threshold_s = 1.0
+        disconnect_threshold_s = 3.0
+        if self._conn_latched:
+            if age > disconnect_threshold_s:
+                self._conn_latched = False
+        else:
+            if age < connect_threshold_s:
+                self._conn_latched = True
+        connected = self._conn_latched
         self.lbl_conn.setText("Connected" if connected else "Disconnected")
         self.lbl_conn.setStyleSheet("color: #2ecc71;" if connected else "color: #e74c3c;")
         # Recording flag
@@ -260,7 +346,7 @@ class ConsoleWindow(QMainWindow):
         self.lbl_rec.setStyleSheet("color: #2ecc71;" if rec else "color: #bdc3c7;")
         # Update primary button enable/state
         # Enabled when connected and required plugins have valid configs
-        connected = (now - self._last_rx_ts) < 1.0 if self._last_rx_ts > 0 else False
+        connected = self._conn_latched
         can_lock = connected and all(self._plugin_config_ok(pid) for pid in self._tiles.keys())
         self.btn_primary.setEnabled(can_lock)
         # Export allowed only when connected and not recording

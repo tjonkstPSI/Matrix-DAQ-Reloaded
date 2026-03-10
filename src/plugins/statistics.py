@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Any, List, Deque, Tuple, Optional, Set
 from collections import deque
+import threading
 
 from .base import BasePlugin, PluginStatus
 
@@ -61,6 +62,13 @@ class StatisticsPlugin(BasePlugin):
         self._ready_vals: Dict[str, float] = {}
         self._ready_units: Dict[str, str] = {}
         self._events: List[Dict[str, Any]] = []
+        # Decoupled processing state
+        self._state_lock = threading.Lock()
+        self._pending_lock = threading.Lock()
+        self._pending_update: Optional[Tuple[Dict[str, Any], Dict[str, str], float]] = None
+        self._worker_thread = None
+        self._worker_stop = threading.Event()
+        self._worker_period_s: float = 0.01
 
     def configure(self) -> None:
         cfg = self.config or {}
@@ -112,6 +120,11 @@ class StatisticsPlugin(BasePlugin):
         self._events = []
         # Track dynamic aliases when no channels configured
         self._dynamic_mode = not bool(self._channels)
+        try:
+            hz = float(self.config.get("recording_rate_hz", 10.0))
+        except Exception:
+            hz = 10.0
+        self._worker_period_s = max(0.005, 1.0 / max(10.0, hz * 2.0))
 
     def validate(self) -> PluginStatus:
         # Basic structure
@@ -142,10 +155,39 @@ class StatisticsPlugin(BasePlugin):
             return None
 
     def start(self) -> None:
-        # No-op
-        pass
+        self._worker_stop.clear()
+        self._worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
+        self._worker_thread.start()
+
+    def stop(self) -> None:
+        self._worker_stop.set()
+        t = self._worker_thread
+        if t is not None and t.is_alive():
+            try:
+                t.join(timeout=0.5)
+            except Exception:
+                pass
+        self._worker_thread = None
 
     def update(self, values: Dict[str, Any], units: Dict[str, str], now_ts: float) -> None:
+        # Non-blocking: keep latest upstream payload for background processing.
+        with self._pending_lock:
+            self._pending_update = (dict(values), dict(units), float(now_ts))
+
+    def _worker_loop(self) -> None:
+        while not self._worker_stop.is_set():
+            payload = None
+            with self._pending_lock:
+                if self._pending_update is not None:
+                    payload = self._pending_update
+                    self._pending_update = None
+            if payload is not None:
+                values, units, now_ts = payload
+                with self._state_lock:
+                    self._process_update(values, units, now_ts)
+            self._worker_stop.wait(self._worker_period_s)
+
+    def _process_update(self, values: Dict[str, Any], units: Dict[str, str], now_ts: float) -> None:
         # Update buffers per configured channel
         for ch in self._channels:
             if not ch.enabled:
@@ -189,20 +231,22 @@ class StatisticsPlugin(BasePlugin):
         self._maybe_finish_forward(now_ts)
 
     def outputs(self, now_ts: float) -> Tuple[Dict[str, float], Dict[str, str], List[Dict[str, Any]]]:
-        vals = dict(self._ready_vals)
-        u = dict(self._ready_units)
-        ev = list(self._events)
-        # Clear ready snapshot/events after one read
-        self._ready_vals.clear()
-        self._ready_units.clear()
-        self._events.clear()
-        return vals, u, ev
+        with self._state_lock:
+            vals = dict(self._ready_vals)
+            u = dict(self._ready_units)
+            ev = list(self._events)
+            # Clear ready snapshot/events after one read
+            self._ready_vals.clear()
+            self._ready_units.clear()
+            self._events.clear()
+            return vals, u, ev
 
     def request_manual_snapshot(self, now_ts: float, capture_mode: Optional[str] = None) -> None:
-        mode = capture_mode or self._win.capture_mode
-        self._pending_request = (mode, now_ts)
-        if mode == "forward":
-            self._forward_start_ts = now_ts
+        with self._state_lock:
+            mode = capture_mode or self._win.capture_mode
+            self._pending_request = (mode, now_ts)
+            if mode == "forward":
+                self._forward_start_ts = now_ts
 
     @staticmethod
     def _compute_stats(series: List[float], stats: List[str]) -> Dict[str, float]:

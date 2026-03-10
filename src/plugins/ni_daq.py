@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from typing import Dict, Any, Set, List, Optional
+import threading
+import time
 
 from .base import BasePlugin, PluginStatus
 
@@ -79,6 +81,12 @@ class NiDAQPlugin(BasePlugin):
         self._fast_last_read_ts: Dict[str, float] = {}
         # One-time debug print guard for path selection
         self._fast_path_printed: bool = False
+        # Latest-value snapshot (decouples core tick from NI read timing)
+        self._snapshot_values: Dict[str, Any] = {}
+        self._snapshot_lock = threading.Lock()
+        self._snapshot_thread = None
+        self._snapshot_stop = threading.Event()
+        self._snapshot_period_s: float = 0.05
 
     def _nidaq_available(self) -> bool:
         try:
@@ -97,6 +105,10 @@ class NiDAQPlugin(BasePlugin):
             self._sim_rate_hz = float(self.config.get("recording_rate_hz", 10.0))
         except Exception:
             self._sim_rate_hz = 10.0
+        try:
+            self._snapshot_period_s = max(0.01, 1.0 / max(1.0, float(self._sim_rate_hz)))
+        except Exception:
+            self._snapshot_period_s = 0.05
         # Acquisition tuning
         try:
             acq = (self.config.get("acquisition") or {})
@@ -353,6 +365,18 @@ class NiDAQPlugin(BasePlugin):
                 self._task_di = None
         # Start health worker
         self._start_health_worker()
+        # Seed snapshot with output states so core always has values.
+        initial: Dict[str, Any] = {}
+        for alias, state in self._do_states.items():
+            initial[alias] = int(state)
+        for alias, state in self._ao_states.items():
+            initial[alias] = float(state)
+        self._append_health_channels(initial)
+        with self._snapshot_lock:
+            self._snapshot_values = dict(initial)
+        # Start decoupled real acquisition worker.
+        if self.mode == "real" and self._nidaq_available():
+            self._start_snapshot_worker()
 
     def simulate_step(self) -> Dict[str, Any]:
         """If mode==real, perform a real read; otherwise simulate.
@@ -360,15 +384,8 @@ class NiDAQPlugin(BasePlugin):
         Other channels update at R.
         """
         if self.mode == "real" and (bool(self._fast_tasks) or self._task_ai_fast is not None):
-            try:
-                vals = self._read_real()
-                self._append_health_channels(vals)
-                return vals
-            except Exception:
-                # On any runtime error, return empty for robustness
-                out: Dict[str, Any] = {}
-                self._append_health_channels(out)
-                return out
+            with self._snapshot_lock:
+                return dict(self._snapshot_values)
         vals: Dict[str, Any] = {}
         import math
         # Advance base phase modestly per tick
@@ -409,6 +426,38 @@ class NiDAQPlugin(BasePlugin):
             vals[alias] = state
         self._append_health_channels(vals)
         return vals
+
+    def _start_snapshot_worker(self) -> None:
+        try:
+            if self._snapshot_thread is not None and getattr(self._snapshot_thread, "is_alive", lambda: False)():
+                return
+            self._snapshot_stop.clear()
+
+            def _loop() -> None:
+                while not self._snapshot_stop.is_set():
+                    try:
+                        vals = self._read_real()
+                    except Exception:
+                        vals = {}
+                    self._append_health_channels(vals)
+                    with self._snapshot_lock:
+                        self._snapshot_values = dict(vals)
+                    self._snapshot_stop.wait(self._snapshot_period_s)
+
+            t = threading.Thread(target=_loop, daemon=True)
+            t.start()
+            self._snapshot_thread = t
+        except Exception:
+            self._snapshot_thread = None
+
+    def _stop_snapshot_worker(self) -> None:
+        try:
+            self._snapshot_stop.set()
+            if self._snapshot_thread is not None:
+                self._snapshot_thread.join(timeout=1.0)
+        except Exception:
+            pass
+        self._snapshot_thread = None
 
     def _parse_channels(self) -> None:
         """Support both legacy flat list and structured sections for channels."""
@@ -1156,6 +1205,8 @@ class NiDAQPlugin(BasePlugin):
         self._ao_tasks = []
 
     def stop(self) -> None:
+        # Stop decoupled snapshot worker first.
+        self._stop_snapshot_worker()
         # Ensure NI-DAQmx tasks are properly closed to avoid DaqResourceWarning
         try:
             self._teardown_tasks()
