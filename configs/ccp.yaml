@@ -6,7 +6,7 @@ session:
   baudrate: 250000
   tx_id: '218059001'
   rx_id: '218059008'
-  station_address: '0'
+  station_address: '0x0'
   is_extended: true
 security:
   seed_resource: '1'
@@ -22,7 +22,7 @@ security:
   s_status: '131'
 a2l:
   path: C:/Projects/Python/CCP Streamer/dll_a2l/v577 Master_R1.a2l
-poll_interval_ms: 100
+poll_interval_ms: 10
 poll_channels_per_tick: 1
 io_timeout_s: 0.05
 poll_endian: big
@@ -31,7 +31,29 @@ addr_ext_high: false
 reconnect_interval_s: 2.0
 measurements:
   naming_prefix: CCP_
-  list:
+  list: &id001
+  - name: AAT
+    unit_override: deg F
+    enabled: true
+    unit: deg F
+    address: 16784024
+    address_extension: 0
+    data_type: UWORD
+    size: 2
+    limits:
+    - 0.0
+    - 0.0
+  - name: AUX_PU1_raw
+    unit_override: volts
+    enabled: true
+    unit: volts
+    address: 16778184
+    address_extension: 0
+    data_type: UWORD
+    size: 2
+    limits:
+    - 0.0
+    - 5.00114468864469
   - name: BP
     unit_override: psia
     enabled: true
@@ -43,6 +65,50 @@ measurements:
     limits:
     - 0.0
     - 255.99609375
+  - name: EGO3_raw
+    unit_override: volts
+    enabled: true
+    unit: volts
+    address: 16787120
+    address_extension: 0
+    data_type: UWORD
+    size: 2
+    limits:
+    - 0.0
+    - 5.00114468864469
+  - name: MAP_est
+    unit_override: psia
+    enabled: true
+    unit: psia
+    address: 16777984
+    address_extension: 0
+    data_type: UWORD
+    size: 2
+    limits:
+    - 0.0
+    - 255.99609375
+  - name: OILP_press
+    unit_override: psig
+    enabled: true
+    unit: psig
+    address: 16778264
+    address_extension: 0
+    data_type: UWORD
+    size: 2
+    limits:
+    - 0.0
+    - 255.99609375
+  - name: OILT
+    unit_override: deg F
+    enabled: true
+    unit: deg F
+    address: 16818656
+    address_extension: 0
+    data_type: UWORD
+    size: 2
+    limits:
+    - 0.0
+    - 0.0
   - name: Vbat
     unit_override: volts
     enabled: true
@@ -65,6 +131,17 @@ measurements:
     limits:
     - 0.0
     - 255.99609375
+  - name: mdot_EGR_act
+    unit_override: g/sec
+    enabled: true
+    unit: g/sec
+    address: 16831480
+    address_extension: 0
+    data_type: SWORD
+    size: 2
+    limits:
+    - 0.0
+    - 0.0
   - name: mdot_a_ports
     unit_override: g/sec
     enabled: true
@@ -76,6 +153,28 @@ measurements:
     limits:
     - 0.0
     - 1023.984375
+  - name: mdot_exhaust_float
+    unit_override: g/sec
+    enabled: true
+    unit: g/sec
+    address: 16829616
+    address_extension: 0
+    data_type: FLOAT32_IEEE
+    size: 4
+    limits:
+    - 0.0
+    - 0.0
+  - name: mdot_f_fill_float
+    unit_override: g/sec
+    enabled: true
+    unit: g/sec
+    address: 16829472
+    address_extension: 0
+    data_type: FLOAT32_IEEE
+    size: 4
+    limits:
+    - 0.0
+    - 0.0
   - name: mdot_f_ports
     unit_override: g/sec
     enabled: true
@@ -87,6 +186,39 @@ measurements:
     limits:
     - 0.0
     - 127.998046875
+  - name: rECT
+    unit_override: '-'
+    enabled: true
+    unit: '-'
+    address: 16778160
+    address_extension: 0
+    data_type: UWORD
+    size: 2
+    limits:
+    - 0.0
+    - 0.0
+  - name: rIAT
+    unit_override: '-'
+    enabled: true
+    unit: '-'
+    address: 16778168
+    address_extension: 0
+    data_type: UWORD
+    size: 2
+    limits:
+    - 0.0
+    - 0.0
+  - name: rMAP
+    unit_override: '-'
+    enabled: true
+    unit: '-'
+    address: 16778144
+    address_extension: 0
+    data_type: UWORD
+    size: 2
+    limits:
+    - 0.0
+    - 255.99609375
   - name: rpm
     unit_override: rpm
     enabled: true
@@ -110,3 +242,31 @@ measurements:
     - 0.0
     - 0.0
 writes: []
+devices:
+- name: CCP Primary
+  role: primary
+  session:
+    interface: CAN1
+    baudrate: 250000
+    tx_id: '218059001'
+    rx_id: '218059008'
+    station_address: '0x0'
+    is_extended: true
+  security:
+    seed_resource: '1'
+    seed_ctr: '7'
+    connect_ctr: '25'
+    unlock_ctr: '8'
+    access_key: ''
+    seed_endian: big
+    sec_type: CAL
+    unlock_pad: '85'
+    force_unlock: true
+    set_s_status: true
+    s_status: '131'
+  a2l:
+    path: C:/Projects/Python/CCP Streamer/dll_a2l/v577 Master_R1.a2l
+  poll_interval_ms: 10
+  measurements:
+    naming_prefix: CCP_
+    list: *id001

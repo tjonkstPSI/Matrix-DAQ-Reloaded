@@ -1,38 +1,747 @@
-# Author: T. Onkst | Date: 08122025
 enabled: true
-
-# Minimal example thresholds to smoke UI coloring
-channels:
-  - alias: "Room Temp"
-    high_warning: 24
-    high_shutdown: 75
-    enter_delay_s: 0.0
-    clear_delay_s: 0.0
-  - alias: "LB Measured Load"
-    high_warning: 150
-    high_shutdown: 200
-    enter_delay_s: 0.0
-    clear_delay_s: 0.0
-
-# Author: T. Onkst | Date: 08122025
-
-recording_rate_hz: 10
-
+recording_rate_hz: 10.0
 storage:
-  chunk_duration_s: 1 # 1 second
-  segment_time_limit_s: 14400     # 4 hours
-  segment_size_limit_mb: 100 # 100 MB
-  coalesce_on_finalize: true # True: coalesce all segments into a single file on finalize
-  keep_chunk_files: false # True: keep chunk files after coalesce  
-
+  chunk_duration_s: 1.0
+  segment_time_limit_s: 14400.0
+  segment_size_limit_mb: 100.0
+  coalesce_on_finalize: true
+  keep_chunk_files: false
+engine_running:
+  source_alias: CCP_rpm
+  rpm_threshold: 0.0
+channels:
+- alias: Ambient Pressure
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: Ambient RH
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: Ambient Temp
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: CCP_AAT
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: CCP_AUX_PU1_raw
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: CCP_BP
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: CCP_EGO3_raw
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: CCP_MAP_est
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: CCP_OILP_press
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: CCP_OILT
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: CCP_Vbat
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: CCP_Vsw
+  warning:
+    low: 5.0
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: CCP_mdot_EGR_act
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: CCP_mdot_a_ports
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: CCP_mdot_exhaust_float
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: CCP_mdot_f_fill_float
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: CCP_mdot_f_ports
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: CCP_rECT
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: CCP_rIAT
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: CCP_rMAP
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: CCP_rpm
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: CCP_spk_adv
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: cFL_EngFul
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: cPR_Amb
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: cSP_Eng
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: cTP_EngClt
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: cVL_Bat
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: cVL_Ign
+  warning:
+    low: 7.0
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: 15.0
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: 20.0
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: mPR_Amb
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: mTEST
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: qDI_In1
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: qDO_Out1
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: qFL_Coolant
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: qPR_Amb
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: qPR_CompIn1
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: qTP_Amb
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: qTP_CoolantIn
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: qVO_ValvePos
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
 aggregation:
   emit_summary_channels: false
-
 output:
   alarm_events:
     enabled: true
     format: jsonl
     file_name: alarm_events.jsonl
-    fields: ["ts_hms", "alias", "from", "to", "value"]
-
-
+    fields:
+    - ts_hms
+    - alias
+    - from
+    - to
+    - value

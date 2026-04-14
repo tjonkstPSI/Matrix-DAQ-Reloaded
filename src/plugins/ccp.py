@@ -6,353 +6,18 @@ import os
 import time
 import math
 import threading
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
 from .base import BasePlugin, PluginStatus
-
-try:
-    import nixnet  # type: ignore
-except Exception:
-    nixnet = None
-
-
-def _rotr32(value: int, shift: int) -> int:
-    shift &= 31
-    return ((value >> shift) | (value << (32 - shift))) & 0xFFFFFFFF
-
-
-def _rotl32(value: int, shift: int) -> int:
-    shift &= 31
-    return ((value << shift) | (value >> (32 - shift))) & 0xFFFFFFFF
-
-
-def _compute_key_from_seed_algo(seed: bytes, access_key: int, seed_endian: str, sec_type: str) -> bytes:
-    if len(seed) != 4:
-        raise ValueError("Seed must be 4 bytes")
-    if seed_endian not in {"big", "little", "reverse"}:
-        raise ValueError("seed_endian must be big|little|reverse")
-    if sec_type not in {"CAL", "DAQ"}:
-        raise ValueError("sec_type must be CAL|DAQ")
-    seed_bytes = seed[::-1] if seed_endian == "reverse" else seed
-    byteorder = "little" if seed_endian == "little" else "big"
-    seed_value = int.from_bytes(seed_bytes, byteorder=byteorder, signed=False)
-    key = seed_value ^ (access_key & 0xFFFFFFFF)
-    if sec_type == "CAL":
-        key = _rotr32(key, 7)
-        key ^= seed_value
-    else:
-        key = _rotr32(key, 3)
-        key ^= seed_value
-        key = _rotl32(key, 5)
-        key ^= seed_value
-    out = key.to_bytes(4, byteorder=byteorder, signed=False)
-    return out[::-1] if seed_endian == "reverse" else out
-
-
-@dataclass
-class _CanFrame:
-    arbitration_id: int
-    data: bytes
-    is_extended: bool = False
-
-
-class _CcpProto:
-    def __init__(self, tx_id: int, is_extended: bool) -> None:
-        self.tx_id = tx_id
-        self.is_extended = is_extended
-        self._ctr = 0
-
-    def _next_ctr(self) -> int:
-        self._ctr = (self._ctr + 1) & 0xFF
-        return self._ctr
-
-    def _frame(self, payload: bytes) -> _CanFrame:
-        return _CanFrame(arbitration_id=self.tx_id, data=payload, is_extended=self.is_extended)
-
-    def build_connect(self, station_address: int, ctr_override: int | None = None) -> _CanFrame:
-        ctr = ctr_override if ctr_override is not None else self._next_ctr()
-        payload = bytes([
-            0x01,
-            ctr & 0xFF,
-            station_address & 0xFF,
-            (station_address >> 8) & 0xFF,
-            0x00,
-            0x00,
-            0x00,
-        ])
-        return self._frame(payload)
-
-    def build_get_seed(self, resource: int, ctr_override: int | None = None) -> _CanFrame:
-        ctr = ctr_override if ctr_override is not None else self._next_ctr()
-        payload = bytes([0x12, ctr & 0xFF, resource & 0xFF, 0, 0, 0, 0, 0])
-        return self._frame(payload)
-
-    def build_unlock(self, key: bytes, ctr_override: int | None = None, pad: int = 0x55) -> _CanFrame:
-        ctr = ctr_override if ctr_override is not None else self._next_ctr()
-        key6 = key[:6].ljust(6, bytes([pad & 0xFF]))
-        payload = bytes([0x13, ctr & 0xFF]) + key6
-        return self._frame(payload)
-
-    def build_set_s_status(self, status: int) -> _CanFrame:
-        ctr = self._next_ctr()
-        payload = bytes([0x0C, ctr & 0xFF, status & 0xFF]).ljust(8, b"\x00")
-        return self._frame(payload)
-
-    def build_short_up(self, size: int, address: int, extension: int = 0, byteorder: str = "big") -> _CanFrame:
-        ctr = self._next_ctr()
-        addr_bytes = int(address).to_bytes(4, byteorder=byteorder, signed=False)
-        payload = bytes([0x0F, ctr & 0xFF, size & 0xFF, extension & 0xFF]) + addr_bytes
-        return self._frame(payload)
-
-
-class _NixnetSession:
-    def __init__(self, interface: str, baudrate: int) -> None:
-        self.interface = interface
-        self.baudrate = int(baudrate)
-        self._tx = None
-        self._rx = None
-
-    def open(self, rx_id: int) -> None:
-        if nixnet is None:
-            raise RuntimeError("nixnet package is not available")
-        self._tx = nixnet.FrameOutStreamSession(self.interface)
-        try:
-            self._rx = nixnet.FrameInQueuedSession(self.interface, ":memory:", "", hex(int(rx_id)))
-        except Exception:
-            self._rx = nixnet.FrameInStreamSession(self.interface)
-        try:
-            self._tx.intf.baud_rate = self.baudrate
-            self._rx.intf.baud_rate = self.baudrate
-            self._tx.intf.can_tx_io_mode = nixnet.constants.CanIoMode.CAN
-        except Exception:
-            pass
-        try:
-            self._rx.start()
-            self._tx.start()
-        except Exception:
-            pass
-
-    def close(self) -> None:
-        for s in (self._rx, self._tx):
-            if s is None:
-                continue
-            try:
-                s.close()
-            except Exception:
-                pass
-        self._tx = None
-        self._rx = None
-
-    def send(self, frame: _CanFrame) -> None:
-        if self._tx is None:
-            raise RuntimeError("TX session is not open")
-        can_id = nixnet.types.CanIdentifier(frame.arbitration_id, extended=bool(frame.is_extended))  # type: ignore[attr-defined]
-        can_frame = nixnet.types.CanFrame(can_id, payload=frame.data)  # type: ignore[attr-defined]
-        self._tx.frames.write([can_frame])
-
-    def recv(self, timeout_s: float = 0.2, only_id: Optional[int] = None) -> List[_CanFrame]:
-        if self._rx is None:
-            raise RuntimeError("RX session is not open")
-        deadline = time.time() + max(0.001, float(timeout_s))
-        out: List[_CanFrame] = []
-        while time.time() < deadline:
-            remaining = max(0.0, deadline - time.time())
-            # Use small reads and return promptly after draining currently available frames.
-            step_timeout = min(max(remaining, 0.0), 0.01)
-            if step_timeout <= 0.0:
-                break
-            try:
-                frames = list(
-                    self._rx.frames.read(
-                        num_frames=1,
-                        timeout=step_timeout,
-                        frame_type=nixnet.types.CanFrame,
-                    )
-                )  # type: ignore[call-arg]
-            except Exception:
-                frames = []
-            if not frames:
-                # If we already captured data, stop waiting for the full timeout window.
-                if out:
-                    break
-                continue
-            for fr in frames:
-                cid = int(fr.identifier.identifier)
-                if only_id is not None and cid != int(only_id):
-                    continue
-                out.append(
-                    _CanFrame(
-                        arbitration_id=cid,
-                        data=bytes(fr.payload),
-                        is_extended=bool(fr.identifier.extended),
-                    )
-                )
-            # Continue briefly to drain any immediate backlog, but don't sit for full timeout.
-            if out and (deadline - time.time()) > 0.02:
-                deadline = time.time() + 0.02
-        return out
-
-
-@dataclass(frozen=True)
-class _A2LChannel:
-    name: str
-    address: Optional[int]
-    data_type: Optional[str]
-    limits: Optional[tuple[float, float]]
-    unit: str = ""
-
-
-def _parse_address(token: str) -> Optional[int]:
-    try:
-        if token.startswith(("0x", "0X")):
-            return int(token, 16)
-        return int(token, 10)
-    except Exception:
-        return None
-
-
-def _parse_a2l(path: Path) -> Dict[str, _A2LChannel]:
-    channels: Dict[str, _A2LChannel] = {}
-    if not path.exists():
-        return channels
-    data_types = {"UBYTE", "SBYTE", "UWORD", "SWORD", "ULONG", "SLONG", "FLOAT32_IEEE", "FLOAT64_IEEE"}
-    compu_units: Dict[str, str] = {}
-    in_compu = False
-    compu_name: Optional[str] = None
-    rat_mode = False
-    rat_q_count = 0
-
-    def _extract_quoted(text: str) -> List[str]:
-        vals: List[str] = []
-        s = text
-        while '"' in s:
-            try:
-                _, rest = s.split('"', 1)
-                q, s = rest.split('"', 1)
-                vals.append(q)
-            except Exception:
-                break
-        return vals
-
-    # Pass 1: COMPU_METHOD -> unit
-    for raw in path.read_text(encoding="utf-8", errors="ignore").splitlines():
-        line = raw.strip()
-        if line.startswith("/begin COMPU_METHOD"):
-            parts = line.split()
-            compu_name = parts[2] if len(parts) > 2 else None
-            in_compu = True
-            rat_mode = False
-            rat_q_count = 0
-            continue
-        if line.startswith("/end COMPU_METHOD"):
-            in_compu = False
-            compu_name = None
-            rat_mode = False
-            rat_q_count = 0
-            continue
-        if not in_compu or not compu_name:
-            continue
-        if line.startswith("RAT_FUNC"):
-            rat_mode = True
-            rat_q_count = 0
-            continue
-        if not rat_mode:
-            continue
-        quoted = _extract_quoted(line)
-        if not quoted:
-            continue
-        for q in quoted:
-            rat_q_count += 1
-            if rat_q_count == 2:
-                compu_units[str(compu_name)] = str(q).strip()
-                rat_mode = False
-                break
-
-    in_block = False
-    cur_name: Optional[str] = None
-    cur_addr: Optional[int] = None
-    cur_type: Optional[str] = None
-    cur_compu_ref: Optional[str] = None
-    cur_limits: Optional[tuple[float, float]] = None
-    for raw in path.read_text(encoding="utf-8", errors="ignore").splitlines():
-        line = raw.strip()
-        if line.startswith("/begin MEASUREMENT") or line.startswith("/begin CHARACTERISTIC"):
-            parts = line.split()
-            cur_name = parts[2] if len(parts) > 2 else None
-            cur_addr = None
-            cur_type = None
-            cur_compu_ref = None
-            cur_limits = None
-            in_block = True
-            continue
-        if line.startswith("/end MEASUREMENT") or line.startswith("/end CHARACTERISTIC"):
-            if in_block and cur_name:
-                unit = str(compu_units.get(str(cur_compu_ref or ""), "")).strip()
-                channels[cur_name] = _A2LChannel(
-                    name=cur_name,
-                    address=cur_addr,
-                    data_type=cur_type,
-                    limits=cur_limits,
-                    unit=unit,
-                )
-            in_block = False
-            cur_name = None
-            continue
-        if not in_block or cur_name is None:
-            continue
-        token = line.split()[0] if line else ""
-        if cur_type is None and token in data_types:
-            cur_type = token
-            continue
-        if cur_compu_ref is None and "/* Conversion */" in line and token:
-            cur_compu_ref = token
-            continue
-        if cur_compu_ref is None and cur_type is not None and token.startswith("Compu_"):
-            cur_compu_ref = token
-            continue
-        if line.startswith("ECU_ADDRESS") or line.startswith("ADDRESS"):
-            parts = line.split()
-            if len(parts) >= 2:
-                cur_addr = _parse_address(parts[1])
-            continue
-        if line and line[0].isdigit():
-            parts = line.split()
-            if len(parts) >= 2:
-                try:
-                    candidate = (float(parts[0]), float(parts[1]))
-                    if cur_limits is None or cur_limits == (0.0, 0.0):
-                        cur_limits = candidate
-                except Exception:
-                    pass
-    return channels
-
-
-def _dtype_size(dtype: Optional[str]) -> int:
-    sizes = {
-        "UBYTE": 1,
-        "SBYTE": 1,
-        "UWORD": 2,
-        "SWORD": 2,
-        "ULONG": 4,
-        "SLONG": 4,
-        "FLOAT32_IEEE": 4,
-    }
-    return int(sizes.get(str(dtype or "").upper(), 4))
-
-
-def _decode_value(dtype: Optional[str], raw: bytes, byteorder: str, limits: Optional[tuple[float, float]]) -> float:
-    dt = str(dtype or "").upper()
-    if dt == "SWORD":
-        v = int.from_bytes(raw, byteorder=byteorder, signed=True)
-        if limits:
-            return float(v) * (float(limits[1]) / 0x7FFF)
-        return float(v)
-    v = int.from_bytes(raw, byteorder=byteorder, signed=False)
-    if dt == "UWORD" and limits:
-        return float(v) * (float(limits[1]) / 0xFFFF)
-    return float(v)
+from ._ccp_a2l import A2LChannel, parse_a2l, dtype_size, decode_value
+from ._ccp_protocol import (
+    nixnet,
+    compute_key_from_seed_algo,
+    CanFrame,
+    CcpProto,
+    NixnetSession,
+)
 
 
 class CCPPlugin(BasePlugin):
@@ -361,8 +26,8 @@ class CCPPlugin(BasePlugin):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._theta = 0.0
-        self._session: _NixnetSession | None = None
-        self._proto: _CcpProto | None = None
+        self._session: NixnetSession | None = None
+        self._proto: CcpProto | None = None
         self._entries: List[Dict[str, Any]] = []
         self._values: Dict[str, float] = {}
         self._units: Dict[str, str] = {}
@@ -381,6 +46,8 @@ class CCPPlugin(BasePlugin):
         self._worker_stop = threading.Event()
         self._state_lock = threading.Lock()
         self._snapshot_values: Dict[str, float] = {}
+        self._contexts: List[Dict[str, Any]] = []
+        self._freshness_sample_period_s: float = 0.1
         self._diag: Dict[str, Any] = {
             "state": "idle",
             "state_code": 0,
@@ -400,46 +67,141 @@ class CCPPlugin(BasePlugin):
             "freshness_stale_count": 0,
         }
 
+    def _role_to_station_address(self, role: str) -> str:
+        r = str(role or "").strip().lower()
+        if r == "secondary":
+            return "0x1"
+        return "0x0"
+
+    def _resolved_device_cfgs(self) -> List[Dict[str, Any]]:
+        top_session = dict(self.config.get("session") or {})
+        top_security = dict(self.config.get("security") or {})
+        top_a2l = dict(self.config.get("a2l") or {})
+        top_meas = dict(self.config.get("measurements") or {})
+        top_poll_ms = self.config.get("poll_interval_ms", 100)
+        top_cpt = self.config.get("poll_channels_per_tick", 1)
+        top_io = self.config.get("io_timeout_s", 0.05)
+        top_reconn = self.config.get("reconnect_interval_s", 2.0)
+        devices = self.config.get("devices")
+        out: List[Dict[str, Any]] = []
+        if isinstance(devices, list) and devices:
+            for i, dev in enumerate(devices):
+                if not isinstance(dev, dict):
+                    continue
+                role = str(dev.get("role") or ("secondary" if i == 1 else "primary")).strip().lower()
+                name = str(dev.get("name") or f"CCP {role.title()}").strip()
+                session = dict(top_session)
+                session.update(dev.get("session") or {})
+                if not str(session.get("station_address") or "").strip():
+                    session["station_address"] = self._role_to_station_address(role)
+                security = dict(top_security)
+                security.update(dev.get("security") or {})
+                a2l = dict(top_a2l)
+                a2l.update(dev.get("a2l") or {})
+                meas = dict(top_meas)
+                meas.update(dev.get("measurements") or {})
+                out.append(
+                    {
+                        "name": name,
+                        "role": role,
+                        "session": session,
+                        "security": security,
+                        "a2l": a2l,
+                        "measurements": meas,
+                        "poll_interval_ms": dev.get("poll_interval_ms", top_poll_ms),
+                        "poll_channels_per_tick": dev.get("poll_channels_per_tick", top_cpt),
+                        "io_timeout_s": dev.get("io_timeout_s", top_io),
+                        "reconnect_interval_s": dev.get("reconnect_interval_s", top_reconn),
+                    }
+                )
+            if out:
+                return out
+        role = "primary"
+        top_session.setdefault("station_address", self._role_to_station_address(role))
+        out.append(
+            {
+                "name": "CCP Primary",
+                "role": role,
+                "session": top_session,
+                "security": top_security,
+                "a2l": top_a2l,
+                "measurements": top_meas,
+                "poll_interval_ms": top_poll_ms,
+                "poll_channels_per_tick": top_cpt,
+                "io_timeout_s": top_io,
+                "reconnect_interval_s": top_reconn,
+            }
+        )
+        return out
+
     def _final_aliases(self) -> List[str]:
-        meas = (self.config.get("measurements") or {})
-        prefix = str(meas.get("naming_prefix") or "")
-        items = meas.get("list", []) or []
         result: List[str] = []
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            if not bool(item.get("enabled", True)):
-                continue
-            name = item.get("name")
-            if not name:
-                continue
-            result.append(f"{prefix}{name}" if prefix else str(name))
+        for dcfg in self._resolved_device_cfgs():
+            meas = (dcfg.get("measurements") or {})
+            prefix = str(meas.get("naming_prefix") or "")
+            for item in meas.get("list", []) or []:
+                if not isinstance(item, dict):
+                    continue
+                if not bool(item.get("enabled", True)):
+                    continue
+                name = item.get("name")
+                if not name:
+                    continue
+                result.append(f"{prefix}{name}" if prefix else str(name))
         return result
 
     def configure(self) -> None:
         self._theta = 0.0
         self._entries = []
+        self._contexts = []
         self._values = {}
         self._snapshot_values = {}
         self._units = self._build_units_map()
         self._units_cache_valid = True
         self._value_ts = {a: 0.0 for a in self._final_aliases()}
-        try:
-            self._poll_interval_s = max(0.02, float(self.config.get("poll_interval_ms", 100)) / 1000.0)
-        except Exception:
-            self._poll_interval_s = 0.1
-        try:
-            self._poll_channels_per_tick = max(1, int(self.config.get("poll_channels_per_tick", 1)))
-        except Exception:
-            self._poll_channels_per_tick = 1
-        try:
-            self._io_timeout_s = max(0.01, float(self.config.get("io_timeout_s", 0.05)))
-        except Exception:
-            self._io_timeout_s = 0.05
-        try:
-            self._reconnect_interval_s = max(0.5, float(self.config.get("reconnect_interval_s", 2.0)))
-        except Exception:
-            self._reconnect_interval_s = 2.0
+        min_poll_s = 1.0
+        for dcfg in self._resolved_device_cfgs():
+            try:
+                poll_s = max(0.02, float(dcfg.get("poll_interval_ms", 100)) / 1000.0)
+            except Exception:
+                poll_s = 0.1
+            min_poll_s = min(min_poll_s, poll_s)
+            try:
+                cpt = max(1, int(dcfg.get("poll_channels_per_tick", 1)))
+            except Exception:
+                cpt = 1
+            try:
+                io_to = max(0.01, float(dcfg.get("io_timeout_s", 0.05)))
+            except Exception:
+                io_to = 0.05
+            try:
+                reconn = max(0.5, float(dcfg.get("reconnect_interval_s", 2.0)))
+            except Exception:
+                reconn = 2.0
+            self._contexts.append(
+                {
+                    "name": str(dcfg.get("name") or "CCP"),
+                    "role": str(dcfg.get("role") or "primary"),
+                    "session_cfg": dict(dcfg.get("session") or {}),
+                    "security_cfg": dict(dcfg.get("security") or {}),
+                    "a2l_cfg": dict(dcfg.get("a2l") or {}),
+                    "meas_cfg": dict(dcfg.get("measurements") or {}),
+                    "poll_interval_s": poll_s,
+                    "poll_channels_per_tick": cpt,
+                    "io_timeout_s": io_to,
+                    "reconnect_interval_s": reconn,
+                    "entries": [],
+                    "poll_index": 0,
+                    "last_poll_ts": 0.0,
+                    "last_connect_attempt_ts": 0.0,
+                    "rx_id": 0,
+                    "connected": False,
+                    "session": None,
+                    "proto": None,
+                }
+            )
+        self._freshness_sample_period_s = min_poll_s if min_poll_s < 1.0 else 0.1
+        self._poll_interval_s = self._freshness_sample_period_s
         self._last_poll_ts = 0.0
         self._poll_index = 0
         self._connected = False
@@ -466,12 +228,16 @@ class CCPPlugin(BasePlugin):
         )
 
     def validate(self) -> PluginStatus:
-        meas = self.config.get("measurements")
-        if not isinstance(meas, dict):
-            return PluginStatus(ok=False, message="measurements must be a mapping with naming_prefix and list")
-        items = meas.get("list")
-        if items is None or not isinstance(items, list):
-            return PluginStatus(ok=False, message="measurements.list must be a list")
+        device_cfgs = self._resolved_device_cfgs()
+        if not device_cfgs:
+            return PluginStatus(ok=False, message="At least one CCP device config is required")
+        for dcfg in device_cfgs:
+            meas = dcfg.get("measurements")
+            if not isinstance(meas, dict):
+                return PluginStatus(ok=False, message="measurements must be a mapping with naming_prefix and list")
+            items = meas.get("list")
+            if items is None or not isinstance(items, list):
+                return PluginStatus(ok=False, message="measurements.list must be a list")
         aliases = self._final_aliases()
         if len(aliases) != len(set(aliases)):
             return PluginStatus(ok=False, message="Duplicate final aliases within CCP configuration")
@@ -481,31 +247,37 @@ class CCPPlugin(BasePlugin):
         if nixnet is None:
             return PluginStatus(ok=False, message="nixnet package is not available for real CCP mode")
 
-        session = self.config.get("session") or {}
-        security = self.config.get("security") or {}
-        a2l_cfg = self.config.get("a2l") or {}
-        if not str(session.get("interface") or "").strip():
-            return PluginStatus(ok=False, message="session.interface is required for real CCP mode")
-        if session.get("tx_id") is None or session.get("rx_id") is None:
-            return PluginStatus(ok=False, message="session.tx_id and session.rx_id are required for real CCP mode")
-        access_key = str(security.get("access_key") or "").strip() or str(os.getenv("CCP_ACCESS_KEY", "")).strip()
-        if not access_key:
-            return PluginStatus(ok=False, message="security.access_key (or CCP_ACCESS_KEY env var) is required")
-        a2l_path = str(a2l_cfg.get("path") or "").strip()
-        if not a2l_path:
-            return PluginStatus(ok=False, message="a2l.path is required for real CCP mode")
-        if not Path(a2l_path).exists():
-            return PluginStatus(ok=False, message=f"a2l.path not found: {a2l_path}")
-        parsed = _parse_a2l(Path(a2l_path))
-        for item in items:
-            if not isinstance(item, dict) or not bool(item.get("enabled", True)):
-                continue
-            name = str(item.get("name") or "").strip()
-            if not name:
-                continue
-            ch = parsed.get(name)
-            if ch is None or ch.address is None:
-                return PluginStatus(ok=False, message=f"Measurement '{name}' is missing in A2L or has no address")
+        a2l_cache: Dict[str, Dict[str, A2LChannel]] = {}
+        for dcfg in device_cfgs:
+            session = dcfg.get("session") or {}
+            security = dcfg.get("security") or {}
+            a2l_cfg = dcfg.get("a2l") or {}
+            meas = dcfg.get("measurements") or {}
+            items = meas.get("list", []) or []
+            if not str(session.get("interface") or "").strip():
+                return PluginStatus(ok=False, message="session.interface is required for real CCP mode")
+            if session.get("tx_id") is None or session.get("rx_id") is None:
+                return PluginStatus(ok=False, message="session.tx_id and session.rx_id are required for real CCP mode")
+            access_key = str(security.get("access_key") or "").strip() or str(os.getenv("CCP_ACCESS_KEY", "")).strip()
+            if not access_key:
+                return PluginStatus(ok=False, message="security.access_key (or CCP_ACCESS_KEY env var) is required")
+            a2l_path = str(a2l_cfg.get("path") or "").strip()
+            if not a2l_path:
+                return PluginStatus(ok=False, message="a2l.path is required for real CCP mode")
+            if not Path(a2l_path).exists():
+                return PluginStatus(ok=False, message=f"a2l.path not found: {a2l_path}")
+            if a2l_path not in a2l_cache:
+                a2l_cache[a2l_path] = parse_a2l(Path(a2l_path))
+            parsed = a2l_cache[a2l_path]
+            for item in items:
+                if not isinstance(item, dict) or not bool(item.get("enabled", True)):
+                    continue
+                name = str(item.get("name") or "").strip()
+                if not name:
+                    continue
+                ch = parsed.get(name)
+                if ch is None or ch.address is None:
+                    return PluginStatus(ok=False, message=f"Measurement '{name}' is missing in A2L or has no address")
         return PluginStatus(ok=True)
 
     def aliases(self) -> Set[str]:
@@ -533,28 +305,33 @@ class CCPPlugin(BasePlugin):
 
     def _build_units_map(self) -> Dict[str, str]:
         mapping: Dict[str, str] = {}
-        meas = (self.config.get("measurements") or {})
-        prefix = str(meas.get("naming_prefix") or "")
-        # Runtime fallback: if units are not stored in config, resolve from A2L.
-        a2l_units: Dict[str, str] = {}
-        try:
-            a2l_path = Path(str((self.config.get("a2l") or {}).get("path") or "").strip())
-            if a2l_path.exists():
-                parsed = _parse_a2l(a2l_path)
-                a2l_units = {str(k): str(v.unit or "") for k, v in parsed.items()}
-        except Exception:
-            a2l_units = {}
-        for item in meas.get("list", []) or []:
-            if not isinstance(item, dict) or not bool(item.get("enabled", True)):
-                continue
-            name = item.get("name")
-            if not name:
-                continue
-            alias = f"{prefix}{name}" if prefix else str(name)
-            unit = str(item.get("unit_override") or item.get("unit") or "").strip()
-            if not unit:
-                unit = str(a2l_units.get(str(name), "")).strip()
-            mapping[alias] = unit
+        a2l_units_cache: Dict[str, Dict[str, str]] = {}
+        for dcfg in self._resolved_device_cfgs():
+            meas = (dcfg.get("measurements") or {})
+            prefix = str(meas.get("naming_prefix") or "")
+            a2l_path_text = str((dcfg.get("a2l") or {}).get("path") or "").strip()
+            if a2l_path_text not in a2l_units_cache:
+                a2l_units: Dict[str, str] = {}
+                try:
+                    a2l_path = Path(a2l_path_text)
+                    if a2l_path.exists():
+                        parsed = parse_a2l(a2l_path)
+                        a2l_units = {str(k): str(v.unit or "") for k, v in parsed.items()}
+                except Exception:
+                    a2l_units = {}
+                a2l_units_cache[a2l_path_text] = a2l_units
+            a2l_units = a2l_units_cache.get(a2l_path_text, {})
+            for item in meas.get("list", []) or []:
+                if not isinstance(item, dict) or not bool(item.get("enabled", True)):
+                    continue
+                name = item.get("name")
+                if not name:
+                    continue
+                alias = f"{prefix}{name}" if prefix else str(name)
+                unit = str(item.get("unit_override") or item.get("unit") or "").strip()
+                if not unit:
+                    unit = str(a2l_units.get(str(name), "")).strip()
+                mapping[alias] = unit
         mapping["CCP/connected"] = ""
         mapping["CCP/state_code"] = ""
         mapping["CCP/connect_attempts"] = "count"
@@ -573,7 +350,6 @@ class CCPPlugin(BasePlugin):
         return mapping
 
     def units(self) -> Dict[str, str]:
-        # Keep this method O(1) on the core tick path.
         if self._units_cache_valid and self._units:
             return dict(self._units)
         self._units = self._build_units_map()
@@ -586,6 +362,11 @@ class CCPPlugin(BasePlugin):
         self._value_ts = {a: 0.0 for a in self._final_aliases()}
         self._connected = False
         self._last_connect_attempt_ts = 0.0
+        for ctx in self._contexts:
+            ctx["connected"] = False
+            ctx["last_connect_attempt_ts"] = 0.0
+            ctx["last_poll_ts"] = 0.0
+            ctx["poll_index"] = 0
         self._set_state("starting", 2)
         if self.mode == "real":
             self._worker_stop.clear()
@@ -605,13 +386,16 @@ class CCPPlugin(BasePlugin):
             except Exception:
                 pass
         self._worker_thread = None
-        try:
-            if self._session is not None:
-                self._session.close()
-        except Exception:
-            pass
-        self._session = None
-        self._proto = None
+        for ctx in self._contexts:
+            try:
+                session = ctx.get("session")
+                if session is not None:
+                    session.close()
+            except Exception:
+                pass
+            ctx["session"] = None
+            ctx["proto"] = None
+            ctx["connected"] = False
         self._connected = False
         self._set_state("stopped", 0)
         self._refresh_freshness(time.time())
@@ -626,7 +410,6 @@ class CCPPlugin(BasePlugin):
             return dict(self._snapshot_values)
 
     def _simulate_step_values(self) -> Dict[str, Any]:
-        import math
         vals: Dict[str, Any] = {}
         meas = (self.config.get("measurements") or {})
         prefix = str(meas.get("naming_prefix") or "")
@@ -662,23 +445,39 @@ class CCPPlugin(BasePlugin):
         except Exception:
             return default
 
-    def _connect_real(self) -> None:
-        self._last_connect_attempt_ts = time.time()
+    def _resolve_access_key_text(self, sec_cfg: Dict[str, Any]) -> str:
+        raw = str(sec_cfg.get("access_key") or "").strip()
+        if raw:
+            return raw
+        env_candidates = [
+            "CCP_ACCESS_KEY",
+            "ccp_access_key",
+            "CCP_ACCESSKEY",
+            "CCP_KEY",
+        ]
+        for key in env_candidates:
+            v = str(os.getenv(key, "")).strip()
+            if v:
+                return v
+        top_security = self.config.get("security") or {}
+        return str(top_security.get("access_key") or "").strip()
+
+    def _connect_real_ctx(self, ctx: Dict[str, Any]) -> None:
+        ctx["last_connect_attempt_ts"] = time.time()
         self._diag["connect_attempts"] = int(self._diag.get("connect_attempts", 0)) + 1
         self._set_state("connecting", 10)
         try:
-            session_cfg = self.config.get("session") or {}
-            sec_cfg = self.config.get("security") or {}
-            a2l_cfg = self.config.get("a2l") or {}
-            meas_cfg = self.config.get("measurements") or {}
-
+            session_cfg = ctx.get("session_cfg") or {}
+            sec_cfg = ctx.get("security_cfg") or {}
+            a2l_cfg = ctx.get("a2l_cfg") or {}
+            meas_cfg = ctx.get("meas_cfg") or {}
             interface = str(session_cfg.get("interface") or "").strip()
             baud = self._parse_int(session_cfg.get("baudrate"), 250000)
             tx_id = self._parse_int(session_cfg.get("tx_id"), 0)
-            self._rx_id = self._parse_int(session_cfg.get("rx_id"), 0)
+            rx_id = self._parse_int(session_cfg.get("rx_id"), 0)
+            ctx["rx_id"] = rx_id
             station = self._parse_int(session_cfg.get("station_address"), 0)
             is_ext = bool(session_cfg.get("is_extended", True))
-
             seed_resource = self._parse_int(sec_cfg.get("seed_resource"), 0x01)
             seed_ctr = self._parse_int(sec_cfg.get("seed_ctr"), 0x07)
             connect_ctr = self._parse_int(sec_cfg.get("connect_ctr"), 0x19)
@@ -689,20 +488,15 @@ class CCPPlugin(BasePlugin):
             s_status = self._parse_int(sec_cfg.get("s_status"), 0x83)
             seed_endian = str(sec_cfg.get("seed_endian") or "big").lower()
             sec_type = str(sec_cfg.get("sec_type") or "CAL").upper()
-            access_key_text = str(sec_cfg.get("access_key") or "").strip() or str(os.getenv("CCP_ACCESS_KEY", "")).strip()
-            access_key = int(access_key_text.replace(" ", ""), 16)
-
+            access_key_text = self._resolve_access_key_text(sec_cfg)
             a2l_path = Path(str(a2l_cfg.get("path") or "").strip())
-            parsed = _parse_a2l(a2l_path)
+            parsed = parse_a2l(a2l_path)
             poll_endian = str(self.config.get("poll_endian") or "big").lower()
             mta_addr_endian = str(self.config.get("mta_addr_endian") or "big").lower()
             addr_ext_high = bool(self.config.get("addr_ext_high", True))
             prefix = str(meas_cfg.get("naming_prefix") or "")
             items = meas_cfg.get("list", []) or []
-
-            self._entries = []
-            self._units = self._build_units_map()
-            self._units_cache_valid = True
+            entries: List[Dict[str, Any]] = []
             for item in items:
                 if not isinstance(item, dict) or not bool(item.get("enabled", True)):
                     continue
@@ -721,11 +515,8 @@ class CCPPlugin(BasePlugin):
                     address = address & 0x00FFFFFF
                 item_dtype = str(item.get("data_type") or "").strip().upper() or None
                 dtype = item_dtype or (ch.data_type if ch is not None else None)
-                size = int(item.get("size") or _dtype_size(dtype))
-                if size < 1:
-                    size = 1
-                if size > 5:
-                    size = 5
+                size = int(item.get("size") or dtype_size(dtype))
+                size = max(1, min(5, size))
                 item_limits = item.get("limits", None)
                 limits = None
                 if isinstance(item_limits, (list, tuple)) and len(item_limits) == 2:
@@ -735,139 +526,122 @@ class CCPPlugin(BasePlugin):
                         limits = None
                 if limits is None and ch is not None:
                     limits = ch.limits
-                self._entries.append({
-                    "name": name,
-                    "alias": alias,
-                    "address": address,
-                    "extension": extension,
-                    "size": size,
-                    "dtype": dtype,
-                    "limits": limits,
-                    "poll_endian": poll_endian,
-                    "mta_addr_endian": mta_addr_endian,
-                })
-
-            # Auto-tune per-tick poll fanout so visible channel latency stays low.
+                entries.append(
+                    {
+                        "name": name,
+                        "alias": alias,
+                        "address": address,
+                        "extension": extension,
+                        "size": size,
+                        "dtype": dtype,
+                        "limits": limits,
+                        "poll_endian": poll_endian,
+                        "mta_addr_endian": mta_addr_endian,
+                    }
+                )
+            ctx["entries"] = entries
             try:
-                n_ch = len(self._entries)
+                n_ch = len(entries)
                 if n_ch > 0:
-                    rec = self._recommended_poll_channels_per_tick(n_ch)
-                    if rec > int(self._poll_channels_per_tick):
-                        self._poll_channels_per_tick = int(rec)
-                        print(f"[CCP] Auto-tuned poll_channels_per_tick={self._poll_channels_per_tick} for {n_ch} channels")
+                    rec = self._recommended_poll_channels_per_tick(n_ch, float(ctx.get("poll_interval_s", 0.1)))
+                    if rec > int(ctx.get("poll_channels_per_tick", 1)):
+                        ctx["poll_channels_per_tick"] = int(rec)
+                        print(f"[CCP:{ctx.get('name','?')}] Auto-tuned poll_channels_per_tick={int(rec)} for {n_ch} channels")
             except Exception:
                 pass
-
-            self._session = _NixnetSession(interface=interface, baudrate=baud)
-            self._session.open(rx_id=self._rx_id)
-            self._proto = _CcpProto(tx_id=tx_id, is_extended=is_ext)
-            print("[CCP] Session opened")
-
-            # CONNECT
-            conn = self._proto.build_connect(station_address=station, ctr_override=connect_ctr)
-            self._session.send(conn)
-            self._session.recv(timeout_s=self._io_timeout_s, only_id=self._rx_id)
+            session = NixnetSession(interface=interface, baudrate=baud)
+            session.open(rx_id=rx_id)
+            proto = CcpProto(tx_id=tx_id, is_extended=is_ext)
+            ctx["session"] = session
+            ctx["proto"] = proto
+            conn = proto.build_connect(station_address=station, ctr_override=connect_ctr)
+            session.send(conn)
+            session.recv(timeout_s=float(ctx.get("io_timeout_s", 0.05)), only_id=rx_id)
             self._set_state("connected", 20)
-            print("[CCP] CONNECT sent")
-
-            # GET_SEED
-            get_seed = self._proto.build_get_seed(resource=seed_resource, ctr_override=seed_ctr)
-            self._session.send(get_seed)
-            seed_frames = self._session.recv(timeout_s=self._io_timeout_s, only_id=self._rx_id)
+            get_seed = proto.build_get_seed(resource=seed_resource, ctr_override=seed_ctr)
+            session.send(get_seed)
+            seed_frames = session.recv(timeout_s=float(ctx.get("io_timeout_s", 0.05)), only_id=rx_id)
             if not seed_frames:
                 raise RuntimeError("No GET_SEED response")
             seed_data = seed_frames[-1].data.ljust(8, b"\x00")
             protection_status = int(seed_data[3])
             self._diag["last_seed_status"] = protection_status
             seed = bytes(seed_data[4:8])
-            self._set_state("seed_received", 30)
-            print(f"[CCP] GET_SEED ok (protection={protection_status})")
-
             if protection_status or force_unlock:
-                key = _compute_key_from_seed_algo(
-                    seed=seed,
-                    access_key=access_key,
-                    seed_endian=seed_endian,
-                    sec_type=sec_type,
-                )
-                unlock = self._proto.build_unlock(key=key, ctr_override=unlock_ctr, pad=unlock_pad)
-                self._session.send(unlock)
-                self._session.recv(timeout_s=self._io_timeout_s, only_id=self._rx_id)
+                if not access_key_text:
+                    raise RuntimeError("missing_access_key (security.access_key or CCP_ACCESS_KEY)")
+                access_key = int(access_key_text.replace(" ", "").replace("0x", "").replace("0X", ""), 16)
+                key = compute_key_from_seed_algo(seed=seed, access_key=access_key, seed_endian=seed_endian, sec_type=sec_type)
+                unlock = proto.build_unlock(key=key, ctr_override=unlock_ctr, pad=unlock_pad)
+                session.send(unlock)
+                session.recv(timeout_s=float(ctx.get("io_timeout_s", 0.05)), only_id=rx_id)
                 self._diag["unlock_ok"] = int(self._diag.get("unlock_ok", 0)) + 1
-                self._set_state("unlocked", 40)
-                print("[CCP] UNLOCK sent")
-            else:
-                self._set_state("unlock_skipped", 41)
-                print("[CCP] UNLOCK skipped (not protected)")
-
             if set_s_status:
-                status_frame = self._proto.build_set_s_status(s_status)
-                self._session.send(status_frame)
-                self._session.recv(timeout_s=self._io_timeout_s, only_id=self._rx_id)
-                self._set_state("s_status_set", 50)
-                print(f"[CCP] SET_S_STATUS sent ({hex(int(s_status))})")
-
-            self._connected = True
+                status_frame = proto.build_set_s_status(s_status)
+                session.send(status_frame)
+                session.recv(timeout_s=float(ctx.get("io_timeout_s", 0.05)), only_id=rx_id)
+            ctx["connected"] = True
             self._diag["connect_ok"] = int(self._diag.get("connect_ok", 0)) + 1
-            self._set_state("ready_polling", 60)
             self._diag["last_error"] = ""
-            print("[CCP] Ready for polling")
+            self._set_state("ready_polling", 60)
         except Exception as e:
-            self._connected = False
-            self._diag["last_error"] = f"connect_or_unlock_failed:{e}"
+            ctx["connected"] = False
+            self._diag["last_error"] = f"connect_or_unlock_failed:{ctx.get('name','?')}:{e}"
             self._set_state("error_connect", 90)
-            print(f"[CCP] Connect/unlock failed: {e}")
             try:
-                if self._session is not None:
-                    self._session.close()
+                print(f"[CCP:{ctx.get('name','?')}] Connect/unlock failed: {e}")
             except Exception:
                 pass
-            self._session = None
-            self._proto = None
+            try:
+                session = ctx.get("session")
+                if session is not None:
+                    session.close()
+            except Exception:
+                pass
+            ctx["session"] = None
+            ctx["proto"] = None
 
     def _run_real_worker(self) -> None:
         while not self._worker_stop.is_set():
             now = time.time()
-            connected = bool(self._connected)
-            last_attempt = float(self._last_connect_attempt_ts)
-            reconnect_s = float(self._reconnect_interval_s)
-            last_poll = float(self._last_poll_ts)
-            poll_s = float(self._poll_interval_s)
-            if not connected:
-                if now - last_attempt >= reconnect_s:
-                    self._connect_real()
-                self._refresh_freshness(now)
-                self._append_diag_values()
-                with self._state_lock:
-                    self._snapshot_values = dict(self._values)
-                self._worker_stop.wait(0.02)
-                continue
-            if now - last_poll >= poll_s:
-                self._last_poll_ts = now
-                self._poll_real()
-                self._refresh_freshness(now)
-                self._append_diag_values()
-                with self._state_lock:
-                    self._snapshot_values = dict(self._values)
+            any_connected = False
+            for ctx in self._contexts:
+                if not bool(ctx.get("connected", False)):
+                    if now - float(ctx.get("last_connect_attempt_ts", 0.0)) >= float(ctx.get("reconnect_interval_s", 2.0)):
+                        self._connect_real_ctx(ctx)
+                else:
+                    any_connected = True
+                    if now - float(ctx.get("last_poll_ts", 0.0)) >= float(ctx.get("poll_interval_s", 0.1)):
+                        ctx["last_poll_ts"] = now
+                        self._poll_real_ctx(ctx)
+            self._connected = any_connected or any(bool(c.get("connected", False)) for c in self._contexts)
+            self._refresh_freshness(now)
+            self._append_diag_values()
+            with self._state_lock:
+                self._snapshot_values = dict(self._values)
             self._worker_stop.wait(0.005)
 
-    def _poll_real(self) -> None:
-        if self._session is None or self._proto is None:
-            self._connected = False
+    def _poll_real_ctx(self, ctx: Dict[str, Any]) -> None:
+        session = ctx.get("session")
+        proto = ctx.get("proto")
+        if session is None or proto is None:
+            ctx["connected"] = False
             self._diag["last_error"] = "session_not_ready"
             self._set_state("error_session", 91)
             return
         try:
-            if not self._entries:
+            entries = ctx.get("entries") or []
+            if not entries:
                 self._diag["last_error"] = "no_measurements"
                 self._set_state("no_measurements", 61)
                 return
             self._set_state("polling", 70)
-            count = min(len(self._entries), max(1, self._poll_channels_per_tick))
+            count = min(len(entries), max(1, int(ctx.get("poll_channels_per_tick", 1))))
             for _ in range(count):
-                entry = self._entries[self._poll_index % len(self._entries)]
-                self._poll_index = (self._poll_index + 1) % len(self._entries)
-                val = self._poll_short_up(entry)
+                idx = int(ctx.get("poll_index", 0)) % len(entries)
+                entry = entries[idx]
+                ctx["poll_index"] = (idx + 1) % len(entries)
+                val = self._poll_short_up_ctx(ctx, entry)
                 if val is not None:
                     alias = str(entry["alias"])
                     self._values[alias] = float(val)
@@ -879,32 +653,34 @@ class CCPPlugin(BasePlugin):
                     try:
                         pf = int(self._diag.get("poll_fail", 0))
                         if pf % 50 == 0:
-                            print(f"[CCP] Poll fails={pf} last_error={self._diag.get('last_error','')}")
+                            print(f"[CCP:{ctx.get('name','?')}] Poll fails={pf} last_error={self._diag.get('last_error','')}")
                     except Exception:
                         pass
         except Exception:
-            self._connected = False
+            ctx["connected"] = False
             self._diag["last_error"] = "poll_exception"
             self._set_state("error_poll", 92)
 
-    def _poll_short_up(self, entry: Dict[str, Any]) -> Optional[float]:
-        if self._session is None or self._proto is None:
+    def _poll_short_up_ctx(self, ctx: Dict[str, Any], entry: Dict[str, Any]) -> Optional[float]:
+        session = ctx.get("session")
+        proto = ctx.get("proto")
+        rx_id = int(ctx.get("rx_id", 0))
+        if session is None or proto is None:
             self._diag["last_error"] = "poll_no_session"
             return None
-        # Drain stale RX before request to reduce cross-talk.
-        self._session.recv(timeout_s=0.001, only_id=self._rx_id)
-        req = self._proto.build_short_up(
+        session.recv(timeout_s=0.001, only_id=rx_id)
+        req = proto.build_short_up(
             size=int(entry["size"]),
             address=int(entry["address"]),
             extension=int(entry["extension"]),
             byteorder=str(entry["mta_addr_endian"]),
         )
         req_ctr = req.data[1] if req.data else None
-        self._session.send(req)
-        per_req_timeout_s = max(0.005, min(float(self._io_timeout_s), 0.015))
+        session.send(req)
+        per_req_timeout_s = max(0.005, float(ctx.get("io_timeout_s", 0.05)))
         deadline = time.time() + per_req_timeout_s
         while time.time() < deadline:
-            rx = self._session.recv(timeout_s=min(0.005, per_req_timeout_s), only_id=self._rx_id)
+            rx = session.recv(timeout_s=min(0.005, per_req_timeout_s), only_id=rx_id)
             for fr in rx:
                 data = fr.data.ljust(8, b"\x00")
                 if data[0] != 0xFF:
@@ -926,7 +702,7 @@ class CCPPlugin(BasePlugin):
                 if len(payload) < size:
                     self._diag["last_error"] = "payload_short"
                     continue
-                return _decode_value(
+                return decode_value(
                     dtype=entry.get("dtype"),
                     raw=payload,
                     byteorder=str(entry.get("poll_endian") or "big"),
@@ -975,7 +751,7 @@ class CCPPlugin(BasePlugin):
         if not self._connected or max_age < 0.0:
             new_state = -1
         else:
-            sample_period_s = max(0.001, float(self._poll_interval_s))
+            sample_period_s = max(0.001, float(self._freshness_sample_period_s))
             warn_th = sample_period_s * 0.25
             stale_th = sample_period_s * 1.00
             if max_age > stale_th:
@@ -990,27 +766,23 @@ class CCPPlugin(BasePlugin):
                 self._diag["freshness_warn_count"] = int(self._diag.get("freshness_warn_count", 0)) + 1
                 print(
                     "[CCP] Freshness WARN: max_age=%.3fs threshold=%.3fs"
-                    % (max_age, max(0.001, float(self._poll_interval_s)) * 0.25)
+                    % (max_age, max(0.001, float(self._freshness_sample_period_s)) * 0.25)
                 )
             elif new_state == 2:
                 self._diag["freshness_stale_count"] = int(self._diag.get("freshness_stale_count", 0)) + 1
                 print(
                     "[CCP] Freshness STALE: max_age=%.3fs threshold=%.3fs"
-                    % (max_age, max(0.001, float(self._poll_interval_s)))
+                    % (max_age, max(0.001, float(self._freshness_sample_period_s)))
                 )
 
-    def _recommended_poll_channels_per_tick(self, channel_count: int) -> int:
-        # For small/medium channel sets, poll everything every tick for snappy UX.
+    def _recommended_poll_channels_per_tick(self, channel_count: int, poll_interval_s: float | None = None) -> int:
         if channel_count <= 12:
             return channel_count
-        # For larger sets, target a full sweep in ~250 ms when possible.
-        poll_ms = max(1.0, float(self._poll_interval_s) * 1000.0)
+        poll_ms = max(1.0, float(poll_interval_s if poll_interval_s is not None else self._poll_interval_s) * 1000.0)
         target_sweep_s = 0.25
         rec = int(math.ceil((channel_count * (poll_ms / 1000.0)) / target_sweep_s))
-        # For slower poll intervals, never leave at 1 channel/tick unless only one channel selected.
         if channel_count > 1 and poll_ms >= 100.0:
             rec = max(rec, 2)
-        # Keep bounded to avoid long blocking bursts.
         rec = max(1, min(channel_count, rec, 6))
         return rec
 
@@ -1040,8 +812,14 @@ class CCPPlugin(BasePlugin):
             return
 
         try:
-            self._connect_real()
-            if not self._connected:
+            if not self._contexts:
+                self.configure()
+            if not self._contexts:
+                _emit("connect_unlock", False, "No CCP devices configured", True)
+                return
+            ctx = self._contexts[0]
+            self._connect_real_ctx(ctx)
+            if not bool(ctx.get("connected", False)):
                 _emit("connect_unlock", False, str(self._diag.get("last_error", "connect failed")), True)
                 return
             _emit("connect_unlock", True, "Connected, seed/unlock path completed")
@@ -1050,11 +828,12 @@ class CCPPlugin(BasePlugin):
             return
 
         try:
-            if not self._entries:
+            entries = ctx.get("entries") or []
+            if not entries:
                 _emit("poll_prepare", False, "No A2L measurements configured", True)
                 return
-            entry = self._entries[0]
-            val = self._poll_short_up(entry)
+            entry = entries[0]
+            val = self._poll_short_up_ctx(ctx, entry)
             if val is None:
                 _emit(
                     "poll_one",
@@ -1066,5 +845,3 @@ class CCPPlugin(BasePlugin):
             _emit("poll_one", True, f"{entry.get('name','?')}={val:.3f}", True)
         except Exception as e:
             _emit("poll_one", False, f"Polling exception: {e}", True)
-
-

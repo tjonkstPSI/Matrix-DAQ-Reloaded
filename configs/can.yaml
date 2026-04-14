@@ -14,6 +14,11 @@ signals:
   signal: cSP_Eng
   unit: rpm
   enabled: true
+- alias: cFL_EngFul
+  message: EI_65170
+  signal: cFL_EngFul
+  unit: kg/h
+  enabled: true
 - alias: cTP_EngClt
   message: ET1_65262
   signal: cTP_EngClt

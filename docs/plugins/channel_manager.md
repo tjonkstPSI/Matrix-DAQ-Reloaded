@@ -1,93 +1,116 @@
-<!-- Author: T. Onkst | Date: 08122025 -->
+<!-- Author: T. Onkst | Date: 03092026 -->
 
 ## Channel Manager Plugin Specification
 
 ### Purpose
-Configure the recording rate R (≤ 100 Hz per run) and manage per‑channel alarm policies (warning/shutdown) with latching, in the scaled units of each channel. Provide a unified view to enable/disable channels for recording, bulk edit limits, and visualize current alarm state. Alarm outcomes integrate with UI colors and E‑stop logic (via calculated channels).
+Configure core logging cadence and segmentation settings, and manage two-tier per-channel alarms with old-system compatible action/enabling-condition behavior.
 
-### Responsibilities
-- Set recording rate R for the run (plot update rates are independent)
-- List all enabled channels from plugins (NI DAQ, CAN/CCP, Modbus, LoadBank, Calculated, Statistics)
-- Configure per‑channel alarms:
-  - Limits: high_warning, low_warning, high_shutdown, low_shutdown (any subset)
-  - Latching: trigger_after_s, unlatch_after_s (per-limit)
-  - Units: reflect post‑scaling units of the channel
-  - Enable/disable alarms per channel
-- Bulk operations: copy/paste limits, apply templates by category (e.g., Temperature, Pressure)
-- Optional: enable/disable a channel for recording (streaming may continue)
-- Live status view: per‑channel current value, alarm state (OK/Warning/Shutdown), latched timers
+### Current Implementation Status
+- Implemented now:
+  - Right-click Configure dialog for `Channel_Manager`.
+  - Logging inputs:
+    - sample rate (Hz),
+    - segment time limit (s),
+    - segment size limit (MB),
+    - coalesce/keep chunk options.
+  - Alarm table for active runtime channel aliases.
+  - Two-tier alarm setup:
+  - warning tier and alarm tier,
+    - low/high thresholds,
+    - per-limit latch delays (enter/clear),
+    - per-tier action.
+  - Enabling conditions:
+    - Always Enabled
+    - Engine Running
+    - Engine Run time
+    - Test Time
+  - Engine speed source selector filtered to active aliases containing `rpm` or `cSP_Eng`.
+  - YAML import/export from the dialog.
 
 ### Alarm Semantics
-- Evaluation at the recording rate R
-- Warning actions: UI color yellow + log with timestamp
-- Shutdown actions: set UI color red + log; downstream E‑stop actuation remains via a separate calculated logic channel, but Channel Manager can expose an aggregated `shutdown_request` boolean (see below)
-- Debounce (explicit semantics):
-  - `enter_delay_s`: condition must be continuously non‑OK for this duration before entering WARN/SHUT
-  - `clear_delay_s`: condition must be continuously OK for this duration before clearing back to OK
-  - Backward compatibility: legacy keys `latch_on_s` and `unlatch_after_s` are honored as fallbacks
-- Precedence: Shutdown supersedes Warning for display/aggregation
+- Two-tier behavior:
+  - Tier 1 warning (yellow semantics in UI layer)
+  - Tier 2 alarm (red semantics in UI layer)
+- Each tier action can be:
+  - `Visible Alert`
+  - `Visible Alert + Shutdown`
+- Aggregated shutdown request is action-driven (a tier must be in active alarm state and configured with `Visible Alert + Shutdown`).
+- Per-limit debounce is supported for each of:
+  - warning low/high
+  - alarm low/high
+- Backward compatibility:
+  - legacy flat keys (`high_warning`, `high_shutdown`, `enter_delay_s`, `clear_delay_s`, etc.) are still interpreted by alarm runtime.
 
-### Aggregation Outputs (optional)
-- `AlarmSummary/warning_active`: boolean, true if any channel has active warning
-- `AlarmSummary/shutdown_request`: boolean, true if any channel has active shutdown
-- These can be consumed by Calculated Channels/E‑stop logic and recorded if enabled
+### Aggregation Outputs
+- `alarm_summary.any_warning`
+- `alarm_summary.any_shutdown`
+- `alarm_summary.any_shutdown_request` (action-driven)
+- Channel outputs for operator visibility:
+  - `iOT_Warning`
+  - `iOT_Alarm`
 
-### Configuration (YAML)
+### Configuration (YAML - current canonical shape)
 File: `configs/channel_manager.yaml`
 
 ```yaml
-recording_rate_hz: 100              # R for the run (≤ 100 Hz)
-
+enabled: true
+recording_rate_hz: 10
+storage:
+  chunk_duration_s: 1
+  segment_time_limit_s: 3600
+  segment_size_limit_mb: 100
+  coalesce_on_finalize: true
+  keep_chunk_files: false
+engine_running:
+  source_alias: cSP_Eng
+  rpm_threshold: 0
 channels:
-  - alias: "Oil Pressure"
-    units: "kPa"                    # informational; derived from source
-    record_enabled: true
-    alarms:
-      high_warning:  { value: 90,  enter_delay_s: 5,  clear_delay_s: 10, enabled: true }
-      high_shutdown: { value: 95,  enter_delay_s: 1,  clear_delay_s: 5,  enabled: true }
-      low_warning:   null
-      low_shutdown:  null
-
-  - alias: "Oil Temperature"
-    units: "C"
-    record_enabled: true
-    alarms:
-      high_warning:  { value: 110, enter_delay_s: 5,  clear_delay_s: 10, enabled: true }
-      high_shutdown: { value: 120, enter_delay_s: 1,  clear_delay_s: 5,  enabled: true }
-
-aggregation:
-  emit_summary_channels: true       # expose AlarmSummary booleans
-
-output:
-  alarm_events:
-    enabled: true                   # record per-event activation/clear with timestamps
-    include_in_excel: true          # export an `AlarmEvents` sheet with event rows
+  - alias: iTM_EngRun
+    warning:
+      low: null
+      low_enter_delay_s: 0.2
+      low_clear_delay_s: 1.0
+      high: 100.0
+      high_enter_delay_s: 0.2
+      high_clear_delay_s: 1.0
+      action: visible_alert
+    alarm:
+      low: null
+      low_enter_delay_s: 0.2
+      low_clear_delay_s: 1.0
+      high: 150.0
+      high_enter_delay_s: 0.2
+      high_clear_delay_s: 1.0
+      action: visible_alert_shutdown
+    enabling_condition: always_enabled
+    enable_threshold: 0.0
 ```
 
 #### Validation Rules
-- `recording_rate_hz` in (0, 100]
-- Channel `alias` must exist among enabled sources; units are informational but shown
-- For each limit: `value` numeric in channel units; `trigger_after_s, unlatch_after_s ≥ 0`
-- High limit > low limit if both specified; shutdown thresholds may not be less strict than warnings
+- `recording_rate_hz > 0`
+- `storage.segment_time_limit_s > 0`
+- `storage.segment_size_limit_mb > 0`
+- Channel aliases in table must be unique.
+- Alarm thresholds are optional; blank disables that threshold.
 
 ### Execution Model
-- Runs at R; evaluates limits for each channel using latest scaled value
-- Maintains per‑limit latch timers; computes effective warning/shutdown state per channel
-- Aggregates booleans when enabled
+- Core tick cadence is derived from `recording_rate_hz` in Channel Manager.
+- Segmentation uses time-or-size policy from `storage` settings.
+- Alarm runtime evaluates latest values each tick with enabling-condition gating and per-limit debounce.
 
 ### UI Flow
-- Right‑click Channel Manager tile → Configure:
-  1) Set recording rate R (≤ 100 Hz)
-  2) Channel table: alias, units, current value, record_enabled, per‑limit values and latch timings
-  3) Bulk edit: paste limits to selection; apply templates by category
-  4) Save
-- Runtime: same table with live values and colored state; quick toggles for record_enabled
+- Right-click Channel Manager tile -> Configure:
+  1) Set sample rate and storage segmentation settings.
+  2) Select engine speed alias + RPM threshold for engine condition modes.
+  3) Add active channels, remove extra rows, and edit alarm table.
+  4) Save (writes YAML + reloads Channel Manager runtime behavior).
 
 ### Outputs & Metadata
-- R is stored in run metadata and drives acquisition decimation
-- Alarm configurations are included in the config snapshot
- - Optional AlarmSummary booleans can be recorded as channels
-  - Alarm events log: each activation and clear is recorded with epoch time, local time (HH:MM:SS.fff), channel alias, transition (from→to), and value at event. Events are stored during the run as JSON Lines and exported on stop to CSV and Excel (worksheet `AlarmEvents`).
+- Recording cadence and storage segmentation settings are captured in run metadata snapshot.
+- Alarm transition events continue to flow through alarm event logging (`alarm_events.jsonl`).
+- UI integration:
+  - All Channels Table row colors follow alarm state (`WARN` yellow, `ALARM` red).
+  - Coloring helper is reusable for future table-based displays.
 
 ### Error Conditions (Examples)
 - Invalid thresholds (e.g., high < low) → validation error
@@ -97,6 +120,6 @@ output:
 - CM-Rate-001: Set R to various values ≤ 100 Hz; system uses R for storage timeline
 - CM-Alarms-Validate-001: Threshold relations and non‑negative latch times enforced
 - CM-Alarms-Latch-001: trigger/unlatch timings perform as specified on synthetic data
-- CM-Precedence-001: Shutdown state overrides Warning in UI and summary
+- CM-Precedence-001: Alarm state overrides Warning in UI and summary
 - CM-Aggregation-001: AlarmSummary booleans reflect per‑channel states
 

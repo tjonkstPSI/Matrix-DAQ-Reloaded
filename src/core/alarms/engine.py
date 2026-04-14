@@ -7,22 +7,31 @@ from typing import Dict, Any, Optional, Tuple
 
 
 @dataclass
-class LimitConfig:
-    high_warning: Optional[float] = None
-    low_warning: Optional[float] = None
-    high_shutdown: Optional[float] = None
-    low_shutdown: Optional[float] = None
-    # Debounce semantics
-    enter_delay_s: float = 0.0  # time to sustain non-OK before entering WARN/SHUT
-    clear_delay_s: float = 0.0  # time to sustain OK before clearing back to OK
+class TierConfig:
+    low: Optional[float] = None
+    high: Optional[float] = None
+    low_enter_delay_s: float = 0.0
+    low_clear_delay_s: float = 0.0
+    high_enter_delay_s: float = 0.0
+    high_clear_delay_s: float = 0.0
+    action: str = "visible_alert"
+
+
+@dataclass
+class ChannelConfig:
+    warning: TierConfig
+    alarm: TierConfig
+    enabling_condition: str = "always_enabled"  # always_enabled | engine_running | engine_run_time | test_time
+    enable_threshold: float = 0.0
 
 
 @dataclass
 class ChannelAlarmState:
     state: str = "OK"  # OK | WARN | SHUT
+    active_trigger: Optional[str] = None  # warn_low|warn_high|shut_low|shut_high
     last_change_ts: float = 0.0
-    # Debounce bookkeeping
     pending_target: Optional[str] = None
+    pending_trigger: Optional[str] = None
     pending_since_ts: float = 0.0
     clear_since_ts: float = 0.0
 
@@ -34,34 +43,51 @@ class AlarmEngine:
     """
 
     def __init__(self, config: Dict[str, Any]) -> None:
-        # Config structure example:
-        # channels:
-        #   - alias: "Room Temp"
-        #     high_warning: 28
-        #     high_shutdown: 30
-        #     latch_on_s: 0.0
-        #     unlatch_after_s: 0.0
-        self._limits: Dict[str, LimitConfig] = {}
+        self._cfg = dict(config or {})
+        self._limits: Dict[str, ChannelConfig] = {}
         self._states: Dict[str, ChannelAlarmState] = {}
+        self._test_start_ts: float = 0.0
+        self._engine_running_since_ts: float = 0.0
         self._load_config(config)
 
     def _load_config(self, cfg: Dict[str, Any]) -> None:
+        er = cfg.get("engine_running") or {}
+        self._engine_speed_alias = str(er.get("source_alias", "")).strip()
+        self._engine_rpm_threshold = float(er.get("rpm_threshold", 0.0) or 0.0)
         for item in cfg.get("channels", []) or []:
             if not isinstance(item, dict):
                 continue
             alias = item.get("alias")
             if not alias:
                 continue
-            lc = LimitConfig(
-                high_warning=self._opt_float(item.get("high_warning")),
-                low_warning=self._opt_float(item.get("low_warning")),
-                high_shutdown=self._opt_float(item.get("high_shutdown")),
-                low_shutdown=self._opt_float(item.get("low_shutdown")),
-                # Support new explicit debounce keys, fallback to legacy names
-                enter_delay_s=float(item.get("enter_delay_s", item.get("latch_on_s", 0.0))),
-                clear_delay_s=float(item.get("clear_delay_s", item.get("unlatch_after_s", 0.0))),
+            legacy_enter = float(item.get("enter_delay_s", item.get("latch_on_s", 0.0)) or 0.0)
+            legacy_clear = float(item.get("clear_delay_s", item.get("unlatch_after_s", 0.0)) or 0.0)
+            warn = item.get("warning") or {}
+            alarm = item.get("alarm") or item.get("shutdown") or {}
+            warn_cfg = TierConfig(
+                low=self._opt_float(warn.get("low", item.get("low_warning"))),
+                high=self._opt_float(warn.get("high", item.get("high_warning"))),
+                low_enter_delay_s=float(warn.get("low_enter_delay_s", legacy_enter) or 0.0),
+                low_clear_delay_s=float(warn.get("low_clear_delay_s", legacy_clear) or 0.0),
+                high_enter_delay_s=float(warn.get("high_enter_delay_s", legacy_enter) or 0.0),
+                high_clear_delay_s=float(warn.get("high_clear_delay_s", legacy_clear) or 0.0),
+                action=str(warn.get("action", "visible_alert") or "visible_alert").strip().lower(),
             )
-            self._limits[str(alias)] = lc
+            alarm_cfg = TierConfig(
+                low=self._opt_float(alarm.get("low", item.get("low_shutdown"))),
+                high=self._opt_float(alarm.get("high", item.get("high_shutdown"))),
+                low_enter_delay_s=float(alarm.get("low_enter_delay_s", legacy_enter) or 0.0),
+                low_clear_delay_s=float(alarm.get("low_clear_delay_s", legacy_clear) or 0.0),
+                high_enter_delay_s=float(alarm.get("high_enter_delay_s", legacy_enter) or 0.0),
+                high_clear_delay_s=float(alarm.get("high_clear_delay_s", legacy_clear) or 0.0),
+                action=str(alarm.get("action", "visible_alert_shutdown") or "visible_alert_shutdown").strip().lower(),
+            )
+            self._limits[str(alias)] = ChannelConfig(
+                warning=warn_cfg,
+                alarm=alarm_cfg,
+                enabling_condition=str(item.get("enabling_condition", "always_enabled") or "always_enabled").strip().lower(),
+                enable_threshold=float(item.get("enable_threshold", 0.0) or 0.0),
+            )
             if str(alias) not in self._states:
                 self._states[str(alias)] = ChannelAlarmState()
 
@@ -84,22 +110,38 @@ class AlarmEngine:
         per_state: Dict[str, str] = {}
         any_warn = False
         any_shut = False
+        any_shutdown_request = False
         events: list[Dict[str, Any]] = []
+        if self._test_start_ts <= 0.0:
+            self._test_start_ts = now_ts
+
+        engine_running = self._is_engine_running(values)
+        if engine_running:
+            if self._engine_running_since_ts <= 0.0:
+                self._engine_running_since_ts = now_ts
+        else:
+            self._engine_running_since_ts = 0.0
 
         for alias, limits in self._limits.items():
             val = values.get(alias)
             current = self._states.get(alias) or ChannelAlarmState()
-            classified = self._classify(val, limits)
+            is_enabled = self._is_row_enabled(limits, now_ts, engine_running)
+            if not is_enabled:
+                classified, trig_key = ("OK", None)
+            else:
+                classified, trig_key = self._classify(val, limits)
             new_state = current.state
 
             if classified == "OK":
                 # Start or continue clear debounce if we are not already OK
                 current.pending_target = None
+                current.pending_trigger = None
                 current.pending_since_ts = 0.0
                 if current.state != "OK":
                     if current.clear_since_ts == 0.0:
                         current.clear_since_ts = now_ts
-                    if (now_ts - current.clear_since_ts) >= max(0.0, limits.clear_delay_s):
+                    clear_delay = self._clear_delay_for_trigger(limits, current.active_trigger)
+                    if (now_ts - current.clear_since_ts) >= clear_delay:
                         new_state = "OK"
                         events.append({
                             "alias": alias,
@@ -109,6 +151,7 @@ class AlarmEngine:
                             "value": val,
                         })
                         current.clear_since_ts = 0.0
+                        current.active_trigger = None
                         current.last_change_ts = now_ts
                 else:
                     # Already OK, keep clear timer reset
@@ -116,17 +159,20 @@ class AlarmEngine:
             else:
                 # Non-OK classification (WARN or SHUT) with enter debounce
                 current.clear_since_ts = 0.0
-                if current.state == classified:
+                if current.state == classified and current.active_trigger == trig_key:
                     # Stable in same non-OK state
                     current.pending_target = None
+                    current.pending_trigger = None
                     current.pending_since_ts = 0.0
                 else:
                     # Begin or continue timing towards classified state
-                    if current.pending_target != classified:
+                    if current.pending_target != classified or current.pending_trigger != trig_key:
                         current.pending_target = classified
+                        current.pending_trigger = trig_key
                         current.pending_since_ts = now_ts
                     # Transition immediately if delay is 0 or elapsed exceeds delay
-                    if (now_ts - current.pending_since_ts) >= max(0.0, limits.enter_delay_s):
+                    enter_delay = self._enter_delay_for_trigger(limits, trig_key)
+                    if (now_ts - current.pending_since_ts) >= enter_delay:
                         new_state = classified
                         events.append({
                             "alias": alias,
@@ -136,7 +182,9 @@ class AlarmEngine:
                             "value": val,
                         })
                         current.pending_target = None
+                        current.pending_trigger = None
                         current.pending_since_ts = 0.0
+                        current.active_trigger = trig_key
                         current.last_change_ts = now_ts
 
             # Apply state
@@ -145,25 +193,86 @@ class AlarmEngine:
             per_state[alias] = current.state
             any_warn = any_warn or (current.state == "WARN")
             any_shut = any_shut or (current.state == "SHUT")
+            if current.state in {"WARN", "SHUT"}:
+                action = self._action_for_state(limits, current.state)
+                if action == "visible_alert_shutdown":
+                    any_shutdown_request = True
 
-        summary = {"any_warning": any_warn, "any_shutdown": any_shut}
+        summary = {
+            "any_warning": any_warn,
+            "any_shutdown": any_shut,
+            "any_shutdown_request": any_shutdown_request,
+        }
         return per_state, summary, events
 
-    @staticmethod
-    def _classify(val: Any, limits: LimitConfig) -> str:
+    def _is_engine_running(self, values: Dict[str, Any]) -> bool:
+        if not self._engine_speed_alias:
+            return False
+        try:
+            rpm = float(values.get(self._engine_speed_alias, 0.0))
+        except Exception:
+            rpm = 0.0
+        return rpm > float(self._engine_rpm_threshold)
+
+    def _is_row_enabled(self, cfg: ChannelConfig, now_ts: float, engine_running: bool) -> bool:
+        cond = str(cfg.enabling_condition or "always_enabled").strip().lower()
+        if cond in {"always_enabled", "always enabled"}:
+            return True
+        if cond in {"engine_running", "engine running"}:
+            return engine_running
+        if cond in {"engine_run_time", "engine run time"}:
+            if self._engine_running_since_ts <= 0.0:
+                return False
+            return (now_ts - self._engine_running_since_ts) >= max(0.0, float(cfg.enable_threshold))
+        if cond in {"test_time", "test time"}:
+            if self._test_start_ts <= 0.0:
+                return False
+            return (now_ts - self._test_start_ts) >= max(0.0, float(cfg.enable_threshold))
+        return True
+
+    def _classify(self, val: Any, limits: ChannelConfig) -> tuple[str, Optional[str]]:
         try:
             fval = float(val)
         except Exception:
-            return "OK"
-        # Shutdown has priority over warning
-        if limits.high_shutdown is not None and fval >= limits.high_shutdown:
-            return "SHUT"
-        if limits.low_shutdown is not None and fval <= limits.low_shutdown:
-            return "SHUT"
-        if limits.high_warning is not None and fval >= limits.high_warning:
-            return "WARN"
-        if limits.low_warning is not None and fval <= limits.low_warning:
-            return "WARN"
-        return "OK"
+            return ("OK", None)
+        # Tier 2 alarm has priority over tier 1 warning.
+        if limits.alarm.high is not None and fval >= limits.alarm.high:
+            return ("SHUT", "shut_high")
+        if limits.alarm.low is not None and fval <= limits.alarm.low:
+            return ("SHUT", "shut_low")
+        if limits.warning.high is not None and fval >= limits.warning.high:
+            return ("WARN", "warn_high")
+        if limits.warning.low is not None and fval <= limits.warning.low:
+            return ("WARN", "warn_low")
+        return ("OK", None)
+
+    def _enter_delay_for_trigger(self, limits: ChannelConfig, trig: Optional[str]) -> float:
+        if trig == "warn_high":
+            return max(0.0, float(limits.warning.high_enter_delay_s))
+        if trig == "warn_low":
+            return max(0.0, float(limits.warning.low_enter_delay_s))
+        if trig == "shut_high":
+            return max(0.0, float(limits.alarm.high_enter_delay_s))
+        if trig == "shut_low":
+            return max(0.0, float(limits.alarm.low_enter_delay_s))
+        return 0.0
+
+    def _clear_delay_for_trigger(self, limits: ChannelConfig, trig: Optional[str]) -> float:
+        if trig == "warn_high":
+            return max(0.0, float(limits.warning.high_clear_delay_s))
+        if trig == "warn_low":
+            return max(0.0, float(limits.warning.low_clear_delay_s))
+        if trig == "shut_high":
+            return max(0.0, float(limits.alarm.high_clear_delay_s))
+        if trig == "shut_low":
+            return max(0.0, float(limits.alarm.low_clear_delay_s))
+        return 0.0
+
+    def _action_for_state(self, limits: ChannelConfig, state: str) -> str:
+        if state == "SHUT":
+            return str(limits.alarm.action or "visible_alert_shutdown").strip().lower()
+        if state == "WARN":
+            return str(limits.warning.action or "visible_alert").strip().lower()
+        return "visible_alert"
 
 

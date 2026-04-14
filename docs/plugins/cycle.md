@@ -79,10 +79,18 @@ ui:
 
 ### UI Flow
 - Right-click Cycle tile → Configure:
-  1) Select CSV
-  2) Set loops_total, dwell, restart/skip behavior
-  3) (Optional future) configure safety backoff watcher
-  4) Save; preview plot shown (x: Time s, y: Load kW) for visual confirmation
+  1) Browse/enter CSV path; BOM-encoded files handled automatically (`utf-8-sig`)
+  2) Configure time and load column names
+  3) Set loops_total, dwell, restart/skip behavior, interpolation
+  4) (Optional future) configure safety backoff watcher
+  5) Save; embedded QtCharts staircase plot preview renders the cycle profile
+- Preview details:
+  - Step/hold visualization (no linear ramp) matching actual load bank behavior
+  - Filled area chart with light blue accent on dark background
+  - Multi-loop profiles shown with dashed vertical loop-boundary markers
+  - Y-axis always starts at 0 kW (negative load not possible)
+  - Status bar below plot: point count, loop count, cycle duration
+  - "Refresh preview" button re-parses CSV and redraws
 - Runtime display: current loop/index, current/next step, time remaining, setpoint, accept status
 
 ### Error Handling

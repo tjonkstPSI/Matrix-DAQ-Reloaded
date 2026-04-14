@@ -1,4 +1,4 @@
-# Author: T. Onkst | Date: 08122025
+# Author: T. Onkst | Date: 03092026
 
 # Core runtime
 PySide6>=6.6
@@ -20,4 +20,6 @@ cantools>=39.4.5
 nidaqmx>=0.6.0
 nixnet>=0.6.0
 
+# Development / tests
+pytest>=8.0.0
 

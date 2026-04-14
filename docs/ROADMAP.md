@@ -1,138 +1,168 @@
-<!-- Author: T. Onkst | Date: 08122025 -->
+<!-- Author: T. Onkst | Date: 03092026 -->
 
-## Engine Test Data Recorder — Roadmap (3–6 months)
+## Engine Test Data Recorder — Roadmap
 
 ### Vision
-Deliver a Windows desktop app that streams, visualizes, and records engine test data from NI cDAQ, CAN/CCP, Modbus/LoadBank/Vaisala, with crash‑safe storage (Parquet+YAML) and Excel export. Plugin architecture, two‑process Core/UI, simulation harness, and strong reproducibility.
+Deliver a Windows desktop app that streams, visualizes, and records engine test data from NI cDAQ, CAN/CCP, Modbus/LoadBank/Vaisala, with crash-safe storage (Parquet+YAML) and Excel export. Plugin architecture, two-process Core/UI, simulation harness, and strong reproducibility.
 
-### High‑level milestones (target windows)
-- Month 0–1
-  - Core/UI skeleton complete (DONE)
-  - IPC PUB/SUB, demo telemetry to UI (DONE)
-  - Sim sources: Modbus, CAN, CCP (DONE)
-  - LoadBank plugin (sim) and model map loader; units resolved from map (DONE)
-  - NI DAQ enumeration via NI MAX sim; inventory printed (DONE)
-  - Docs pack (specs, plugins, UI spec, AI context) (DONE)
-  - Basic validation + alias checks; Modbus schema (DONE)
+---
 
-- Month 1–2
-  - NI DAQ: fast AI path with 10×R acquisition and 4th‑order IIR Butterworth decimation
-  - Channel Manager: evaluate per‑channel alarms; AlarmSummary booleans; AlarmEvents log; row coloring in UI table
-  - Excel exporter: Metadata/Data, AlarmEvents, and per‑stat tabs; workbook split policy confirmed (DONE: post‑run tool — per‑Parquet workbooks; autosize and 2‑decimal display)
-  - Continuous core run mode + graceful shutdown; basic run lifecycle logs (DONE)
+### Completed
 
-- Month 2–3
-  - LoadBank (real): map‑driven reads/writes, confirm readback; control from UI panel
-  - Cycle: step schedule (kW), pause/stop/restart/skip; preview plot; drive LoadBank setpoint (SIM WIRED)
-  - CAN (real): XNET integration (v23.3), signal selection/aliasing import path
-  - CCP (read‑only real): A2L prefix naming; seed/key DLL unlock flow stubbed (no writes)
-
-- Month 3–4
-  - Statistics: rolling/fixed windows; selectable metrics; manual Log Statistics; per‑stat Excel tabs
-  - Calculated Channels: restricted Python eval; rolling helpers; boolean latching; dependency ordering
-  - UI: dual windows; plots with up to 3 Y axes; alarm drawer; controls panel polish
-    - Launch configuration dialog (plugin selection, data root, test cell, data mode, import configs)
-    - Data display selection (up to 2), opened as separate windows
-    - Console layout compact: vertical plugin list; tiles ordered `Channel_Manager`, `EngineTest`, then others alphabetically
-    - Tile color policy: green=healthy/valid, red=error/invalid, grey=disconnected
-    - Primary stateful control: Lock Test → Start Test → Stop Test; Close Plugins action resets to launcher
-  - Watchdog: driver mode on 9188/9189; loopback fallback; fault behavior (stop/save)
-
-- Month 4–5
-  - Validation: JSON Schema coverage for key plugins (post‑implementation)
-  - Robust error handling and recovery (device reconnects, segment rollover)
-  - Packaging: PyInstaller EXE, prerequisites/driver checks, first install on a target bench
-  - Performance tuning at R=100 Hz and ~200 channels (profiling, GC, buffers)
-
-- Month 5–6
-  - Full acceptance test pass vs legacy system; parity or better
-  - Documentation, operator guide; config migration guide; backup/restore of runs
-  - Hardening (logs/rotation, limits, security posture)
-  - Release 1.0.0 (beta → GA) with changelog
-
-### Completed (as of today)
-- Architecture and docs pack with AI source of truth (`docs/ai_context.yaml`)
-- Project skeleton (Core/UI), IPC wiring, demo telemetry to live UI table with units
-- Simulated plugins: Modbus, CAN, CCP; LoadBank (model map + kW units); basic orchestrator run
-- NI DAQ enumeration via NI‑DAQmx and NI MAX sim
-- Alias uniqueness checks (per‑plugin + global), console validation logs
-- Modbus JSON Schema validation (defense in depth)
+#### Architecture and Infrastructure
+- Core/UI two-process skeleton with ZeroMQ IPC (PUB/SUB telemetry, REQ/REP control)
+- Plugin registry, lifecycle (configure/validate/arm/start/stop/teardown), per-plugin YAML configs
+- Alias uniqueness checks (per-plugin + global), console validation logs
 - Core run mode toggle (demo/continuous) and graceful Ctrl+C stop
-- Cycle plugin: CSV (Time, kW) schedule → drives LoadBank setpoint; end‑of‑cycle stops issuing commands; edge‑aware final step
-- UI status (Connected/Disconnected) and Core‑sourced `Time_Relative_s` channel displayed as a row
-- NI DAQ: simulation path emits configured channels (AI voltage with 10× oversample/average to R, AI temp at R, DI/DO states); discovery helper generates structured YAML template with module family categorization
-- Channel Manager: per‑channel alarms with explicit debounce (enter_delay_s, clear_delay_s); UI row coloring (yellow/red); AlarmEvents persisted to per‑run JSONL with local timestamps (ts_hms)
-- Statistics: snapshot‑based (manual button + optional rising/falling edge trigger), configurable window (seconds or samples), backward/forward capture, metrics selection including p2p; snapshots persisted to per‑run JSONL; UI control wiring in place
-- IPC control path for UI → Core (manual statistics snapshot)
-- Vaisala (simulation): Ambient Temp/RH/Pressure channels with configurable IP/model placeholders and calibration offsets; wired into telemetry
-- Storage: Parquet writer with 1 s chunked append during run; time/size segmentation; coalesce on finalize to single file per segment; units metadata embedded; config snapshotting to `config_snapshot/`
-- Tools: `inspect_parquet` (validate Parquet outputs) and `export_excel` (Metadata, Data, AlarmEvents, StatsSnapshots; split policy)
-- UI: Start/Stop Recording toggle; Export Workbook control disabled while recording; telemetry flag `recording` drives UI state
-- Plugin enable/disable: all except `Channel_Manager` and `EngineTest`; Modbus optional; Calculated Channels implemented with simple symbol mapping
+- Core tick diagnostics channels: `Core/tick_dt_s`, `Core/tick_jitter_s`, `Core/tick_overrun`
+- Decoupled plugin acquisition from core tick: latest-value snapshot / sample-and-hold model for NI_DAQ, CAN, CCP, Statistics, Calculated_Channels, Modbus
+- Data staleness monitoring with configurable warning/stale thresholds per plugin
+- Docs pack: specs, flows, interfaces, test plan, RTM, AI context (`docs/ai_context.yaml`)
+- Refactored `orchestrator.py` — recording session logic extracted to `src/core/recording.py`
+- Pytest framework with unit tests: alarm engine, BCD encoding, calculated expressions, CCP protocol
 
-### In progress / next up
-- NI DAQ real path hardening (fast AI, DI on-demand, errors/retries, teardown) — ongoing
-- Excel export per-stat tabs (from StatsSnapshots), formatting polish
-- Optional disk space guardrail; config-driven export options
-- Channel Manager: optional AlarmSummary channels (deferred); global banner and alarm drawer (deferred)
-- NI DAQ: real read path hardening (fast AI 10×R average to R; AI temperature at R; DI on‑demand at R; explicit task teardown; backlog‑aware adaptive drain; larger input buffers; per‑task isolation); UI channel picker (later)
-- LoadBank real control path (model map → reads/writes)
-- Plugin enable/disable: add `enabled: true|false` at root of each plugin YAML; orchestrator skips disabled plugins (config/validate/start/run/aliases)
+#### NI DAQ Plugin
+- Simulation path: configured channels (AI voltage with 10x oversample/average to R, AI temp at R, DI/DO states)
+- Discovery helper: NI MAX enumeration, generates structured YAML template with module family categorization
+- Real-mode: per-device fast AI tasks, per-device task isolation, adaptive timeouts with warm-up suppression, larger device buffers, backlog-aware adaptive drain
+- Background worker thread with snapshot buffer
+- Configuration UI (right-click tile -> Configure)
+- Modular codebase: `ni_daq.py` + `_nidaq_discovery.py`, `_nidaq_simulation.py`, `_nidaq_tasks.py`, `_nidaq_acquisition.py`
 
-#### Continuous improvements (queued)
-- Core: Non-blocking Start Recording to avoid brief telemetry stall/"Disconnected" flicker in UI
-  - Keep main tick publishing while run folder, sinks, and Parquet writer initialize (background thread)
-  - Optionally publish this tick first, then process control messages
-  - UI: small grace window (e.g., 2 s) during transition to suppress transient grey tiles
+#### CCP Plugin
+- Real-mode path: NI-XNET session, connect/seed/unlock, SHORT_UP polling using A2L-defined measurements
+- Algorithmic access-key unlock (no vendor DLL required), with `CCP_ACCESS_KEY` env var fallback
+- Background polling with cached snapshot reads on tick path, freshness/staleness telemetry
+- Multi-device support: tabbed UI for up to two ECMs (Primary `0x0` / Secondary `0x1`)
+- Diagnostics telemetry channels (`CCP/connected`, state/counters/error indicators)
+- Configuration UI with A2L channel list, filtering, test connection
+- Modular codebase: `ccp.py` + `_ccp_a2l.py`, `_ccp_protocol.py`
+- Poll timeout now honors configured `io_timeout_s` (removed 15 ms hard cap)
 
-### To‑do (detailed)
-- NI DAQ
-  - Implement task creation for AI/DI/DO/AO (start with AI fast path) (DONE: per-device fast AI tasks)
-  - Shared timebase/start trigger; oversample 10×R; 4th‑order IIR Butterworth; decimate to R
-  - Real read path robustness (DONE): per-device task isolation, adaptive timeouts with warm-up suppression, larger device buffers; backlog-aware adaptive drain to prevent -200279; health telemetry channels optional
-  - Future (optional): per-device fast‑AI acquisition thread reading DAQmx continuously into a queue; Core tick consumes/decimates latest n samples
-  - Crash‑safe buffer; chunked write; watchdog (driver mode on 9188/9189; loopback fallback)
-- CAN/CCP
-  - XNET integration (v23.3): database import, multi‑bus, signal selection; timestamps align to R
-  - CCP read‑only: A2L prefix naming; seed/key DLL unlock stub; poll at R
-- Modbus/LoadBank/Vaisala
-  - Real Modbus clients; read/write with retry/backoff; register/coil maps
-  - LoadBank real control; confirm readback; model map setpoint/accept UI
-  - Vaisala model maps; calibration offsets; alignment to R
-- Channel Manager & Alarms
-  - Per‑channel limits + latching evaluation; AlarmSummary booleans; AlarmEvents
-  - UI row coloring; global banner; alarm drawer with events
-- Storage/Export
-  - Parquet writer (append‑only chunks, segmentation time/size, rollover naming)
-  - Excel exporter (Metadata, Data, AlarmEvents, per‑stat tabs); split policy
-- Calculated & Statistics
-  - Expression engine (restricted eval); rolling helpers; latching; dependency ordering
-  - Stats rolling/fixed windows; per‑stat selection; manual Log Statistics
-- UI polish
-  - Plots: 3 Y axes; cursor readouts; PNG snapshot
-  - Controls: LoadBank panel; AO entries with validation
-- Packaging & Ops
-  - PyInstaller build; driver checks; versioning; changelog; operator guide
-  - Test harness CI with sims; performance profiling runs
+#### CAN Plugin
+- Real-mode DBC decode with event-driven frame drain and J1939 PGN-aware fallback matching
+- Background worker with snapshot buffer
+- Diagnostics channels: `CAN/frames_rx`, `CAN/decode_hits`, `CAN/last_decode_age_s`
+- Configuration UI: DBC import, signal selection/filtering, YAML persistence
 
-### Risks and mitigations
+#### Modbus Plugin
+- Multi-device runtime: `devices[*].reads[*]` with fallback to legacy top-level `reads`
+- Multi-device configuration UI: per-device tabs, independent TCP/RS485 settings
+- Channel table editing with live Value test view
+
+#### LoadBank Plugin
+- Real-mode Modbus TCP client with background worker thread
+- Model-map driven status polling and command writing
+- BCD and coil-array encoding/decoding for setpoint writes
+- Heartbeat coil toggling, rate-limited commands
+- Model maps: Simplex 1.5MW and Simplex 700kW (partially bench-validated)
+- Configuration UI: Primary/Secondary load bank selection, IP, voltage, phase, test connection
+- Standalone debug tool (`src/tools/loadbank_read_debug.py`) with profiles and side-by-side LV comparison
+- Operator control UI panel (dockable: Take Control, Fan Power, Load Setpoint, E-Stop, live readback)
+
+#### Calculated Channels Plugin
+- Restricted Python AST evaluator with symbol mapping
+- Configuration UI: channel mapping editor, expression builder, global update rate
+- YAML persistence for import/export
+
+#### Channel Manager
+- Two-tier warning/alarm model with per-limit debounce/latch timing and per-tier actions
+- Enabling conditions: Always Enabled, Engine Running, Engine Run time, Test Time
+- Aggregate alarm booleans: `iOT_Warning`, `iOT_Alarm`
+- Alarm-state row coloring in All Channels Table (yellow warning, red alarm)
+- AlarmEvents persisted to per-run JSONL with local timestamps
+- Configuration UI: sample rate, segmentation, alarm table with channel list
+- Core tick cadence controlled by `channel_manager.yaml` `recording_rate_hz`
+- Dedicated plugin file (`src/plugins/channel_manager.py`, no longer an orchestrator stub)
+
+#### Statistics Plugin
+- Snapshot-based capture (manual button + rising/falling edge trigger)
+- Configurable window (seconds or samples), backward/forward capture, metrics selection
+- Snapshots persisted to per-run JSONL; UI control wiring in place
+- Configuration UI: right-click configure dialog (window settings, metrics, trigger)
+
+#### Cycle Plugin
+- CSV schedule (Time, kW) -> drives LoadBank setpoint; end-of-cycle stops issuing commands; edge-aware final step
+- Configuration UI with QtCharts staircase plot preview (step/hold visualization matching load bank behavior)
+- Handles BOM-encoded CSV files; status bar shows point count, loops, cycle duration
+
+#### Vaisala Plugin
+- Simulation mode: Ambient Temp/RH/Pressure channels with configurable IP/model and calibration offsets
+- Configuration UI: right-click configure dialog (IP, model, polling rate, calibration offsets)
+
+#### EngineTest Plugin
+- Dedicated plugin (`src/plugins/engine_test.py`) with Lock/Start/Stop test lifecycle
+- Validates required metadata, exposes diagnostic channels
+
+#### Storage and Export
+- Parquet writer: 1 s chunked append, time/size segmentation, coalesce on finalize, units metadata, config snapshotting
+- Excel export tool: Metadata, Data, AlarmEvents, StatsSnapshots tabs; split policy; autosize and 2-decimal display
+- Parquet inspection tool (`src/tools/inspect_parquet.py`)
+
+#### UI
+- Console window with plugin tiles, status indicators, telemetry table
+- Launch configuration dialog (plugin selection, data root, test cell, data mode, import configs)
+- Start/Stop Recording toggle; Export Workbook control
+- Plugin enable/disable (all except Channel_Manager and EngineTest)
+- Lock dialog for EngineTest metadata
+- Right-click Configure wired for: NI_DAQ, CCP, CAN, Modbus, LoadBank, Calculated_Channels, Channel_Manager, Statistics, Vaisala, Cycle
+- Tightened UI refresh (50 ms / 20 Hz) and ZMQ telemetry poll (20 ms / 50 Hz) for near-real-time responsiveness
+
+---
+
+### In Progress / Next Up
+
+#### LoadBank Completion
+- Bench-validate and fix 700kW BCD write encoding (125 kW commanded -> 300 kW observed)
+- Bench-validate 1.5MW address base and AB word order vs LabVIEW
+
+#### UI Features
+- Dual display windows (separate data displays opened from console)
+- Plot displays with up to 3 Y-axes, cursor readouts, PNG snapshot
+- Alarm drawer / global banner (deferred)
+- Non-blocking Start Recording (background init to avoid telemetry stall/grey flicker)
+
+---
+
+### Queued
+
+#### Hardening
+- NI DAQ: shared timebase/start trigger, oversample/decimate pipeline, NI DAQ channel picker UI
+- Watchdog: driver mode on 9188/9189 chassis; loopback fallback; fault behavior (stop/save)
+- Disk space guardrail: config-driven warning/stop on low disk
+- Excel export: per-stat tabs from StatsSnapshots, formatting polish
+- Robust error handling: device reconnects, segment rollover
+
+#### Testing
+- Performance tuning at R=100 Hz and ~200 channels (profiling, GC, buffers)
+- Expand pytest coverage: Parquet writer, plugin lifecycle, IPC round-trip
+
+#### Packaging and Release
+- PyInstaller EXE build with driver prerequisite checks
+- Full acceptance test pass vs legacy system
+- Operator guide and config migration documentation
+- Release 1.0.0
+
+---
+
+### Risks and Mitigations
 - NI driver bindings (DAQmx/XNET) variance across machines
   - Early smoke tests on target benches; graceful fallbacks; simulation modes
-- CCP specifics (seed/key DLL nuances)
-  - Read‑only in v1; unlock only when needed for reads; detailed logs
+- CCP specifics (access-key nuances per ECM model)
+  - Read-only in v1; algorithmic unlock with env var fallback; detailed logs
 - Performance at high channel counts
   - Vectorized processing; bounded queues; profiled decimators; optional feature toggles
+- LoadBank dual-writer conflicts during LV side-by-side testing
+  - Read-only debug mode; disable heartbeat writes; isolate write testing
 
-### Acceptance checkpoints
+### Acceptance Checkpoints
 - Parity with legacy for data sources and export
-- 4‑hour run stability; crash‑safe; worst‑case loss < 1 s
-- Excel export correctness; layout (Metadata, Data, per‑stat, AlarmEvents)
-- UI responsiveness ≤ 250 ms; dual displays stable
+- 4-hour run stability; crash-safe; worst-case loss < 1 s
+- Excel export correctness; layout (Metadata, Data, per-stat, AlarmEvents)
+- UI responsiveness <= 100 ms; dual displays stable
 
-### Target releases
-- 0.2.0 (Month 2): NI DAQ fast path; Channel Manager alarms; Excel v1; continuous run
-- 0.5.0 (Month 4): Real LoadBank/Cycle; CAN/CCP real reads; UI plots/dials; watchdog
-- 0.9.0 (Month 5): Validation schemas, export polish, packaging, perf tuning
-- 1.0.0 (Month 6): Acceptance complete, docs, operator guide, release
-
-
+### Target Releases
+- 0.2.0: Codebase refactoring, config UIs, EngineTest promotion, documentation sync (done)
+- 0.3.0: LoadBank bench validation, dual display windows, plots
+- 0.9.0: Watchdog, packaging, acceptance testing, performance tuning
+- 1.0.0: Acceptance complete, operator guide, GA release

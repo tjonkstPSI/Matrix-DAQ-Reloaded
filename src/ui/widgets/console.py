@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 import json
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from pathlib import Path
 
 try:
@@ -21,6 +21,7 @@ try:
         QFrame,
         QApplication,
         QDialog,
+        QDockWidget,
         QMainWindow as _QMainWindow,
     )
 except Exception:
@@ -54,6 +55,11 @@ class ConsoleWindow(QMainWindow):
         self.btn_close_plugins = QPushButton("Close Plugins")
         self.btn_close_plugins.clicked.connect(self._reopen_launcher)  # type: ignore
         header.addWidget(self.btn_close_plugins)
+        self.btn_loadbank_panel = QPushButton("Load Bank Panel")
+        self.btn_loadbank_panel.setCheckable(True)
+        self.btn_loadbank_panel.setVisible("LoadBank" in self._load_selected_plugins())
+        self.btn_loadbank_panel.toggled.connect(self._on_loadbank_panel_toggled)  # type: ignore
+        header.addWidget(self.btn_loadbank_panel)
         header.addStretch(1)
         v.addLayout(header)
 
@@ -78,6 +84,24 @@ class ConsoleWindow(QMainWindow):
             if pid == "Modbus":
                 tile.setContextMenuPolicy(Qt.CustomContextMenu)
                 tile.customContextMenuRequested.connect(self._show_modbus_menu)  # type: ignore
+            if str(pid).replace("_", "").replace(" ", "").lower() == "loadbank":
+                tile.setContextMenuPolicy(Qt.CustomContextMenu)
+                tile.customContextMenuRequested.connect(self._show_loadbank_menu)  # type: ignore
+            if pid == "Calculated_Channels":
+                tile.setContextMenuPolicy(Qt.CustomContextMenu)
+                tile.customContextMenuRequested.connect(self._show_calculated_menu)  # type: ignore
+            if pid == "Channel_Manager":
+                tile.setContextMenuPolicy(Qt.CustomContextMenu)
+                tile.customContextMenuRequested.connect(self._show_channel_manager_menu)  # type: ignore
+            if pid == "Statistics":
+                tile.setContextMenuPolicy(Qt.CustomContextMenu)
+                tile.customContextMenuRequested.connect(self._show_statistics_menu)  # type: ignore
+            if pid == "Vaisala":
+                tile.setContextMenuPolicy(Qt.CustomContextMenu)
+                tile.customContextMenuRequested.connect(self._show_vaisala_menu)  # type: ignore
+            if pid == "Cycle":
+                tile.setContextMenuPolicy(Qt.CustomContextMenu)
+                tile.customContextMenuRequested.connect(self._show_cycle_menu)  # type: ignore
             pv.addWidget(tile)
             self._tiles[pid] = tile
         v.addWidget(plugins_box)
@@ -127,9 +151,40 @@ class ConsoleWindow(QMainWindow):
         status_bar.addPermanentWidget(self.lbl_conn)
         status_bar.addPermanentWidget(self.lbl_rec)
 
+        # Load Bank operator panel (dock — can be dragged to float as a separate window)
+        self._lb_dock: Any = None
+        self._lb_panel_main: Any = None
+        self._lb_operator_windows: List[Any] = []
+        if "LoadBank" in self._tiles:
+            try:
+                from .loadbank_control import LoadBankControlPanel
+            except Exception:
+                LoadBankControlPanel = None  # type: ignore
+            if LoadBankControlPanel is not None:
+                self._lb_panel_main = LoadBankControlPanel(self)
+                try:
+                    from src.core.ipc.bus import create_ui_control_push
+                    _bus = create_ui_control_push()
+                    self._lb_panel_main.set_bus(_bus)
+                except Exception:
+                    pass
+                dock = QDockWidget("Load Bank — Operator", self)
+                dock.setObjectName("LoadBankOperatorDock")
+                dock.setAllowedAreas(
+                    Qt.LeftDockWidgetArea
+                    | Qt.RightDockWidgetArea
+                    | Qt.BottomDockWidgetArea
+                )
+                dock.setWidget(self._lb_panel_main)
+                dock.setMinimumWidth(320)
+                self.addDockWidget(Qt.RightDockWidgetArea, dock)
+                dock.hide()
+                dock.visibilityChanged.connect(self._on_lb_dock_visibility_changed)  # type: ignore
+                self._lb_dock = dock
+
         # Periodic UI refresh
         self._ui_timer = QTimer(self)
-        self._ui_timer.setInterval(250)
+        self._ui_timer.setInterval(50)
         self._ui_timer.timeout.connect(self._refresh_status)  # type: ignore
         self._ui_timer.start()
 
@@ -148,6 +203,23 @@ class ConsoleWindow(QMainWindow):
                 except Exception:
                     pass
             self._display_windows = {}
+        except Exception:
+            pass
+        try:
+            dock = getattr(self, "_lb_dock", None)
+            if dock is not None:
+                dock.hide()
+            btn = getattr(self, "btn_loadbank_panel", None)
+            if btn is not None:
+                btn.blockSignals(True)
+                btn.setChecked(False)
+                btn.blockSignals(False)
+            for w in list(getattr(self, "_lb_operator_windows", []) or []):
+                try:
+                    w.close()
+                except Exception:
+                    pass
+            self._lb_operator_windows = []
         except Exception:
             pass
         # Close current console immediately
@@ -271,6 +343,179 @@ class ConsoleWindow(QMainWindow):
             dlg = ModbusConfigDialog(self)
             dlg.exec()
 
+    def _show_calculated_menu(self, pos) -> None:
+        # Context menu for Calculated_Channels tile: Configure
+        try:
+            from PySide6.QtWidgets import QMenu
+        except Exception:
+            return
+        sender = self.sender()
+        if not sender or not isinstance(sender, QFrame):
+            return
+        menu = QMenu(self)
+        act_cfg = menu.addAction("Configure…")
+        act = menu.exec_(sender.mapToGlobal(pos))
+        if act == act_cfg:
+            try:
+                from .calculated_config import CalculatedConfigDialog
+            except Exception:
+                CalculatedConfigDialog = None  # type: ignore
+            if CalculatedConfigDialog is None:
+                return
+            dlg = CalculatedConfigDialog(self)
+            dlg.exec()
+
+    def _show_loadbank_menu(self, pos) -> None:
+        # Context menu for LoadBank tile: Configure
+        try:
+            from PySide6.QtWidgets import QMenu, QMessageBox
+        except Exception:
+            return
+        sender = self.sender()
+        if sender is None:
+            return
+        anchor = sender if hasattr(sender, "mapToGlobal") else self
+        menu = QMenu(self)
+        act_cfg = menu.addAction("Configure…")
+        act_panel = menu.addAction("Show operator panel…")
+        act_win = menu.addAction("Open operator panel in new window…")
+        act = menu.exec_(anchor.mapToGlobal(pos))
+        if act == act_panel:
+            self._show_loadbank_operator_dock(True)
+            return
+        if act == act_win:
+            self._open_loadbank_operator_window()
+            return
+        if act == act_cfg:
+            try:
+                from .loadbank_config import LoadBankConfigDialog
+            except Exception as e:
+                try:
+                    QMessageBox.critical(self, "LoadBank Configure Error", f"Failed to import LoadBank config dialog:\n{e}")
+                except Exception:
+                    pass
+                return
+            try:
+                dlg = LoadBankConfigDialog(self)
+                dlg.exec()
+            except Exception as e:
+                try:
+                    QMessageBox.critical(self, "LoadBank Configure Error", f"Failed to open LoadBank config dialog:\n{e}")
+                except Exception:
+                    pass
+
+    def _show_channel_manager_menu(self, pos) -> None:
+        # Context menu for Channel_Manager tile: Configure
+        try:
+            from PySide6.QtWidgets import QMenu
+        except Exception:
+            return
+        sender = self.sender()
+        if not sender or not isinstance(sender, QFrame):
+            return
+        menu = QMenu(self)
+        act_cfg = menu.addAction("Configure…")
+        act = menu.exec_(sender.mapToGlobal(pos))
+        if act == act_cfg:
+            try:
+                from .channel_manager_config import ChannelManagerConfigDialog
+            except Exception:
+                ChannelManagerConfigDialog = None  # type: ignore
+            if ChannelManagerConfigDialog is None:
+                return
+            dlg = ChannelManagerConfigDialog(self)
+            dlg.exec()
+
+    def _show_statistics_menu(self, pos) -> None:
+        try:
+            from PySide6.QtWidgets import QMenu, QMessageBox
+        except Exception:
+            return
+        sender = self.sender()
+        if sender is None:
+            return
+        anchor = sender if hasattr(sender, "mapToGlobal") else self
+        menu = QMenu(self)
+        act_cfg = menu.addAction("Configure…")
+        act = menu.exec_(anchor.mapToGlobal(pos))
+        if act == act_cfg:
+            try:
+                from .statistics_config import StatisticsConfigDialog
+            except Exception as e:
+                try:
+                    QMessageBox.critical(self, "Statistics Configure Error", f"Failed to import Statistics config dialog:\n{e}")
+                except Exception:
+                    pass
+                return
+            try:
+                dlg = StatisticsConfigDialog(self)
+                dlg.exec()
+            except Exception as e:
+                try:
+                    QMessageBox.critical(self, "Statistics Configure Error", f"Failed to open Statistics config dialog:\n{e}")
+                except Exception:
+                    pass
+
+    def _show_vaisala_menu(self, pos) -> None:
+        try:
+            from PySide6.QtWidgets import QMenu, QMessageBox
+        except Exception:
+            return
+        sender = self.sender()
+        if sender is None:
+            return
+        anchor = sender if hasattr(sender, "mapToGlobal") else self
+        menu = QMenu(self)
+        act_cfg = menu.addAction("Configure…")
+        act = menu.exec_(anchor.mapToGlobal(pos))
+        if act == act_cfg:
+            try:
+                from .vaisala_config import VaisalaConfigDialog
+            except Exception as e:
+                try:
+                    QMessageBox.critical(self, "Vaisala Configure Error", f"Failed to import Vaisala config dialog:\n{e}")
+                except Exception:
+                    pass
+                return
+            try:
+                dlg = VaisalaConfigDialog(self)
+                dlg.exec()
+            except Exception as e:
+                try:
+                    QMessageBox.critical(self, "Vaisala Configure Error", f"Failed to open Vaisala config dialog:\n{e}")
+                except Exception:
+                    pass
+
+    def _show_cycle_menu(self, pos) -> None:
+        try:
+            from PySide6.QtWidgets import QMenu, QMessageBox
+        except Exception:
+            return
+        sender = self.sender()
+        if sender is None:
+            return
+        anchor = sender if hasattr(sender, "mapToGlobal") else self
+        menu = QMenu(self)
+        act_cfg = menu.addAction("Configure…")
+        act = menu.exec_(anchor.mapToGlobal(pos))
+        if act == act_cfg:
+            try:
+                from .cycle_config import CycleConfigDialog
+            except Exception as e:
+                try:
+                    QMessageBox.critical(self, "Cycle Configure Error", f"Failed to import Cycle config dialog:\n{e}")
+                except Exception:
+                    pass
+                return
+            try:
+                dlg = CycleConfigDialog(self)
+                dlg.exec()
+            except Exception as e:
+                try:
+                    QMessageBox.critical(self, "Cycle Configure Error", f"Failed to open Cycle config dialog:\n{e}")
+                except Exception:
+                    pass
+
     def _set_tile(self, tile: QFrame, color: str, subtitle: str) -> None:
         tile.setStyleSheet(f"QFrame {{ background-color: {color}; border-radius: 6px; }}")
         # Hide subtitle for compact OK state
@@ -278,6 +523,94 @@ class ConsoleWindow(QMainWindow):
         tile._lbl_sub.setText(subtitle if has_sub else "")  # type: ignore
         tile._lbl_sub.setVisible(has_sub)  # type: ignore
         tile.setFixedHeight(48 if not has_sub else 64)
+
+    def _on_loadbank_panel_toggled(self, checked: bool) -> None:
+        self._show_loadbank_operator_dock(checked)
+
+    def _on_lb_dock_visibility_changed(self, visible: bool) -> None:
+        btn = getattr(self, "btn_loadbank_panel", None)
+        if btn is None:
+            return
+        if btn.isChecked() != bool(visible):
+            btn.blockSignals(True)
+            btn.setChecked(bool(visible))
+            btn.blockSignals(False)
+
+    def _show_loadbank_operator_dock(self, visible: bool) -> None:
+        dock = getattr(self, "_lb_dock", None)
+        if dock is None:
+            return
+        dock.setVisible(bool(visible))
+        btn = getattr(self, "btn_loadbank_panel", None)
+        if btn is not None and btn.isChecked() != bool(visible):
+            btn.blockSignals(True)
+            btn.setChecked(bool(visible))
+            btn.blockSignals(False)
+
+    def _open_loadbank_operator_window(self) -> None:
+        try:
+            from .loadbank_control import LoadBankControlPanel
+        except Exception:
+            return
+        win = _QMainWindow(self)
+        win.setWindowTitle("Load Bank — Operator")
+        panel = LoadBankControlPanel(win)
+        try:
+            from src.core.ipc.bus import create_ui_control_push
+
+            panel.set_bus(create_ui_control_push())
+        except Exception:
+            pass
+        win.setCentralWidget(panel)
+        win.resize(380, 560)
+        win.show()
+        try:
+            self._lb_operator_windows.append(win)
+        except Exception:
+            pass
+
+    def _loadbank_ready_from_values(self, vals: Dict[str, Any]) -> Optional[bool]:
+        try:
+            if not hasattr(self, "_lb_ready_alias"):
+                self._lb_ready_alias = "LB Ready"
+                try:
+                    path = Path(__file__).resolve().parents[3] / "configs" / "loadbank.yaml"
+                    import yaml  # type: ignore
+
+                    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+                    exposes = data.get("expose_channels") or {}
+                    self._lb_ready_alias = str(exposes.get("ready_alias", "LB Ready"))
+                except Exception:
+                    pass
+            v = vals.get(self._lb_ready_alias)
+            if v is None:
+                return None
+            return bool(int(float(v)))
+        except Exception:
+            return None
+
+    def _refresh_loadbank_panels(self, vals: Dict[str, Any]) -> None:
+        ready = self._loadbank_ready_from_values(vals)
+        main = getattr(self, "_lb_panel_main", None)
+        if main is not None and hasattr(main, "update_values"):
+            main.update_values(vals)
+            if hasattr(main, "set_link_status"):
+                main.set_link_status(bool(self._conn_latched), device_ready=ready)
+        for w in list(getattr(self, "_lb_operator_windows", []) or []):
+            try:
+                if not w.isVisible():
+                    continue
+                cw = w.centralWidget()
+                if cw is not None and hasattr(cw, "update_values"):
+                    cw.update_values(vals)
+                    if hasattr(cw, "set_link_status"):
+                        cw.set_link_status(bool(self._conn_latched), device_ready=ready)
+            except Exception:
+                pass
+        try:
+            self._lb_operator_windows = [w for w in self._lb_operator_windows if w.isVisible()]
+        except Exception:
+            pass
 
     def _init_telemetry(self) -> None:
         self._sub = None
@@ -289,7 +622,7 @@ class ConsoleWindow(QMainWindow):
         except Exception:
             self._sub = None
         self._poll_timer = QTimer(self)
-        self._poll_timer.setInterval(100)  # 10 Hz poll for messages
+        self._poll_timer.setInterval(20)  # 50 Hz poll for messages
         self._poll_timer.timeout.connect(self._poll_telemetry)  # type: ignore
         self._poll_timer.start()
         # Progress dialog placeholder
@@ -393,10 +726,13 @@ class ConsoleWindow(QMainWindow):
         try:
             vals = self._last_payload.get("values") if isinstance(self._last_payload, dict) else None
             units = self._last_payload.get("units") if isinstance(self._last_payload, dict) else None
+            states = self._last_payload.get("states") if isinstance(self._last_payload, dict) else None
             if "AllChannelsTable" in self._display_windows:
                 table = self._display_windows["AllChannelsTable"].centralWidget()
                 if hasattr(table, "update_data"):
-                    table.update_data(vals, units)
+                    table.update_data(vals, units, states)
+            if isinstance(vals, dict):
+                self._refresh_loadbank_panels(vals)
         except Exception:
             pass
 
@@ -497,6 +833,14 @@ class ConsoleWindow(QMainWindow):
                 # Mark locked; next press will Start Recording
                 self._locked = True
                 self.btn_primary.setText("Start Recording")
+                try:
+                    from src.core.ipc.bus import create_ui_control_push
+                    _ctrl = create_ui_control_push()
+                    if _ctrl is not None:
+                        _msg = json.dumps({"type": "lock_test"}).encode("utf-8")
+                        _ctrl["control_push"].send(_msg)
+                except Exception:
+                    pass
             return
         # If locked and not recording → start
         ctrl = None
@@ -522,6 +866,8 @@ class ConsoleWindow(QMainWindow):
             try:
                 msg = json.dumps({"type": "stop_recording"}).encode("utf-8")
                 ctrl["control_push"].send(msg)
+                msg_u = json.dumps({"type": "unlock_test"}).encode("utf-8")
+                ctrl["control_push"].send(msg_u)
                 # Immediately revert to ready/idle so operator can change metadata
                 self._locked = False
                 self.btn_primary.setText("Lock Test")

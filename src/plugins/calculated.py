@@ -163,15 +163,33 @@ class CalculatedChannelsPlugin(BasePlugin):
         chans = self.config.get("channels", []) or []
         if not isinstance(chans, list):
             return PluginStatus(ok=False, message="channels must be a list")
-        for c in chans:
+        try:
+            hz = float(self.config.get("recording_rate_hz", 10.0))
+            if hz <= 0.0:
+                return PluginStatus(ok=False, message="recording_rate_hz must be > 0")
+        except Exception:
+            return PluginStatus(ok=False, message="recording_rate_hz must be numeric")
+        import ast
+        for i, c in enumerate(chans):
             if not isinstance(c, dict):
                 continue
             if not c.get("alias"):
-                return PluginStatus(ok=False, message="alias required")
+                return PluginStatus(ok=False, message=f"channels[{i}].alias required")
             if not c.get("expr"):
-                return PluginStatus(ok=False, message="expr required")
-            if not isinstance(c.get("symbols"), dict):
-                return PluginStatus(ok=False, message="symbols must be a mapping")
+                return PluginStatus(ok=False, message=f"channels[{i}].expr required")
+            symbols = c.get("symbols")
+            if not isinstance(symbols, dict):
+                return PluginStatus(ok=False, message=f"channels[{i}].symbols must be a mapping")
+            try:
+                ast.parse(str(c.get("expr")), mode="eval")
+            except Exception as e:
+                return PluginStatus(ok=False, message=f"channels[{i}].expr syntax error: {e}")
+            for key in symbols.keys():
+                sk = str(key).strip()
+                if not sk:
+                    return PluginStatus(ok=False, message=f"channels[{i}].symbols contains empty key")
+                if not sk.isidentifier():
+                    return PluginStatus(ok=False, message=f"channels[{i}].symbols key '{sk}' is not a valid identifier")
         # No duplicate output aliases
         aliases = [str(c.get("alias")) for c in chans if isinstance(c, dict) and c.get("alias")]
         if len(aliases) != len(set(aliases)):

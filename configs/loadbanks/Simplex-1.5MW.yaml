@@ -1,0 +1,143 @@
+# Author: T. Onkst | Date: 03092026
+model: "Simplex 1.5MW"
+
+# Vendor map addresses are entered as one-based.
+address_base: 1
+
+commands:
+  # First write block from VI:
+  # write coils start=3456, count=3 -> Take Control A, Fan/Control Power A, Master Load A
+  control_enable_a:
+    fc: 15
+    address: 3456
+    values: [true, true, true]
+    labels: ["Take Control A", "Fan/Control Power A", "Master Load A"]
+
+  # Setpoint write block from VI:
+  # write coils start=3459 -> logical step coils 3460..3472 (13 values).
+  setpoint:
+    fc: 15
+    address: 3459
+    type: coil_array
+    ui_unit: "kW"
+    # A-bank step values aligned to controls table 3460..3472.
+    steps_kw: [1, 2, 2, 5, 5, 10, 25, 50, 50, 100, 200, 500, 500]
+    logical_addresses: [3460, 3461, 3462, 3463, 3464, 3465, 3466, 3467, 3468, 3469, 3470, 3471, 3472]
+    compose: greedy_descending
+    min: 0
+    max: 1500
+    confirm_readback: false
+
+  # From legacy VI screenshot: second write path uses 3459.
+  fan_power:
+    fc: 6
+    address: 3459
+    type: uint16
+    min: 0
+    max: 1
+
+status:
+  # Metering read block: start 2945, count 14 -> 7 float32 values (AB default).
+  # Channel order in VI: Vab, Vbc, Vca, Ia, Ib, Ic, kW
+  voltage_ab_vrms:
+    fc: 3
+    address: 2945
+    type: float32
+    word_order: AB
+    scaling: { m: 1.0, b: 0.0, unit: "Vrms" }
+    alias: "Voltage A-B [Vrms]"
+    poll_hz: 5
+  voltage_bc_vrms:
+    fc: 3
+    address: 2947
+    type: float32
+    word_order: AB
+    scaling: { m: 1.0, b: 0.0, unit: "Vrms" }
+    alias: "Voltage B-C [Vrms]"
+    poll_hz: 5
+  voltage_ca_vrms:
+    fc: 3
+    address: 2949
+    type: float32
+    word_order: AB
+    scaling: { m: 1.0, b: 0.0, unit: "Vrms" }
+    alias: "Voltage C-A [Vrms]"
+    poll_hz: 5
+  current_l1_a:
+    fc: 3
+    address: 2951
+    type: float32
+    word_order: AB
+    scaling: { m: 1.0, b: 0.0, unit: "A" }
+    alias: "Current L1 [A]"
+    poll_hz: 5
+  current_l2_a:
+    fc: 3
+    address: 2953
+    type: float32
+    word_order: AB
+    scaling: { m: 1.0, b: 0.0, unit: "A" }
+    alias: "Current L2 [A]"
+    poll_hz: 5
+  current_l3_a:
+    fc: 3
+    address: 2955
+    type: float32
+    word_order: AB
+    scaling: { m: 1.0, b: 0.0, unit: "A" }
+    alias: "Current L3 [A]"
+    poll_hz: 5
+  power_kw:
+    fc: 3
+    address: 2957
+    type: float32
+    word_order: AB
+    scaling: { m: 1.0, b: 0.0, unit: "kW" }
+    alias_key: measured_load_alias
+    poll_hz: 5
+
+  # Indicator read block: read coils start 3520, count 5.
+  control_available:
+    fc: 1
+    address: 3520
+    type: coil
+    alias_key: control_available_alias
+    poll_hz: 2
+  fan_on:
+    fc: 1
+    address: 3521
+    type: coil
+    alias_key: fan_alias
+    poll_hz: 2
+  normal_operation:
+    fc: 1
+    address: 3522
+    type: coil
+    alias_key: normal_operation_alias
+    poll_hz: 2
+  load_available:
+    fc: 1
+    address: 3523
+    type: coil
+    alias_key: load_available_alias
+    poll_hz: 2
+  load_bank_failure:
+    fc: 1
+    address: 3524
+    type: coil
+    alias_key: loadbank_failure_alias
+    poll_hz: 2
+
+  # Keep VI-style outputs mapped from 2nd/5th indicator coil positions.
+  power_bool:
+    fc: 1
+    address: 3521
+    type: coil
+    alias_key: power_alias
+    poll_hz: 2
+  error_bool:
+    fc: 1
+    address: 3524
+    type: coil
+    alias_key: error_alias
+    poll_hz: 2

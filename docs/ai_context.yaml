@@ -1,5 +1,45 @@
+# Author: T. Onkst | Date: 03092026
 name: "Engine Test Data Recorder"
 purpose: "Stream, visualize, and record engine test data from NI cDAQ, CAN/CCP, and Modbus devices; export to Excel."
+
+# Implementation layout: large plugins and core are split across focused modules (see plugin descriptions).
+code_layout:
+  core:
+    orchestrator:
+      primary: "src/core/orchestrator.py"
+      notes: "Main run loop, plugin coordination, control/telemetry; slimmer than prior monolith after extractions."
+    recording:
+      path: "src/core/recording.py"
+      contains:
+        - "begin_recording / end_recording session wiring"
+        - "kickoff_export (Excel export kickoff from orchestrator state)"
+        - "build_parquet_settings and related recording helpers"
+  plugins:
+    ni_daq:
+      primary: "src/plugins/ni_daq.py"
+      helpers:
+        - path: "src/plugins/_nidaq_discovery.py"
+          role: "NI MAX / device enumeration; structured YAML template generation by module family"
+        - path: "src/plugins/_nidaq_simulation.py"
+          role: "Simulation timestep for configured channels"
+        - path: "src/plugins/_nidaq_tasks.py"
+          role: "DAQmx task construction, buffering, per-device fast-AI task management"
+        - path: "src/plugins/_nidaq_acquisition.py"
+          role: "Acquisition worker, snapshot buffer, real-mode read/drain path"
+    ccp:
+      primary: "src/plugins/ccp.py"
+      helpers:
+        - path: "src/plugins/_ccp_a2l.py"
+          role: "A2L parse, measurement metadata, value decode helpers"
+        - path: "src/plugins/_ccp_protocol.py"
+          role: "CCP over CAN session, seed/key, SHORT_UP polling, protocol state"
+    channel_manager:
+      primary: "src/plugins/channel_manager.py"
+      notes: "First-class plugin (replaces orchestrator stub); alarms/cadence/segmentation policy."
+    engine_test:
+      primary: "src/plugins/engine_test.py"
+      notes: "First-class plugin (replaces orchestrator stub); run metadata hooks."
+
 stakeholders:
   - "Test Engineers"
   - "Test Cell Operators"
@@ -42,30 +82,30 @@ hardware:
 
 plugins:
   - id: "NI_DAQ"
-    description: "NI cDAQ acquisition: discovery helper generates structured YAML (categorized by module family); sim emits configured channels; real path supports AI voltage (10×R oversample+average), AI temperature at R, DI on-demand; per-device fast AI tasks with adaptive timeouts and warm-up; scaling/units and aliases from config. Runtime now publishes latest-value snapshots decoupled from core tick."
+    description: "NI cDAQ acquisition (modular: ni_daq.py + _nidaq_discovery, _nidaq_simulation, _nidaq_tasks, _nidaq_acquisition): discovery helper generates structured YAML (categorized by module family); sim emits configured channels; real path supports AI voltage (10×R oversample+average), AI temperature at R, DI on-demand; per-device fast AI tasks with adaptive timeouts and warm-up; scaling/units and aliases from config. Runtime publishes latest-value snapshots decoupled from core tick."
     engineering_notes:
       - "Fast-AI robustness: increase device input buffer and adaptively drain based on backlog to avoid -200279 on network cDAQ + NI‑9239"
       - "Future option: move fast‑AI reads to a lightweight acquisition thread per device; continuously drain task buffer into a per-device queue; Core tick consumes latest samples and decimates to n (most recent 10×R) for publication"
   - id: "CAN"
     description: "Import DBC/XML, discover/select CAN signals with aliases; configure buses and acquire via NI-XNET. Includes CAN configure dialog (DBC import + checkbox signal selection), real-mode DBC decode, J1939 PGN-aware fallback matching, and runtime diagnostics channels (frames_rx/decode_hits/last_decode_age_s)."
   - id: "CCP"
-    description: "CCP over CAN (read-only): import A2L, configure bus/session, algorithmic access-key unlock, select measurements (use A2L names) with optional global naming prefix. Runtime is decoupled from core tick via latest-value snapshot buffering and exposes freshness telemetry."
+    description: "CCP over CAN (read-only; modular: ccp.py + _ccp_a2l, _ccp_protocol): import A2L, configure bus/session, algorithmic access-key unlock, select measurements (use A2L names) with optional global naming prefix. Supports multi-device placeholder configuration for up to two ECMs using devices[*] with Primary/Secondary role mapping to station_address 0x0/0x1. Runtime is decoupled from core tick via latest-value snapshot buffering and exposes freshness telemetry. SHORT_UP poll timeout honors configured io_timeout_s (no hard cap); occasional poll fails under bus contention are normal and handled by sample-and-hold."
   - id: "Calculated_Channels"
     description: "Calculated channels evaluated using safe expressions. Supports user-defined simple symbols mapped to full source aliases to simplify expressions; evaluated in listed order; outputs recorded under full aliases. Runtime now computes in a background snapshot loop and serves latest values to core tick."
   - id: "Cycle"
-    description: "Load bank control from CSV (Time kW) step schedule (no interpolation), pause/stop/restart/skip, looping; drives LoadBank setpoint; end-of-cycle stops issuing commands (operator control)"
+    description: "Load bank control from CSV (Time kW) step schedule (no interpolation), pause/stop/restart/skip, looping; drives LoadBank setpoint; end-of-cycle stops issuing commands (operator control). Config UI includes embedded QtCharts staircase plot preview (step/hold visualization matching load bank behavior), BOM-safe CSV parsing (utf-8-sig), and status summary (point count, loops, cycle duration)."
   - id: "LoadBank"
     description: "Load bank control via Modbus TCP: model dropdown, IP config, connection test, auto-connect/keep-alive; setpoint/accept; status reads; units derived from model map (kW typical)"
   - id: "Modbus"
     description: "Custom Modbus channel framework with TCP/RS485 configuration UI, per-channel mapping table, and test value display. Supports multi-device tabbed config persisted in devices[*] with runtime fallback compatibility to legacy flattened reads."
   - id: "Statistics"
-    description: "Secondary logger of stats (mean, stdev, min, max) with rolling/fixed windows and optional triggers. Runtime processing is decoupled from core tick through queued updates and background processing."
+    description: "Secondary logger of stats (mean, stdev, min, max) with rolling/fixed windows and optional triggers. Runtime processing is decoupled from core tick through queued updates and background processing. Config UI (right-click configure) covers window settings, metrics selection, auto-trigger, and per-channel overrides."
   - id: "Vaisala"
-    description: "Vaisala environmental sensors (simulation now; Modbus TCP later). Sim emits Ambient Temp, RH, and Pressure with optional calibration offsets; config includes IP and model placeholders."
+    description: "Vaisala environmental sensors (simulation now; Modbus TCP later). Sim emits Ambient Temp, RH, and Pressure with optional calibration offsets; config includes IP and model placeholders. Config UI (right-click configure) covers connection settings, model/map selection, polling rate, and calibration offsets."
   - id: "EngineTest"
-    description: "Collects run metadata (lock-test fields)"
+    description: "Collects run metadata (lock-test fields); implemented in src/plugins/engine_test.py (no longer an orchestrator stub)."
   - id: "Channel_Manager"
-    description: "Configure recording rate R (≤100 Hz) and per-channel alarms with latching; bulk edits; optional summary outputs"
+    description: "Configure core recording cadence and segmentation policy, plus two-tier per-channel warning/alarm behavior with enabling conditions, per-limit latching, and action selection; implemented in src/plugins/channel_manager.py (no longer an orchestrator stub)."
 
 workflows:
   - id: "WF-SESSION"
@@ -99,7 +139,7 @@ inputs:
     schema: "Module/channel, scaling, range, rate; fast channels (analog voltage + digital) oversample at 10×R"
   - id: "IN-CAN"
     type: "CAN/CCP"
-    schema: "DBC/XML, A2L + seed/key DLL provided by operator"
+    schema: "DBC/XML, A2L + access-key unlock inputs provided by operator"
   - id: "IN-MODBUS"
     type: "Modbus TCP"
     schema: "Register maps (TBD)"
@@ -107,7 +147,7 @@ inputs:
 outputs:
   - id: "OUT-DATA"
     type: "Parquet time-series + YAML metadata"
-    schema: "Recording grid at R; plugin values sampled from each plugin's latest snapshot at tick time (sample-and-hold); includes Time_Relative_s (s) and core tick diagnostics; statistics outputs separate"
+    schema: "Recording grid at R; plugin values sampled from each plugin's latest snapshot at tick time (sample-and-hold); includes Time_Relative_s (s), core tick diagnostics, and aggregate alarm channels iOT_Warning/iOT_Alarm; statistics outputs separate"
   - id: "OUT-EXCEL"
     type: "Excel export"
     schema: "Per-Parquet workbook(s) with sheets: Metadata (includes units matrix), Data (autosize, 2-decimal display), AlarmEvents, StatsSnapshots; split a single file into .1, .2 if exceeding Excel row limit"
@@ -128,7 +168,7 @@ requirements:
       statement: "Record up to 200 channels at user-selected R ≤ 100 Hz; fast channels oversampled 10×R and decimated to R."
     - id: "FR-002"
       priority: "MUST"
-      statement: "Near real-time visualization with configurable 1/5/10 Hz updates; plotting decoupled from recording."
+      statement: "Near real-time visualization with up to 20 Hz UI refresh; plotting decoupled from recording."
     - id: "FR-003"
       priority: "MUST"
       statement: "Support CAN (XNET), CCP via A2L + seed/key DLL, and Modbus TCP read/write."
@@ -165,7 +205,7 @@ requirements:
       statement: "Crash-safe writes; worst-case data loss < 1 s; recovery/export after restart."
     - id: "NFR-002"
       category: "Performance"
-      statement: "Sustain 4 h runs with segmentation; UI latency ≤ 250 ms."
+      statement: "Sustain 4 h runs with segmentation; UI latency ≤ 100 ms."
     - id: "NFR-003"
       category: "Security"
       statement: "Local-only operation; disable external connections by default; no secrets storage."
@@ -304,7 +344,7 @@ filenaming:
 
   alarms:
     units: "Derived from post-scaling units per channel"
-    types: ["high_warning", "low_warning", "high_shutdown", "low_shutdown"]
+    types: ["warn_high", "warn_low", "shut_high", "shut_low"]
     debounce:
       enter_delay_s: "<per-limit configurable; time non-OK must persist to enter WARN/SHUT>"
       clear_delay_s: "<per-limit configurable; time OK must persist to clear back to OK>"
@@ -313,10 +353,10 @@ filenaming:
       warning:
         - "UI_indicator_yellow"
         - "log_event"
-      shutdown:
-        - "trigger_estop_circuit (via calculated channel logic)"
+      alarm:
         - "UI_indicator_red"
         - "log_event"
+        - "optional_shutdown_request_when_action_is_visible_alert_shutdown"
     logging:
       format: "jsonl"
       file_name: "alarm_events.jsonl"
@@ -393,11 +433,11 @@ ui:
       - "AllChannelsTable (grouped by type)"
       - "PlotsBlank (user selects channels)"
       - "DialsGauges (configurable)"
-    update_rates_hz: [1, 5, 10]
+    update_rates_hz: [1, 5, 10, 20]
     multi_window: true
     alarm_colors:
       warning: "yellow"
-      shutdown: "red"
+      alarm: "red"
   status:
     connection_indicator: "Connected/Disconnected via freshness of telemetry (< 1 s)"
     splash_screen:
@@ -419,6 +459,7 @@ ui:
         Saving: ["Stopping", "Exporting"]
   plugin_tiles:
     right_click_menu: ["Configure", "Show Error", "Reset Error"]
+    configure_wired: ["NI_DAQ", "CCP", "CAN", "Modbus", "LoadBank", "Calculated_Channels", "Channel_Manager", "Statistics", "Vaisala", "Cycle"]
     health_colors: { green: "OK/valid", red: "Error/invalid", grey: "Disconnected" }
   controls:
     primary: ["Lock Test", "Start Test", "Stop Test", "Export Workbook", "Log Statistics (manual)"]

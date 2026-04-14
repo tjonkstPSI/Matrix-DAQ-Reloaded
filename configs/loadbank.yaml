@@ -1,31 +1,72 @@
-# Author: T. Onkst | Date: 08122025
 enabled: true
-
 mode: sim
 recording_rate_hz: 10
-
+electrical:
+  voltage: 480
+  phase: 3
+load_banks:
+  primary:
+    model: Simplex 1.5MW
+    map_file: C:/Projects/Python/Matrix_v2_retry/configs/loadbanks/Simplex-1.5MW.yaml
+    ip_address: 127.0.0.1
+    port: 502
+    unit_id: 1
+    enabled: true
+  secondary:
+    model: Simplex 700kW
+    map_file: C:/Projects/Python/Matrix_v2_retry/configs/loadbanks/Simplex-700kW.yaml
+    ip_address: ''
+    port: 502
+    unit_id: 1
+    enabled: false
+devices:
+- role: primary
+  name: Primary
+  model: Simplex 1.5MW
+  map_file: C:/Projects/Python/Matrix_v2_retry/configs/loadbanks/Simplex-1.5MW.yaml
+  connection:
+    host: 127.0.0.1
+    port: 502
+    unit_id: 1
+  enabled: true
+- role: secondary
+  name: Secondary
+  model: Simplex 700kW
+  map_file: C:/Projects/Python/Matrix_v2_retry/configs/loadbanks/Simplex-700kW.yaml
+  connection:
+    host: ''
+    port: 502
+    unit_id: 1
+  enabled: false
 connection:
   host: 127.0.0.1
   port: 502
   unit_id: 1
-
 model:
-  selected: null
-  map_file: configs/loadbanks/Acme-LB100.yaml
-
+  selected: Simplex 1.5MW
+  map_file: C:/Projects/Python/Matrix_v2_retry/configs/loadbanks/Simplex-1.5MW.yaml
 polling:
   default_status_poll_hz: 2
-
 safety:
-  setpoint_limits_percent: { min: 0, max: 100 }
+  setpoint_limits_percent:
+    min: 0
+    max: 1500
   require_accept_confirmation: true
   rate_limit_setpoint_hz: 1
-
 expose_channels:
-  measured_load_alias: "LB Measured Load"
-  ready_alias: "LB Ready"
-  faults_alias: "LB Faults"
-  setpoint_alias: "LB Setpoint"
-  accept_alias: "LB Accept"
-
-
+  measured_load_alias: LB Measured Load
+  ready_alias: LB Ready
+  faults_alias: LB Faults
+  setpoint_alias: LB Setpoint
+  step_count_alias: LB Step Count
+  step_remainder_alias: LB Step Remainder
+  accept_alias: LB Accept
+  voltage_alias: Voltage [Vrms]
+  current_alias: Current [A]
+  power_alias: Power
+  error_alias: Error
+  fan_alias: Fan On
+  control_available_alias: Control Available
+  normal_operation_alias: Normal Operation
+  load_available_alias: Load Available
+  loadbank_failure_alias: Load Bank Failure

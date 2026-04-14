@@ -10,6 +10,8 @@ try:
 except Exception:
     raise
 
+from .table_alarm_colors import apply_alarm_state_to_row
+
 
 class ChannelsTable(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -32,10 +34,16 @@ class ChannelsTable(QWidget):
         self._columns_fixed = False
         self._max_col_px = [0, 0, 0]
 
-    def update_data(self, values: Dict[str, Any] | None, units: Dict[str, Any] | None) -> None:
+    def update_data(
+        self,
+        values: Dict[str, Any] | None,
+        units: Dict[str, Any] | None,
+        states: Dict[str, Any] | None = None,
+    ) -> None:
         if not isinstance(values, dict):
             return
         units = units if isinstance(units, dict) else {}
+        states = states if isinstance(states, dict) else {}
         keys = set(values.keys())
         if isinstance(units, dict):
             try:
@@ -80,6 +88,11 @@ class ChannelsTable(QWidget):
                 self.table.item(row, 2).setText(str(u))
             except Exception:
                 pass
+            try:
+                state = str(states.get(alias, "OK"))
+            except Exception:
+                state = "OK"
+            apply_alarm_state_to_row(self.table, row, state)
             # Value column width is fixed; keep alias stretch and unit auto
 
 

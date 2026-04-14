@@ -1,4 +1,4 @@
-<!-- Author: T. Onkst | Date: 08112025 -->
+<!-- Author: T. Onkst | Date: 03092026 -->
 
 ## Statistics Plugin Specification
 
@@ -74,7 +74,9 @@ channels:
  - If `manual_logging.enabled`, UI exposes action; when invoked with fewer than `min_samples`, emit NaN/skip per format rules
 
 ### Execution Model
-- Runs at R; maintains a rolling window buffer per configured source channel.
+- Receives upstream values/units as non-blocking queued updates, then processes them in a background worker thread.
+- Maintains rolling window buffers per configured source channel.
+- Core tick/log cadence is controlled by Channel Manager; Statistics processing cadence is plugin-local and decoupled from the core loop.
 - Snapshot emission:
   - Manual: when the user presses "Log Statistics", compute the selected stats over the current window and emit exactly one row.
   - Automatic: armed trigger watches for configured edge; on crossing, compute and emit one row; then re-arm after optional holdoff.

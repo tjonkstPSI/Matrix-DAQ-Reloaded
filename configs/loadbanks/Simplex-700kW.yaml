@@ -1,0 +1,168 @@
+# Author: T. Onkst | Date: 03092026
+model: "Simplex 700kW"
+
+# Vendor map addresses are entered as one-based.
+address_base: 1
+
+commands:
+  # Controls table + Write VI (standalone 700kW):
+  # VI writes coils start=3392 count=2 => logical 3393/3394
+  # (Heartbeat + Fan/Control Power). PLC addresses are base-1.
+  #
+  # Runtime uses this block for persistent control state writes.
+  # Heartbeat is toggled every 1s via dedicated heartbeat writer below.
+  heartbeat:
+    fc: 5
+    address: 3393
+    # Keep disabled during LV side-by-side testing to avoid dual-writer conflicts.
+    # Enable when Matrix is the active controller.
+    enabled: false
+    interval_s: 1.0
+
+  control_enable_a:
+    fc: 15
+    address: 3393
+    values: [true, true]
+    labels: ["Heartbeat", "Fan/Control Power"]
+
+  # Load-to-apply register from table: 42625 (BCD Double).
+  # Write VI shows start=2624 (wire-style); with base-1 table this maps to 2625.
+  # Runtime encodes this as two-register BCD (8 digits total), AB order default.
+  setpoint:
+    fc: 16
+    address: 2625
+    type: bcd_double
+    word_order: BA
+    ui_unit: "kW"
+    min: 0
+    max: 700
+    confirm_readback: false
+
+status:
+  # Read_StatusBits.vi:
+  # read coils start=3360, count=2 -> Failure on System + Heartbeat.
+  # Table lists PLC base-1 values 3361 and 3362, so runtime base-1 offset applies.
+  failure_on_system:
+    fc: 1
+    address: 3361
+    type: coil
+    alias_key: error_alias
+    poll_hz: 2
+  unit_heartbeat:
+    fc: 1
+    address: 3362
+    type: coil
+    alias: "LB700/UnitHeartbeat"
+    poll_hz: 2
+
+  # System-data block from VI/table (42689..42695 float):
+  # IA, IB, IC, W => wire addresses 2689,2691,2693,2695.
+  system_ia:
+    fc: 3
+    address: 2689
+    type: float32
+    word_order: BA
+    scaling: { m: 1.0, b: 0.0, unit: "A" }
+    alias: "System IA [A]"
+    poll_hz: 5
+  system_ib:
+    fc: 3
+    address: 2691
+    type: float32
+    word_order: BA
+    scaling: { m: 1.0, b: 0.0, unit: "A" }
+    alias: "System IB [A]"
+    poll_hz: 5
+  system_ic:
+    fc: 3
+    address: 2693
+    type: float32
+    word_order: BA
+    scaling: { m: 1.0, b: 0.0, unit: "A" }
+    alias: "System IC [A]"
+    poll_hz: 5
+  measured_load:
+    fc: 3
+    address: 2695
+    type: float32
+    word_order: BA
+    # Table is System W; convert to kW for recorder convention.
+    scaling: { m: 0.001, b: 0.0, unit: "kW" }
+    alias_key: measured_load_alias
+    poll_hz: 5
+
+  # BCD status registers from table.
+  units_available:
+    fc: 3
+    address: 2697
+    type: bcd_double
+    word_order: BA
+    scaling: { m: 1.0, b: 0.0, unit: "" }
+    alias: "LB700/UnitsAvailable"
+    poll_hz: 2
+  kw_available:
+    fc: 3
+    address: 2699
+    type: bcd_double
+    word_order: BA
+    scaling: { m: 1.0, b: 0.0, unit: "kW" }
+    alias: "LB700/kWAvailable"
+    poll_hz: 2
+
+  # Unit-data VI block (read start=2945, count=14 -> 7 float channels: Vab..kW).
+  unit_vab:
+    fc: 3
+    address: 2945
+    type: float32
+    word_order: BA
+    scaling: { m: 1.0, b: 0.0, unit: "Vrms" }
+    alias: "Unit VAB [Vrms]"
+    poll_hz: 2
+  unit_vbc:
+    fc: 3
+    address: 2947
+    type: float32
+    word_order: BA
+    scaling: { m: 1.0, b: 0.0, unit: "Vrms" }
+    alias: "Unit VBC [Vrms]"
+    poll_hz: 2
+  unit_vca:
+    fc: 3
+    address: 2949
+    type: float32
+    word_order: BA
+    scaling: { m: 1.0, b: 0.0, unit: "Vrms" }
+    alias: "Unit VCA [Vrms]"
+    poll_hz: 2
+  unit_ia:
+    fc: 3
+    address: 2951
+    type: float32
+    word_order: BA
+    scaling: { m: 1.0, b: 0.0, unit: "A" }
+    alias: "Unit IA [A]"
+    poll_hz: 2
+  unit_ib:
+    fc: 3
+    address: 2953
+    type: float32
+    word_order: BA
+    scaling: { m: 1.0, b: 0.0, unit: "A" }
+    alias: "Unit IB [A]"
+    poll_hz: 2
+  unit_ic:
+    fc: 3
+    address: 2955
+    type: float32
+    word_order: BA
+    scaling: { m: 1.0, b: 0.0, unit: "A" }
+    alias: "Unit IC [A]"
+    poll_hz: 2
+  unit_watt:
+    fc: 3
+    address: 2957
+    type: float32
+    word_order: BA
+    scaling: { m: 0.001, b: 0.0, unit: "kW" }
+    alias: "Unit Power [kW]"
+    poll_hz: 2

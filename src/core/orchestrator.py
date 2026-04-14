@@ -23,6 +23,9 @@ from ..plugins.statistics import StatisticsPlugin
 from .storage.stats_snapshots import StatsSnapshotsSink
 from ..plugins.vaisala import VaisalaPlugin
 from .storage.parquet_writer import ParquetWriter, ParquetWriterSettings
+from ..plugins.channel_manager import ChannelManagerPlugin
+from ..plugins.engine_test import EngineTestPlugin
+from .recording import begin_recording, end_recording, kickoff_export, build_parquet_settings
 
 
 @dataclass
@@ -51,6 +54,7 @@ class Orchestrator:
         self._recording: bool = False
         self._export_in_progress: bool = False
         self._plugin_enabled: Dict[str, bool] = {}
+        self._tick_interval_s: float = 0.1
 
     def start(self) -> None:
         # Placeholder: load configs, initialize IPC bus, register simulated plugins
@@ -62,19 +66,7 @@ class Orchestrator:
         # Load channel manager config (optional)
         ch_cfg_path = (self.configs_dir / "channel_manager.yaml").resolve()
         self.channel_cfg = load_yaml_config(ch_cfg_path)
-        if self.channel_cfg:
-            try:
-                self.alarm_engine = AlarmEngine(self.channel_cfg)
-                chan_items = (self.channel_cfg.get("channels") or [])
-                chan_count = len(chan_items)
-                print(f"[INFO] AlarmEngine initialized: {chan_count} channel(s)")
-                if chan_count:
-                    aliases = [str(it.get("alias")) for it in chan_items if isinstance(it, dict) and it.get("alias")]
-                    print("[INFO] AlarmEngine channels:", ", ".join(aliases))
-            except Exception as e:
-                print(f"[WARN] Failed to initialize AlarmEngine: {e}")
-        else:
-            print("[INFO] Channel Manager config not found or empty; alarms disabled")
+        self._apply_channel_manager_runtime()
         # Load configs for each plugin and run basic validation
         all_ok = True
         ALWAYS_ON = {"Channel_Manager", "EngineTest"}
@@ -168,6 +160,12 @@ class Orchestrator:
             vaisala = self.plugins.get("Vaisala") if self._plugin_enabled.get("Vaisala", True) else None
             nidaq = self.plugins.get("NI_DAQ") if self._plugin_enabled.get("NI_DAQ", True) else None
             calc = self.plugins.get("Calculated_Channels") if self._plugin_enabled.get("Calculated_Channels", True) else None
+            engine_test = self.plugins.get("EngineTest") if self._plugin_enabled.get("EngineTest", True) else None
+            if engine_test:
+                try:
+                    engine_test.configure()
+                except Exception:
+                    pass
             if can:
                 can.configure(); can.validate(); can.start()
             if ccp:
@@ -189,6 +187,10 @@ class Orchestrator:
             run_mode = str(self.core_cfg.get("run_mode", "demo")).lower()
             demo_ticks = int(self.core_cfg.get("demo_ticks", 50))
             interval = float(self.core_cfg.get("tick_interval_s", 0.1))
+            try:
+                interval = float(self._tick_interval_s)
+            except Exception:
+                interval = float(self.core_cfg.get("tick_interval_s", 0.1))
             i = 0
             t0 = time.time()
             last_tick_start_mono: float | None = None
@@ -212,6 +214,7 @@ class Orchestrator:
                 for _ in range(demo_ticks):
                     if not self._running:
                         break
+                    interval = max(0.001, float(self._tick_interval_s))
                     tick_start_mono = time.monotonic()
                     tick_dt_s = interval if last_tick_start_mono is None else max(0.0, tick_start_mono - last_tick_start_mono)
                     tick_jitter_s = tick_dt_s - interval
@@ -243,6 +246,9 @@ class Orchestrator:
                     if vaisala:
                         vals.update(getattr(vaisala, "simulate_step")())
                         units.update(getattr(vaisala, "units")())
+                    if engine_test:
+                        vals.update(getattr(engine_test, "simulate_step")())
+                        units.update(getattr(engine_test, "units")())
                     # Capture current timestamp for this tick
                     now_ts = time.time()
                     # Run calculated channels using merged source values before alarms/stats
@@ -296,6 +302,10 @@ class Orchestrator:
                                 pass
                             if ctrl_msg.get("type") == "stats_snapshot" and stats:
                                 getattr(stats, "request_manual_snapshot")(now_ts)
+                            elif ctrl_msg.get("type") == "lock_test":
+                                self._engine_test_lock()
+                            elif ctrl_msg.get("type") == "unlock_test":
+                                self._engine_test_unlock()
                             elif ctrl_msg.get("type") == "start_recording":
                                 self._begin_recording()
                             elif ctrl_msg.get("type") == "stop_recording":
@@ -306,6 +316,8 @@ class Orchestrator:
                                 self._handle_do_write(ctrl_msg)
                             elif ctrl_msg.get("type") == "ao_write":
                                 self._handle_ao_write(ctrl_msg)
+                            elif ctrl_msg.get("type") == "loadbank_command":
+                                self._handle_loadbank_command(ctrl_msg)
                             elif ctrl_msg.get("type") == "plugin_inject_fail":
                                 self._handle_inject_fail(ctrl_msg)
                             elif ctrl_msg.get("type") == "ccp_test":
@@ -335,6 +347,11 @@ class Orchestrator:
                         except Exception:
                             pass
                         self._alarm_tick_logged = True
+                    # Publish legacy-style overall alarm booleans.
+                    vals["iOT_Warning"] = 1.0 if bool(summary.get("any_warning", False)) else 0.0
+                    vals["iOT_Alarm"] = 1.0 if bool(summary.get("any_shutdown", False)) else 0.0
+                    units["iOT_Warning"] = ""
+                    units["iOT_Alarm"] = ""
                     payload = json.dumps({
                         "ts": time.time(),
                         "values": vals,
@@ -370,6 +387,7 @@ class Orchestrator:
                     i += 1
             else:
                 while self._running:
+                    interval = max(0.001, float(self._tick_interval_s))
                     tick_start_mono = time.monotonic()
                     tick_dt_s = interval if last_tick_start_mono is None else max(0.0, tick_start_mono - last_tick_start_mono)
                     tick_jitter_s = tick_dt_s - interval
@@ -399,6 +417,9 @@ class Orchestrator:
                     if vaisala:
                         vals.update(getattr(vaisala, "simulate_step")())
                         units.update(getattr(vaisala, "units")())
+                    if engine_test:
+                        vals.update(getattr(engine_test, "simulate_step")())
+                        units.update(getattr(engine_test, "units")())
                     # Capture current timestamp for this tick
                     now_ts = time.time()
                     # Run calculated channels before alarms/stats
@@ -450,6 +471,10 @@ class Orchestrator:
                                 pass
                             if ctrl_msg.get("type") == "stats_snapshot" and stats:
                                 getattr(stats, "request_manual_snapshot")(now_ts)
+                            elif ctrl_msg.get("type") == "lock_test":
+                                self._engine_test_lock()
+                            elif ctrl_msg.get("type") == "unlock_test":
+                                self._engine_test_unlock()
                             elif ctrl_msg.get("type") == "start_recording":
                                 self._begin_recording()
                             elif ctrl_msg.get("type") == "stop_recording":
@@ -460,6 +485,8 @@ class Orchestrator:
                                 self._handle_do_write(ctrl_msg)
                             elif ctrl_msg.get("type") == "ao_write":
                                 self._handle_ao_write(ctrl_msg)
+                            elif ctrl_msg.get("type") == "loadbank_command":
+                                self._handle_loadbank_command(ctrl_msg)
                             elif ctrl_msg.get("type") == "reload_plugin":
                                 pid = str(ctrl_msg.get("plugin", ""))
                                 self._reload_plugin(pid)
@@ -489,6 +516,11 @@ class Orchestrator:
                         except Exception:
                             pass
                         self._alarm_tick_logged = True
+                    # Publish legacy-style overall alarm booleans.
+                    vals["iOT_Warning"] = 1.0 if bool(summary.get("any_warning", False)) else 0.0
+                    vals["iOT_Alarm"] = 1.0 if bool(summary.get("any_shutdown", False)) else 0.0
+                    units["iOT_Warning"] = ""
+                    units["iOT_Alarm"] = ""
                     payload = json.dumps({
                         "ts": time.time(),
                         "values": vals,
@@ -520,7 +552,7 @@ class Orchestrator:
                 modbus.stop()
             except Exception:
                 pass
-            for pid in ("CAN", "CCP", "LoadBank", "NI_DAQ", "Vaisala", "Statistics", "Calculated_Channels", "Modbus", "Cycle"):
+            for pid in ("CAN", "CCP", "LoadBank", "NI_DAQ", "Vaisala", "Statistics", "Calculated_Channels", "Modbus", "Cycle", "EngineTest"):
                 try:
                     p = self.plugins.get(pid)
                     if p and self._plugin_enabled.get(pid, True):
@@ -542,55 +574,7 @@ class Orchestrator:
                 pass
 
     def _kickoff_export(self) -> None:
-        if self._export_in_progress:
-            try:
-                print("[INFO] Export already in progress; ignoring duplicate request")
-            except Exception:
-                pass
-            return
-        if self._recording:
-            try:
-                print("[WARN] Cannot export while recording is active. Stop recording first.")
-            except Exception:
-                pass
-            return
-        run_dir = self._run_dir or self._last_run_dir
-        if run_dir is None:
-            try:
-                print("[WARN] Cannot export: run directory not initialized (recording=%s, _run_dir=%s, _last_run_dir=%s)" % (self._recording, self._run_dir, self._last_run_dir))
-            except Exception:
-                pass
-            return
-        self._export_in_progress = True
-        def _worker() -> None:
-            try:
-                import importlib
-                mod = importlib.import_module("src.tools.export_excel")
-                outputs = mod.export_excel(run_dir)
-                try:
-                    print("[INFO] Excel export completed:")
-                    for p in outputs:
-                        print(f"  - {p}")
-                except Exception:
-                    pass
-            except Exception as e:
-                try:
-                    print(f"[WARN] Excel export failed: {e}")
-                except Exception:
-                    pass
-            finally:
-                self._export_in_progress = False
-        try:
-            import threading
-            t = threading.Thread(target=_worker, daemon=True)
-            t.start()
-            print("[INFO] Started Excel export in background")
-        except Exception as e:
-            self._export_in_progress = False
-            try:
-                print(f"[WARN] Failed to start export thread: {e}")
-            except Exception:
-                pass
+        kickoff_export(self)
 
     def _handle_do_write(self, msg: Dict[str, Any]) -> None:
         alias = str(msg.get("alias", ""))
@@ -629,8 +613,75 @@ class Orchestrator:
         except Exception:
             pass
 
+    def _handle_loadbank_command(self, msg: Dict[str, Any]) -> None:
+        if not self._plugin_enabled.get("LoadBank", True):
+            try:
+                print("[WARN] LoadBank command ignored: plugin disabled")
+            except Exception:
+                pass
+            return
+        lb = self.plugins.get("LoadBank")
+        if lb is None:
+            try:
+                print("[WARN] LoadBank command ignored: plugin not present")
+            except Exception:
+                pass
+            return
+
+        action = str(msg.get("action", "")).strip().lower()
+        try:
+            if action in {"setpoint", "setpoint_kw", "setpoint_pct"}:
+                value = float(msg.get("value", 0.0))
+                if hasattr(lb, "command_setpoint_kw"):
+                    getattr(lb, "command_setpoint_kw")(value)
+                else:
+                    getattr(lb, "command_setpoint_pct")(value)
+            elif action == "fan_power":
+                enabled = bool(msg.get("enabled", False))
+                if hasattr(lb, "command_fan_power"):
+                    getattr(lb, "command_fan_power")(enabled)
+            elif action == "take_control":
+                enabled = bool(msg.get("enabled", False))
+                if hasattr(lb, "command_take_control"):
+                    getattr(lb, "command_take_control")(enabled)
+            elif action == "master_load":
+                enabled = bool(msg.get("enabled", False))
+                if hasattr(lb, "command_master_load"):
+                    getattr(lb, "command_master_load")(enabled)
+            elif action == "control_enable_a":
+                if hasattr(lb, "set_control_enable_a"):
+                    getattr(lb, "set_control_enable_a")(
+                        msg.get("take_control"),
+                        msg.get("fan_power"),
+                        msg.get("master_load"),
+                    )
+            else:
+                try:
+                    print(f"[WARN] Unknown LoadBank command action: {action}")
+                except Exception:
+                    pass
+                return
+            try:
+                print(f"[INFO] LoadBank command accepted: {action}")
+            except Exception:
+                pass
+        except Exception as e:
+            try:
+                print(f"[WARN] LoadBank command failed: {e}")
+            except Exception:
+                pass
+
     def _reload_plugin(self, plugin_id: str) -> None:
         if not plugin_id:
+            return
+        if plugin_id == "Channel_Manager":
+            try:
+                ch_cfg_path = (self.configs_dir / "channel_manager.yaml").resolve()
+                self.channel_cfg = load_yaml_config(ch_cfg_path)
+                self._apply_channel_manager_runtime()
+                print("[INFO] Reloaded plugin: Channel_Manager")
+            except Exception as e:
+                print(f"[WARN] Reload failed for Channel_Manager: {e}")
             return
         try:
             p = self.plugins.get(plugin_id)
@@ -659,6 +710,40 @@ class Orchestrator:
                 print(f"[WARN] Reload failed for {plugin_id}: {e}")
         except Exception:
             pass
+
+    def _apply_channel_manager_runtime(self) -> None:
+        # Tick cadence authority: Channel Manager recording_rate_hz -> core tick interval.
+        default_interval = float(self.core_cfg.get("tick_interval_s", 0.1))
+        interval = default_interval
+        try:
+            hz = float((self.channel_cfg or {}).get("recording_rate_hz", 0.0))
+            if hz > 0.0:
+                interval = 1.0 / hz
+        except Exception:
+            interval = default_interval
+        self._tick_interval_s = max(0.001, float(interval))
+        try:
+            self.settings.recording_rate_hz = 1.0 / self._tick_interval_s
+        except Exception:
+            pass
+
+        if self.channel_cfg:
+            try:
+                self.alarm_engine = AlarmEngine(self.channel_cfg)
+                self._alarm_tick_logged = False
+                chan_items = (self.channel_cfg.get("channels") or [])
+                chan_count = len(chan_items)
+                print(f"[INFO] AlarmEngine initialized: {chan_count} channel(s)")
+                if chan_count:
+                    aliases = [str(it.get("alias")) for it in chan_items if isinstance(it, dict) and it.get("alias")]
+                    print("[INFO] AlarmEngine channels:", ", ".join(aliases))
+                print(f"[INFO] Core tick interval set to {self._tick_interval_s:.6f}s from Channel Manager")
+            except Exception as e:
+                print(f"[WARN] Failed to initialize AlarmEngine: {e}")
+                self.alarm_engine = None
+        else:
+            self.alarm_engine = None
+            print("[INFO] Channel Manager config not found or empty; alarms disabled")
 
     def _kickoff_ccp_test(self, msg: Dict[str, Any]) -> None:
         run_id = str(msg.get("run_id", ""))
@@ -748,10 +833,6 @@ class Orchestrator:
         self._running = False
 
     def _register_builtin_specs(self) -> None:
-        # Register known plugin specs with config file names; real classes TBD
-        class _Stub(BasePlugin):
-            id = "stub"
-
         specs = [
             PluginSpec(id="NI_DAQ", cls=NiDAQPlugin, config_name="ni_daq.yaml"),
             PluginSpec(id="CAN", cls=CANPlugin, config_name="can.yaml"),
@@ -762,162 +843,80 @@ class Orchestrator:
             PluginSpec(id="Modbus", cls=ModbusPlugin, config_name="modbus.yaml"),
             PluginSpec(id="Statistics", cls=StatisticsPlugin, config_name="statistics.yaml"),
             PluginSpec(id="Vaisala", cls=VaisalaPlugin, config_name="vaisala.yaml"),
-            PluginSpec(id="EngineTest", cls=_Stub, config_name="engine_test.yaml"),
-            PluginSpec(id="Channel_Manager", cls=_Stub, config_name="channel_manager.yaml"),
+            PluginSpec(id="EngineTest", cls=EngineTestPlugin, config_name="engine_test.yaml"),
+            PluginSpec(id="Channel_Manager", cls=ChannelManagerPlugin, config_name="channel_manager.yaml"),
         ]
         for s in specs:
             self.registry.register(s)
 
-    def _begin_recording(self) -> None:
-        if self._recording:
-            print("[INFO] Recording already active")
+    def _engine_test_lock(self) -> None:
+        et = self.plugins.get("EngineTest")
+        if et is None or not self._plugin_enabled.get("EngineTest", True):
             return
         try:
-            import time as _t
-            import yaml as _yaml  # type: ignore
-            # Build run folder name: testcell_mmddyy_hhmmss_enginetype_engineserialnumber_testtype
-            mmddyy = _t.strftime("%m%d%y")
-            hhmmss = _t.strftime("%H%M%S")
-            # Load test_cell from launch selections
-            test_cell = "unknown"
-            try:
-                plug_cfg_path = (self.configs_dir / "plugins.yaml").resolve()
-                plug_cfg = _yaml.safe_load(plug_cfg_path.read_text(encoding="utf-8")) or {}
-                test_cell = str(plug_cfg.get("test_cell", "unknown")).strip() or "unknown"
-            except Exception:
-                pass
-            # Load EngineTest metadata fields
-            engine_type = "unknown"; engine_sn = "unknown"; test_type = "unknown"
-            try:
-                et_path = (self.configs_dir / "engine_test.yaml").resolve()
-                et_cfg = _yaml.safe_load(et_path.read_text(encoding="utf-8")) or {}
-                req = et_cfg.get("required_fields") or {}
-                engine_type = str(req.get("engine_type", "unknown")).strip() or "unknown"
-                engine_sn = str(req.get("engine_serial_number", "unknown")).strip() or "unknown"
-                test_type = str(req.get("test_type", "unknown")).strip() or "unknown"
-            except Exception:
-                pass
-            def _sanitize(part: str) -> str:
+            st = getattr(et, "lock_session")()
+            if not st.ok:
                 try:
-                    ok = []
-                    for ch in str(part):
-                        if ch.isalnum() or ch in (" ", "_", "-", "."):
-                            ok.append(ch)
-                    s = ("".join(ok)).strip()
-                    # Avoid empty segments
-                    return s if s else "unknown"
+                    print(f"[WARN] EngineTest lock failed: {st.message}")
                 except Exception:
-                    return "unknown"
-            run_name = f"{_sanitize(test_cell)}_{mmddyy}_{hhmmss}_{_sanitize(engine_type)}_{_sanitize(engine_sn)}_{_sanitize(test_type)}"
-            run_dir = (self.configs_dir.parent / f"runs/{run_name}").resolve()
-            self._run_dir = run_dir
-            self._last_run_dir = run_dir
-            self._events_sink = AlarmEventsSink(run_dir)
-            self._stats_sink = StatsSnapshotsSink(run_dir)
-            # Build Parquet settings from Channel Manager config if provided
-            settings = self._build_parquet_settings_from_channel_cfg()
-            self._parquet = ParquetWriter(run_dir, settings)
-            try:
-                self._parquet.snapshot_configs(self.configs_dir)
-            except Exception:
-                pass
-            meta = {
-                "run_id": run_name,
-                "run_start_iso8601": _t.strftime("%Y-%m-%dT%H:%M:%S", _t.localtime()),
-                "recording_rate_hz": float(self.channel_cfg.get("recording_rate_hz", self.settings.recording_rate_hz)),
-                "plugins": sorted(list(self.plugins.keys())),
-                "test_cell": test_cell,
-                "engine_type": engine_type,
-                "engine_serial_number": engine_sn,
-                "test_type": test_type,
-            }
-            try:
-                (run_dir / "metadata.yaml").write_text(_yaml.safe_dump(meta, sort_keys=False), encoding="utf-8")
-            except Exception:
-                pass
-            self._recording = True
-            print(f"[INFO] Started recording: {str(run_dir)}")
+                    pass
         except Exception as e:
-            print(f"[WARN] Failed to start recording: {e}")
+            try:
+                print(f"[WARN] EngineTest lock error: {e}")
+            except Exception:
+                pass
+
+    def _engine_test_unlock(self) -> None:
+        et = self.plugins.get("EngineTest")
+        if et is None or not self._plugin_enabled.get("EngineTest", True):
+            return
+        try:
+            getattr(et, "unlock_session")()
+        except Exception as e:
+            try:
+                print(f"[WARN] EngineTest unlock error: {e}")
+            except Exception:
+                pass
+
+    def _begin_recording(self) -> None:
+        et = self.plugins.get("EngineTest")
+        if et is not None and self._plugin_enabled.get("EngineTest", True):
+            try:
+                et.load_config()
+                et.configure()
+                st = et.validate()
+                if not st.ok:
+                    try:
+                        print(f"[ERROR] Cannot start recording: {st.message}")
+                    except Exception:
+                        pass
+                    return
+                ph = getattr(et, "phase", lambda: "")()
+                if ph != "locked":
+                    try:
+                        print("[ERROR] Cannot start recording: Lock Test first (EngineTest phase is not locked).")
+                    except Exception:
+                        pass
+                    return
+                et.start()
+            except Exception as e:
+                try:
+                    print(f"[ERROR] EngineTest start failed: {e}")
+                except Exception:
+                    pass
+                return
+        begin_recording(self)
 
     def _end_recording(self) -> None:
-        if not self._recording:
-            print("[INFO] Recording already stopped")
-            return
-        try:
+        et = self.plugins.get("EngineTest")
+        if et is not None and self._plugin_enabled.get("EngineTest", True):
             try:
-                if self._parquet is not None:
-                    # Flush buffers only; perform coalesce asynchronously below
-                    self._parquet._flush_chunk(self._parquet._buf_second_key)  # type: ignore[attr-defined]
+                et.stop()
             except Exception:
                 pass
-            try:
-                if self._events_sink is not None:
-                    self._events_sink.finalize()
-            except Exception:
-                pass
-            print("[INFO] Recording stopped and files finalized")
-        finally:
-            self._recording = False
-            # Kick off background coalesce with progress updates
-            pw = self._parquet
-            self._parquet = None
-            self._events_sink = None
-            self._stats_sink = None
-            self._run_dir = None
-            if pw is not None:
-                run_dir = pw.run_dir
-                def _on_progress(pct: float, detail: str) -> None:
-                    try:
-                        import json
-                        msg = json.dumps({"type":"merge_progress","run": str(run_dir), "percent": float(pct), "detail": detail}).encode("utf-8")
-                        self.bus.publish_status(msg)
-                    except Exception:
-                        pass
-                def _on_done(ok: bool, error: str | None) -> None:
-                    try:
-                        import json
-                        msg = json.dumps({"type":"merge_done","run": str(run_dir), "ok": bool(ok), "error": error}).encode("utf-8")
-                        self.bus.publish_status(msg)
-                    except Exception:
-                        pass
-                try:
-                    pw.merge_async(_on_progress, _on_done)
-                    print("[INFO] Started parquet merge in background")
-                except Exception as e:
-                    print(f"[WARN] Failed to start background merge: {e}")
+        end_recording(self)
 
     def _build_parquet_settings_from_channel_cfg(self) -> ParquetWriterSettings:
-        """Create ParquetWriterSettings from Channel Manager config (optional).
-        Expected YAML (configs/channel_manager.yaml):
-          storage:
-            chunk_duration_s: 1
-            segment_time_limit_s: 14400
-            segment_size_limit_mb: 100
-            coalesce_on_finalize: true
-            keep_chunk_files: false
-        """
-        cfg = self.channel_cfg or {}
-        storage_cfg = cfg.get("storage", {}) or {}
-        defaults = ParquetWriterSettings()
-        def _get_float(key: str, default: float) -> float:
-            try:
-                v = storage_cfg.get(key)
-                return float(v) if v is not None else default
-            except Exception:
-                return default
-        def _get_bool(key: str, default: bool) -> bool:
-            try:
-                v = storage_cfg.get(key)
-                return bool(v) if v is not None else default
-            except Exception:
-                return default
-        return ParquetWriterSettings(
-            chunk_duration_s=_get_float("chunk_duration_s", defaults.chunk_duration_s),
-            segment_time_limit_s=_get_float("segment_time_limit_s", defaults.segment_time_limit_s),
-            segment_size_limit_mb=_get_float("segment_size_limit_mb", defaults.segment_size_limit_mb),
-            coalesce_on_finalize=_get_bool("coalesce_on_finalize", defaults.coalesce_on_finalize),
-            keep_chunk_files=_get_bool("keep_chunk_files", defaults.keep_chunk_files),
-        )
+        return build_parquet_settings(self.channel_cfg)
 
 
