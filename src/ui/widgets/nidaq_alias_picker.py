@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import re
-from pathlib import Path
 from typing import List, Dict
 
 try:
@@ -11,7 +9,6 @@ try:
 	from PySide6.QtWidgets import (
 		QDialog,
 		QVBoxLayout,
-		QHBoxLayout,
 		QTabWidget,
 		QWidget,
 		QLineEdit,
@@ -25,21 +22,7 @@ try:
 except Exception:
 	raise
 
-ALIAS_PATTERN = re.compile(
-	r"(?:^[qcemixypvl](?:TP|PR|FL|VL|CT|PC|SP|FQ|DG|AC|DS|PW|MS|TM|TQ|PO|OT|DE|CN|HM|LA|PI|AF|VO|VS|DN)"
-	r"_(?:Amb|Eng|Rad|Cac|Dyn|Cmp|Trb|Olc|Pmp|Pto|Thr|Ccs|Cat|Man|Mix|Vap|Reg|Blk|Hed|Ral|Xvr|Col|Alt"
-	r"|Bat|Ign|Fan|Gen|Ldb|Bth|Epr|Ecm|Twg|Fac|Enc|Mfg|Tst|Loc|Vlv|Cyl|Fnt|Rer|Mst|Slv|Rgt|Lft|Clt|Ful"
-	r"|Oil|Sld|Exh|Int|Gly|Ftr|Pan|Pdl|Spk|Trm|Air|Dew|Wet|Nag|Lpg|Phs|Cpl|Mil|Dtc|Shm|Lod|Hyd|Trn|Esp"
-	r"|Emg|Std|Ssd|Flg|Fst|Bst|Pre|Pst|In|Out|Bby|Mid|Sfc|Dta|Stp|Act|Lng|Sht|Top|Bot|Nox|Oxy|Dpt|Vld"
-	r"|Iso|Sae|Wat|Abs|Cnt|Cst|Gag|Avg|Roa|Ror|Lmt|[0-9]+)*$"
-	r"|^[eiyx].+$)"
-)
-
-_PROJECT_ROOT = Path(__file__).resolve().parents[3]
-
-
-def validate_alias(alias: str) -> bool:
-	return bool(ALIAS_PATTERN.match(alias))
+from .standard_channels import ALIAS_PATTERN, validate_alias, load_standard_channels  # noqa: F401
 
 
 class AliasPickerDialog(QDialog):
@@ -48,7 +31,7 @@ class AliasPickerDialog(QDialog):
 		self,
 		parent=None,
 		current_alias: str = "",
-		library_path: Path | None = None,
+		**_kwargs,
 	) -> None:
 		super().__init__(parent)
 		self.setWindowTitle("Select Channel Alias")
@@ -56,20 +39,13 @@ class AliasPickerDialog(QDialog):
 
 		self.selected_alias: str = ""
 		self._current_alias = current_alias
-		self._library_path = library_path or (_PROJECT_ROOT / "configs" / "alias_library.yaml")
-		self._aliases: List[Dict[str, str]] = []
+		self._channels: List[Dict[str, str]] = []
 
-		self._load_library()
+		self._load_channels()
 		self._init_ui()
 
-	def _load_library(self) -> None:
-		try:
-			import yaml  # type: ignore
-			text = self._library_path.read_text(encoding="utf-8")
-			data = yaml.safe_load(text) or {}
-			self._aliases = data.get("aliases", [])
-		except Exception:
-			self._aliases = []
+	def _load_channels(self) -> None:
+		self._channels = load_standard_channels()
 
 	def _init_ui(self) -> None:
 		layout = QVBoxLayout(self)
@@ -103,7 +79,7 @@ class AliasPickerDialog(QDialog):
 		vbox.addWidget(self._lib_search)
 
 		self._lib_table = QTableWidget(0, 2)
-		self._lib_table.setHorizontalHeaderLabels(["Alias", "Description"])
+		self._lib_table.setHorizontalHeaderLabels(["Alias", "Unit"])
 		self._lib_table.horizontalHeader().setStretchLastSection(True)
 		self._lib_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
 		self._lib_table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -114,8 +90,8 @@ class AliasPickerDialog(QDialog):
 		self._lib_table.itemSelectionChanged.connect(self._on_library_selection_changed)  # type: ignore
 		vbox.addWidget(self._lib_table)
 
-		self._populate_library_table(self._aliases)
-		self._tabs.addTab(tab, "Library")
+		self._populate_library_table(self._channels)
+		self._tabs.addTab(tab, "Standard Channels")
 
 	def _build_custom_tab(self) -> None:
 		tab = QWidget()
@@ -141,21 +117,21 @@ class AliasPickerDialog(QDialog):
 		self._lib_table.setRowCount(len(entries))
 		for row, entry in enumerate(entries):
 			alias_item = QTableWidgetItem(entry.get("alias", ""))
-			desc_item = QTableWidgetItem(entry.get("description", ""))
+			unit_item = QTableWidgetItem(entry.get("unit", ""))
 			alias_item.setFlags(alias_item.flags() & ~Qt.ItemIsEditable)
-			desc_item.setFlags(desc_item.flags() & ~Qt.ItemIsEditable)
+			unit_item.setFlags(unit_item.flags() & ~Qt.ItemIsEditable)
 			self._lib_table.setItem(row, 0, alias_item)
-			self._lib_table.setItem(row, 1, desc_item)
+			self._lib_table.setItem(row, 1, unit_item)
 
 	def _filter_library(self, text: str) -> None:
 		needle = text.strip().lower()
 		if not needle:
-			self._populate_library_table(self._aliases)
+			self._populate_library_table(self._channels)
 		else:
 			filtered = [
-				e for e in self._aliases
+				e for e in self._channels
 				if needle in e.get("alias", "").lower()
-				or needle in e.get("description", "").lower()
+				or needle in e.get("unit", "").lower()
 			]
 			self._populate_library_table(filtered)
 		self._update_ok_state()

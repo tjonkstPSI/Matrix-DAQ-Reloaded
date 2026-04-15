@@ -31,6 +31,7 @@ except Exception:
     raise
 
 from src.plugins.vaisala import REGISTER_MAP
+from .nidaq_alias_picker import AliasPickerDialog
 
 MODEL_UNIT_IDS = {
     "HMT330": 1,
@@ -161,8 +162,11 @@ class VaisalaConfigDialog(QDialog):
             self.tbl_ch.setItem(row, 3, unit_item)
 
             alias_item = QTableWidgetItem("")
+            alias_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
             self.tbl_ch.setItem(row, 4, alias_item)
 
+        self.tbl_ch.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.tbl_ch.cellDoubleClicked.connect(self._on_ch_double_click)  # type: ignore
         root.addWidget(self.tbl_ch)
 
         dlg_btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=self)
@@ -178,6 +182,19 @@ class VaisalaConfigDialog(QDialog):
         is_fixed = text == "Fixed"
         self._prs_fixed_widget.setVisible(is_fixed)
         self._prs_dyn_widget.setVisible(not is_fixed)
+
+    # ------------------------------------------------------------------
+    # Channel alias picker (double-click)
+    # ------------------------------------------------------------------
+
+    def _on_ch_double_click(self, row: int, col: int) -> None:
+        if col != 4:
+            return
+        current = (self.tbl_ch.item(row, 4).text().strip()
+                   if self.tbl_ch.item(row, 4) else "")
+        dlg = AliasPickerDialog(parent=self, current_alias=current)
+        if dlg.exec() == QDialog.Accepted and dlg.selected_alias:
+            self.tbl_ch.item(row, 4).setText(dlg.selected_alias)
 
     # ------------------------------------------------------------------
     # Channel alias scanner for dynamic pressure picker

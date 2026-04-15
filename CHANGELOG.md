@@ -6,6 +6,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased] - 03/09/2026
 
+### Standard alias picker across all plugins — 03/09/2026
+#### Added
+- `configs/standard_channels.json` — server-ready JSON file converted from `StandardChannels.csv` containing 243 standard channel aliases with units. Schema includes `version`, `source`, and `channels` array for future API migration.
+- `src/ui/widgets/standard_channels.py` — shared loader module with `load_standard_channels()`, `ALIAS_PATTERN`, and `validate_alias()` used by all plugin config dialogs.
+- CAN config dialog (`can_config.py`) alias picker: replaced `QListWidget` with `QTableWidget` (checkbox, Message, Signal, Unit, Alias columns). Double-click the Alias column to open the alias picker. Blank aliases on checked signals are blocked on save.
+- Vaisala config dialog (`vaisala_config.py`) alias picker: alias column is now read-only; double-click opens the same `AliasPickerDialog`. Consistent with NI DAQ behavior.
+
+#### Changed
+- `AliasPickerDialog` (`nidaq_alias_picker.py`) now loads from `standard_channels.json` via the shared loader instead of `alias_library.yaml`. Library tab renamed to "Standard Channels" and shows Alias + Unit columns. Search filters across both columns.
+- Alias validation regex (`ALIAS_PATTERN`) and `validate_alias()` moved to `standard_channels.py`; re-exported from `nidaq_alias_picker.py` for backward compatibility.
+
 ### Strip debug channels from telemetry — 03/09/2026
 #### Changed
 - Diagnostic channels with prefixes `CAN/`, `CCP/`, `Core/`, `EngineTest/`, `NI_DAQ/` are no longer published in the telemetry stream or recorded to Parquet. Plugins still compute them internally; a `_strip_debug_keys()` filter at the orchestrator publish boundary removes them. To re-enable, remove the prefix from the `_DEBUG_PREFIXES` tuple.

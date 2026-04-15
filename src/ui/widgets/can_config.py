@@ -19,11 +19,15 @@ try:
         QLabel,
         QDialogButtonBox,
         QMessageBox,
-        QListWidget,
-        QListWidgetItem,
+        QTableWidget,
+        QTableWidgetItem,
+        QHeaderView,
+        QAbstractItemView,
     )
 except Exception:
     raise
+
+from .nidaq_alias_picker import AliasPickerDialog
 
 
 class CANConfigDialog(QDialog):
@@ -71,10 +75,20 @@ class CANConfigDialog(QDialog):
         self.txt_filter.textChanged.connect(self._apply_signal_filter)  # type: ignore
         root.addWidget(self.txt_filter)
 
-        root.addWidget(QLabel("DBC signals (checkbox selection)"))
-        self.list_signals = QListWidget(self)
-        self.list_signals.setMinimumHeight(300)
-        root.addWidget(self.list_signals)
+        root.addWidget(QLabel("DBC signals (check to enable, double-click Alias to set)"))
+        self.tbl_signals = QTableWidget(0, 5, self)
+        self.tbl_signals.setHorizontalHeaderLabels(["", "Message", "Signal", "Unit", "Alias"])
+        self.tbl_signals.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.tbl_signals.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.tbl_signals.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        self.tbl_signals.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self.tbl_signals.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
+        self.tbl_signals.verticalHeader().setVisible(False)
+        self.tbl_signals.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.tbl_signals.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.tbl_signals.setMinimumHeight(300)
+        self.tbl_signals.cellDoubleClicked.connect(self._on_cell_double_click)  # type: ignore
+        root.addWidget(self.tbl_signals)
 
         btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=self)
         btns.accepted.connect(self._on_accept)  # type: ignore
@@ -101,12 +115,13 @@ class CANConfigDialog(QDialog):
         self.cmb_baudrate.setCurrentIndex(idx if idx >= 0 else 2)
         self.txt_dbc_path.setText(str(self._cfg.get("dbc_path", "")))
 
-        selected = [
-            (str(it.get("message", "")), str(it.get("signal", "")))
-            for it in (self._cfg.get("signals") or [])
-            if isinstance(it, dict) and it.get("signal")
-        ]
-        self._reload_signals_from_dbc(selected_keys=selected)
+        saved_map: Dict[tuple, str] = {}
+        for it in (self._cfg.get("signals") or []):
+            if not isinstance(it, dict) or not it.get("signal"):
+                continue
+            key = (str(it.get("message", "")), str(it.get("signal", "")))
+            saved_map[key] = str(it.get("alias", ""))
+        self._reload_signals_from_dbc(saved_map=saved_map)
 
     def _browse_dbc(self) -> None:
         start = self.txt_dbc_path.text().strip() or str(Path.cwd())
@@ -115,9 +130,10 @@ class CANConfigDialog(QDialog):
             self.txt_dbc_path.setText(path)
             self._reload_signals_from_dbc()
 
-    def _reload_signals_from_dbc(self, selected_keys: list | None = None) -> None:
-        selected = set(selected_keys or self._checked_signal_keys())
-        self.list_signals.clear()
+    def _reload_signals_from_dbc(self, saved_map: Dict[tuple, str] | None = None) -> None:
+        if saved_map is None:
+            saved_map = self._current_signal_map()
+        self.tbl_signals.setRowCount(0)
         self._dbc_signals = []
         dbc_path = Path(self.txt_dbc_path.text().strip())
         if not dbc_path.exists():
@@ -137,7 +153,6 @@ class CANConfigDialog(QDialog):
                             "message": str(msg.name),
                             "signal": str(sig.name),
                             "unit": str(sig.unit or ""),
-                            "alias": str(sig.name),
                         }
                     )
             self._dbc_signals = sorted(sigs, key=lambda x: (x["message"], x["signal"]))
@@ -145,52 +160,91 @@ class CANConfigDialog(QDialog):
             QMessageBox.warning(self, "DBC parse error", f"Failed to parse DBC: {e}")
             self._dbc_signals = []
 
-        for item_data in self._dbc_signals:
+        self.tbl_signals.setRowCount(len(self._dbc_signals))
+        for row, item_data in enumerate(self._dbc_signals):
             msg = item_data["message"]
             sig = item_data["signal"]
-            unit = item_data["unit"] or "-"
-            label = f"{msg}.{sig}  |  {unit}"
-            item = QListWidgetItem(label)
-            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-            item.setData(Qt.UserRole, dict(item_data))
-            item.setCheckState(Qt.Checked if (msg, sig) in selected else Qt.Unchecked)
-            self.list_signals.addItem(item)
+            unit = item_data["unit"] or ""
+            key = (msg, sig)
+            is_selected = key in saved_map
+            saved_alias = saved_map.get(key, "")
+
+            chk_item = QTableWidgetItem()
+            chk_item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
+            chk_item.setCheckState(Qt.Checked if is_selected else Qt.Unchecked)
+            self.tbl_signals.setItem(row, 0, chk_item)
+
+            msg_item = QTableWidgetItem(msg)
+            msg_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+            self.tbl_signals.setItem(row, 1, msg_item)
+
+            sig_item = QTableWidgetItem(sig)
+            sig_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+            self.tbl_signals.setItem(row, 2, sig_item)
+
+            unit_item = QTableWidgetItem(unit)
+            unit_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+            self.tbl_signals.setItem(row, 3, unit_item)
+
+            alias_item = QTableWidgetItem(saved_alias)
+            alias_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+            self.tbl_signals.setItem(row, 4, alias_item)
+
         self._apply_signal_filter()
+
+    def _current_signal_map(self) -> Dict[tuple, str]:
+        """Build a (message, signal) -> alias map from current table state."""
+        out: Dict[tuple, str] = {}
+        for r in range(self.tbl_signals.rowCount()):
+            chk = self.tbl_signals.item(r, 0)
+            if chk is None or chk.checkState() != Qt.Checked:
+                continue
+            msg = (self.tbl_signals.item(r, 1).text().strip()
+                   if self.tbl_signals.item(r, 1) else "")
+            sig = (self.tbl_signals.item(r, 2).text().strip()
+                   if self.tbl_signals.item(r, 2) else "")
+            alias = (self.tbl_signals.item(r, 4).text().strip()
+                     if self.tbl_signals.item(r, 4) else "")
+            if sig:
+                out[(msg, sig)] = alias
+        return out
 
     def _checked_signal_keys(self) -> list:
         out: list = []
-        for i in range(self.list_signals.count()):
-            it = self.list_signals.item(i)
-            if it is None or it.checkState() != Qt.Checked:
+        for r in range(self.tbl_signals.rowCount()):
+            chk = self.tbl_signals.item(r, 0)
+            if chk is None or chk.checkState() != Qt.Checked:
                 continue
-            data = it.data(Qt.UserRole) or {}
-            if not isinstance(data, dict):
-                continue
-            msg = str(data.get("message") or "").strip()
-            sig = str(data.get("signal") or "").strip()
+            msg = (self.tbl_signals.item(r, 1).text().strip()
+                   if self.tbl_signals.item(r, 1) else "")
+            sig = (self.tbl_signals.item(r, 2).text().strip()
+                   if self.tbl_signals.item(r, 2) else "")
             if sig:
                 out.append((msg, sig))
         return out
 
     def _checked_signals(self) -> List[Dict[str, Any]]:
         out: List[Dict[str, Any]] = []
-        for i in range(self.list_signals.count()):
-            it = self.list_signals.item(i)
-            if it is None or it.checkState() != Qt.Checked:
+        for r in range(self.tbl_signals.rowCount()):
+            chk = self.tbl_signals.item(r, 0)
+            if chk is None or chk.checkState() != Qt.Checked:
                 continue
-            data = it.data(Qt.UserRole) or {}
-            if not isinstance(data, dict):
-                continue
-            message = str(data.get("message") or "").strip()
-            signal = str(data.get("signal") or "").strip()
-            if not message or not signal:
+            msg = (self.tbl_signals.item(r, 1).text().strip()
+                   if self.tbl_signals.item(r, 1) else "")
+            sig = (self.tbl_signals.item(r, 2).text().strip()
+                   if self.tbl_signals.item(r, 2) else "")
+            unit = (self.tbl_signals.item(r, 3).text().strip()
+                    if self.tbl_signals.item(r, 3) else "")
+            alias = (self.tbl_signals.item(r, 4).text().strip()
+                     if self.tbl_signals.item(r, 4) else "")
+            if not msg or not sig:
                 continue
             out.append(
                 {
-                    "alias": str(data.get("alias") or signal),
-                    "message": message,
-                    "signal": signal,
-                    "unit": str(data.get("unit") or ""),
+                    "alias": alias,
+                    "message": msg,
+                    "signal": sig,
+                    "unit": unit,
                     "enabled": True,
                 }
             )
@@ -198,21 +252,28 @@ class CANConfigDialog(QDialog):
 
     def _apply_signal_filter(self) -> None:
         q = self.txt_filter.text().strip().lower()
-        for i in range(self.list_signals.count()):
-            it = self.list_signals.item(i)
-            if it is None:
-                continue
-            data = it.data(Qt.UserRole) or {}
-            key = ""
-            if isinstance(data, dict):
-                key = f"{str(data.get('message','')).lower()}.{str(data.get('signal','')).lower()}"
+        for r in range(self.tbl_signals.rowCount()):
+            msg = (self.tbl_signals.item(r, 1).text().lower()
+                   if self.tbl_signals.item(r, 1) else "")
+            sig = (self.tbl_signals.item(r, 2).text().lower()
+                   if self.tbl_signals.item(r, 2) else "")
+            key = f"{msg}.{sig}"
             if not q:
                 visible = True
             elif "*" in q:
                 visible = bool(fnmatch(key, q))
             else:
                 visible = key.startswith(q)
-            it.setHidden(not visible)
+            self.tbl_signals.setRowHidden(r, not visible)
+
+    def _on_cell_double_click(self, row: int, col: int) -> None:
+        if col != 4:
+            return
+        current = (self.tbl_signals.item(row, 4).text().strip()
+                   if self.tbl_signals.item(row, 4) else "")
+        dlg = AliasPickerDialog(parent=self, current_alias=current)
+        if dlg.exec() == QDialog.Accepted and dlg.selected_alias:
+            self.tbl_signals.setItem(row, 4, QTableWidgetItem(dlg.selected_alias))
 
     def _on_accept(self) -> None:
         channel = self.txt_channel.text().strip()
@@ -227,6 +288,16 @@ class CANConfigDialog(QDialog):
         signals = self._checked_signals()
         if not signals:
             QMessageBox.warning(self, "Missing signals", "Select at least one signal from DBC.")
+            return
+
+        blank = [s for s in signals if not s.get("alias")]
+        if blank:
+            names = [f"  {s['message']}.{s['signal']}" for s in blank[:10]]
+            QMessageBox.warning(
+                self, "Missing Aliases",
+                "The following checked signals have no alias assigned. "
+                "Double-click the Alias column to set one:\n\n" + "\n".join(names),
+            )
             return
 
         alias_counts: Dict[str, list] = {}
@@ -273,4 +344,3 @@ class CANConfigDialog(QDialog):
         except Exception:
             pass
         self.accept()
-
