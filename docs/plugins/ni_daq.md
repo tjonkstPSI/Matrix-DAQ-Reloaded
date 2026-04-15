@@ -10,7 +10,8 @@ Acquire NI cDAQ data (AI voltage, AI temp, DI, DO, AO) with robust real-mode DAQ
   - Real and sim modes
   - Structured channel sections (`ai_voltage`, `ai_temp`, `di`, `do`, `ao`)
   - Hardware inventory enumeration in real mode
-  - Fast AI oversample path (10x recording rate) with per-device task grouping
+  - Configurable oversample for voltage/current channels with IIR Butterworth decimation filter or legacy averaging
+  - Tick rate alignment: NI DAQ snapshot period inherits from core tick rate (`channel_manager.yaml` `recording_rate_hz`)
   - Background snapshot worker for non-blocking core reads
   - Optional threaded fast-AI reader mode (`acquisition.threaded_fast_ai`)
   - Health monitoring worker and optional health telemetry append
@@ -24,7 +25,7 @@ Acquire NI cDAQ data (AI voltage, AI temp, DI, DO, AO) with robust real-mode DAQ
   - Fast AI channels are grouped per physical device
   - A snapshot thread continuously calls `_read_real()` and updates latest values
 - `simulate_step()` returns cached snapshot in real mode.
-- Core tick/logging cadence is controlled by Channel Manager (`configs/channel_manager.yaml` `recording_rate_hz`); NI_DAQ worker timing remains plugin-local and non-blocking to the core loop.
+- **Tick rate alignment**: NI DAQ snapshot period inherits from core tick rate (`channel_manager.yaml` `recording_rate_hz`). The `recording_rate_hz` field in `ni_daq.yaml` is deprecated (`auto` inherits from core); if set to a numeric value that differs from the core rate, a warning is logged.
 - In sim mode, signals are generated locally:
   - AI voltage: oversampled synthetic waveform + scaling
   - AI temp: synthetic engineering values
@@ -36,7 +37,7 @@ File: `configs/ni_daq.yaml`
 
 ```yaml
 mode: real
-recording_rate_hz: 10
+recording_rate_hz: auto  # inherits from channel_manager.yaml; numeric value overrides with warning
 channels:
   ai_voltage:
     - phys: Dev1/ai0
@@ -58,8 +59,13 @@ channels:
   do: []
   ao: []
 acquisition:
+  oversample:
+    factor: 10              # hardware samples at R * factor for applicable channels
+    applies_to: voltage      # "voltage" (default) | "all"
+    filter: butterworth      # "butterworth" (default) | "average" | "none"
+    butterworth_order: 4     # filter order (default 4, power users only)
   read_timeout_margin_s: 0.15
-  threaded_fast_ai: false
+  threaded_fast_ai: true
 health:
   poll_hz: 2
   read_fail_warn_threshold: 10
@@ -68,6 +74,26 @@ health:
 watchdog:
   enabled: false
 ```
+
+### Oversample and Decimation Filter
+
+Voltage (and optionally current) channels are oversampled at `R * factor` where `R` is the core tick rate and `factor` is the configurable oversample factor (default 10). Temperature, DI, DO, and AO channels are read at `R` directly (temperature modules have hardware anti-aliasing built in).
+
+| Filter Mode | Behavior | Default |
+|-------------|----------|---------|
+| `butterworth` | 4th-order IIR Butterworth low-pass (cutoff = R/2) applied per-sample in the fast reader thread; final filtered+scaled value written to shared dict under brief lock. Eliminates deques for voltage channels. | **Yes** |
+| `average` | Legacy deque-based averaging of the last `factor` raw samples, computed at read time. | No |
+| `none` | Raw samples buffered in deques; no anti-aliasing. | No |
+
+The `IIRFilter` class in `_nidaq_scaling.py` uses SOS (second-order sections) via `scipy.signal.butter` for numerical stability. Coefficients are computed once at task creation; per-sample cost is ~8 multiply-adds per filter order. Falls back to passthrough if scipy is unavailable.
+
+**Data pipeline (butterworth mode):**
+1. `task.read()` -> Python lists (no lock)
+2. `IIRFilter.process_batch()` + `apply_scaling()` per channel (thread-local, no lock)
+3. Brief lock: `shared_values[alias] = scaled`
+4. Snapshot worker copies `shared_values` -> `_snapshot_values`
+
+This reduces the data copy chain from 6 stages to 4 and drops lock hold time from O(aliases * deque_size) to O(1) per alias.
 
 ### Scaling System
 
@@ -129,5 +155,8 @@ Alias validation is also enforced on config save; invalid aliases on enabled cha
 - Per-device fast AI tasks isolate failures to one device path.
 - Adaptive timeout and buffer sizing are used in real read path to reduce backlog/timeout issues.
 - Snapshot model prevents DAQ read timing from stalling core tick cadence (sample-and-hold at publish/record tick).
+- ZMQ PUB/SUB high-water marks are bounded (HWM=10) to limit memory use on laggy subscribers.
+- Temperature unit map is cached at `start()` to avoid per-tick dict construction.
+- Table scaling points are pre-sorted at config load for O(n) interpolation without runtime sort overhead.
 
 

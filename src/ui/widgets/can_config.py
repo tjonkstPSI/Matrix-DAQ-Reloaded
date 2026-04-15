@@ -101,8 +101,12 @@ class CANConfigDialog(QDialog):
         self.cmb_baudrate.setCurrentIndex(idx if idx >= 0 else 2)
         self.txt_dbc_path.setText(str(self._cfg.get("dbc_path", "")))
 
-        selected = [str(it.get("signal")) for it in (self._cfg.get("signals") or []) if isinstance(it, dict) and it.get("signal")]
-        self._reload_signals_from_dbc(selected_names=selected)
+        selected = [
+            (str(it.get("message", "")), str(it.get("signal", "")))
+            for it in (self._cfg.get("signals") or [])
+            if isinstance(it, dict) and it.get("signal")
+        ]
+        self._reload_signals_from_dbc(selected_keys=selected)
 
     def _browse_dbc(self) -> None:
         start = self.txt_dbc_path.text().strip() or str(Path.cwd())
@@ -111,8 +115,8 @@ class CANConfigDialog(QDialog):
             self.txt_dbc_path.setText(path)
             self._reload_signals_from_dbc()
 
-    def _reload_signals_from_dbc(self, selected_names: List[str] | None = None) -> None:
-        selected = set(selected_names or self._checked_signal_names())
+    def _reload_signals_from_dbc(self, selected_keys: list | None = None) -> None:
+        selected = set(selected_keys or self._checked_signal_keys())
         self.list_signals.clear()
         self._dbc_signals = []
         dbc_path = Path(self.txt_dbc_path.text().strip())
@@ -149,20 +153,23 @@ class CANConfigDialog(QDialog):
             item = QListWidgetItem(label)
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
             item.setData(Qt.UserRole, dict(item_data))
-            item.setCheckState(Qt.Checked if sig in selected else Qt.Unchecked)
+            item.setCheckState(Qt.Checked if (msg, sig) in selected else Qt.Unchecked)
             self.list_signals.addItem(item)
         self._apply_signal_filter()
 
-    def _checked_signal_names(self) -> List[str]:
-        out: List[str] = []
+    def _checked_signal_keys(self) -> list:
+        out: list = []
         for i in range(self.list_signals.count()):
             it = self.list_signals.item(i)
             if it is None or it.checkState() != Qt.Checked:
                 continue
             data = it.data(Qt.UserRole) or {}
-            sig = str(data.get("signal") or "").strip() if isinstance(data, dict) else ""
+            if not isinstance(data, dict):
+                continue
+            msg = str(data.get("message") or "").strip()
+            sig = str(data.get("signal") or "").strip()
             if sig:
-                out.append(sig)
+                out.append((msg, sig))
         return out
 
     def _checked_signals(self) -> List[Dict[str, Any]]:
@@ -220,6 +227,20 @@ class CANConfigDialog(QDialog):
         signals = self._checked_signals()
         if not signals:
             QMessageBox.warning(self, "Missing signals", "Select at least one signal from DBC.")
+            return
+
+        alias_counts: Dict[str, list] = {}
+        for s in signals:
+            a = s.get("alias", "")
+            alias_counts.setdefault(a, []).append(s.get("message", ""))
+        dupes = {a: msgs for a, msgs in alias_counts.items() if len(msgs) > 1}
+        if dupes:
+            lines = [f"  {a}  (messages: {', '.join(msgs)})" for a, msgs in dupes.items()]
+            QMessageBox.warning(
+                self, "Duplicate Aliases",
+                "The following aliases are used by multiple checked signals. "
+                "Deselect one of each pair to continue:\n\n" + "\n".join(lines),
+            )
             return
 
         doc: Dict[str, Any] = dict(self._cfg)

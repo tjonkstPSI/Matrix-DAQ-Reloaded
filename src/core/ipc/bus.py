@@ -39,8 +39,8 @@ class IPCBus:
             return
         self._ctx = zmq.Context.instance()
         self._pub = self._ctx.socket(zmq.PUB)
+        self._pub.setsockopt(zmq.SNDHWM, 10)
         self._pub.bind(TELEMETRY_PUB_ENDPOINT)
-        # Control path: Core binds PULL to receive UI control commands
         self._pull = self._ctx.socket(zmq.PULL)
         self._pull.bind(CONTROL_PULL_ENDPOINT)
         self.started = True
@@ -83,8 +83,8 @@ def create_ui_subscriber() -> SubSockets | None:
         return None
     ctx = zmq.Context.instance()
     sub = ctx.socket(zmq.SUB)
+    sub.setsockopt(zmq.RCVHWM, 10)
     sub.connect(TELEMETRY_PUB_ENDPOINT)
-    # Subscribe to both telemetry and status topics
     sub.setsockopt(zmq.SUBSCRIBE, b"telemetry")
     sub.setsockopt(zmq.SUBSCRIBE, b"status")
     return SubSockets(context=ctx, telemetry_sub=sub, status_sub=sub)

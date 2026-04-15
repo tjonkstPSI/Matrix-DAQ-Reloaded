@@ -23,11 +23,11 @@ code_layout:
         - path: "src/plugins/_nidaq_simulation.py"
           role: "Simulation timestep for configured channels; applies scaling/temp unit conversion"
         - path: "src/plugins/_nidaq_tasks.py"
-          role: "DAQmx task construction, buffering, per-device fast-AI task management"
+          role: "DAQmx task construction, per-device fast-AI task management; butterworth-mode fast reader (IIR filter + scaling per sample, no deques) and legacy deque-mode reader"
         - path: "src/plugins/_nidaq_acquisition.py"
-          role: "Acquisition worker, snapshot buffer, real-mode read/drain path; applies scaling/temp unit conversion"
+          role: "Acquisition worker, snapshot buffer, real-mode read/drain path; butterworth path copies pre-computed values from fast reader; cached temp_unit_map; applies scaling/temp unit conversion"
         - path: "src/plugins/_nidaq_scaling.py"
-          role: "Shared scaling helpers: apply_scaling (none/linear/table), convert_temp_unit, scaling_summary"
+          role: "Shared scaling helpers: apply_scaling (none/linear/table), convert_temp_unit, scaling_summary, IIRFilter (stateful Butterworth low-pass via scipy SOS), presort_scaling_points"
     ccp:
       primary: "src/plugins/ccp.py"
       helpers:
@@ -84,12 +84,12 @@ hardware:
 
 plugins:
   - id: "NI_DAQ"
-    description: "NI cDAQ acquisition (modular: ni_daq.py + _nidaq_discovery, _nidaq_simulation, _nidaq_tasks, _nidaq_acquisition, _nidaq_scaling): discovery helper generates structured YAML (categorized by module family); sim emits configured channels; real path supports AI voltage (10×R oversample+average), AI temperature at R, DI on-demand; per-device fast AI tasks with adaptive timeouts and warm-up. Channel scaling applied at plugin level (none/linear/table for voltage; C/F/K unit conversion for temp) via shared _nidaq_scaling helpers; table scaling supports optional extrapolation beyond table range. Constrained alias system enforces naming convention regex; aliases selected via AliasPickerDialog (library + custom entry with live validation). Config dialog double-click opens ScalingEditorDialog (voltage) or TempUnitPickerDialog (temp) with live telemetry preview and scale library import. Disabled channels display blank alias/unit on load. Runtime publishes latest-value snapshots decoupled from core tick."
+    description: "NI cDAQ acquisition (modular: ni_daq.py + _nidaq_discovery, _nidaq_simulation, _nidaq_tasks, _nidaq_acquisition, _nidaq_scaling): discovery helper generates structured YAML (categorized by module family); sim emits configured channels; real path supports AI voltage with configurable oversample (default 10×R) and IIR Butterworth decimation filter (cutoff=R/2, 4th-order SOS) or legacy averaging; AI temperature at R; DI on-demand; per-device fast AI tasks with adaptive timeouts and warm-up. Tick rate aligned to core tick from channel_manager.yaml recording_rate_hz (ni_daq.yaml recording_rate_hz deprecated to 'auto'). Butterworth mode eliminates deques: fast reader thread applies filter+scaling per sample, writes pre-computed values to shared dict under brief lock; snapshot worker copies dict only. Channel scaling applied at plugin level (none/linear/table for voltage; C/F/K unit conversion for temp) via shared _nidaq_scaling helpers; table scaling supports optional extrapolation beyond table range; points pre-sorted at config load. Constrained alias system enforces naming convention regex; aliases selected via AliasPickerDialog (library + custom entry with live validation). Config dialog double-click opens ScalingEditorDialog (voltage) or TempUnitPickerDialog (temp) with live telemetry preview and scale library import. Disabled channels display blank alias/unit on load. Runtime publishes latest-value snapshots decoupled from core tick. ZMQ PUB/SUB HWM bounded to 10."
     engineering_notes:
       - "Fast-AI robustness: increase device input buffer and adaptively drain based on backlog to avoid -200279 on network cDAQ + NI‑9239"
       - "Future option: move fast‑AI reads to a lightweight acquisition thread per device; continuously drain task buffer into a per-device queue; Core tick consumes latest samples and decimates to n (most recent 10×R) for publication"
   - id: "CAN"
-    description: "Import DBC/XML, discover/select CAN signals with aliases; configure buses and acquire via NI-XNET. Includes CAN configure dialog (DBC import + checkbox signal selection), real-mode DBC decode, J1939 PGN-aware fallback matching, and runtime diagnostics channels (frames_rx/decode_hits/last_decode_age_s)."
+    description: "Import DBC/XML, discover/select CAN signals with aliases; configure buses and acquire via NI-XNET. Includes CAN configure dialog (DBC import + checkbox signal selection), real-mode DBC decode, J1939 PGN-aware fallback matching, and runtime diagnostics channels (frames_rx/decode_hits/last_decode_age_s). Duplicate-alias validation only checks enabled signals; config dialog blocks save with a descriptive warning when checked signals produce duplicate aliases."
   - id: "CCP"
     description: "CCP over CAN (read-only; modular: ccp.py + _ccp_a2l, _ccp_protocol): import A2L, configure bus/session, algorithmic access-key unlock, select measurements (use A2L names) with optional global naming prefix. Supports multi-device placeholder configuration for up to two ECMs using devices[*] with Primary/Secondary role mapping to station_address 0x0/0x1. Runtime is decoupled from core tick via latest-value snapshot buffering and exposes freshness telemetry. SHORT_UP poll timeout honors configured io_timeout_s (no hard cap); occasional poll fails under bus contention are normal and handled by sample-and-hold."
   - id: "Calculated_Channels"
@@ -103,7 +103,7 @@ plugins:
   - id: "Statistics"
     description: "Secondary logger of stats (mean, stdev, min, max) with rolling/fixed windows and optional triggers. Runtime processing is decoupled from core tick through queued updates and background processing. Config UI (right-click configure) covers window settings, metrics selection, auto-trigger, and per-channel overrides."
   - id: "Vaisala"
-    description: "Vaisala environmental sensors (simulation now; Modbus TCP later). Sim emits Ambient Temp, RH, and Pressure with optional calibration offsets; config includes IP and model placeholders. Config UI (right-click configure) covers connection settings, model/map selection, polling rate, and calibration offsets."
+    description: "Vaisala humidity transmitter (HMT330 / Indigo510) via Modbus TCP. Reads float32 holding registers for 13 measurement channels (RH, T, Td, Td/f, a, x, Tw, H2Ov, pw, pws, H, dT, H2Ow) with a hardcoded REGISTER_MAP. Writes pressure compensation (fixed hPa or dynamic from any telemetry channel with gain/offset) to temporary register 771-772 and filtering flags (None/Std/Ext) to registers 1281/1282 every poll cycle. Orchestrator feeds merged telemetry via update_telemetry(vals) for dynamic pressure. Threaded poll loop with configurable rate and auto-reconnect. Sim mode provides sine-wave values per channel. Config UI has model dropdown (auto-sets unit_id: HMT330=1, Indigo510=241), checkbox-based channel selection with user-editable aliases (blank by default), pressure/filtering groups, connection settings, and calibration offsets."
   - id: "EngineTest"
     description: "Collects run metadata (lock-test fields); implemented in src/plugins/engine_test.py (no longer an orchestrator stub)."
   - id: "Channel_Manager"
@@ -138,7 +138,7 @@ workflows:
 inputs:
   - id: "IN-CDAQ"
     type: "cDAQ channels"
-    schema: "Module/channel, constrained alias, scaling (none/linear/table for voltage; C/F/K for temp), range, rate; fast channels (analog voltage + digital) oversample at 10×R"
+    schema: "Module/channel, constrained alias, scaling (none/linear/table for voltage; C/F/K for temp), range, rate; voltage channels oversample at configurable factor×R with Butterworth decimation filter (default) or averaging"
   - id: "IN-CAN"
     type: "CAN/CCP"
     schema: "DBC/XML, A2L + access-key unlock inputs provided by operator"
@@ -149,7 +149,7 @@ inputs:
 outputs:
   - id: "OUT-DATA"
     type: "Parquet time-series + YAML metadata"
-    schema: "Recording grid at R; plugin values sampled from each plugin's latest snapshot at tick time (sample-and-hold); includes Time_Relative_s (s), core tick diagnostics, and aggregate alarm channels iOT_Warning/iOT_Alarm; statistics outputs separate"
+    schema: "Recording grid at R; plugin values sampled from each plugin's latest snapshot at tick time (sample-and-hold); includes Time_Relative_s (s) and aggregate alarm channels iOT_Warning/iOT_Alarm; statistics outputs separate. Debug channels (CAN/, CCP/, Core/, EngineTest/, NI_DAQ/ prefixes) are stripped at publish boundary via _strip_debug_keys() and excluded from telemetry and Parquet recording."
   - id: "OUT-EXCEL"
     type: "Excel export"
     schema: "Per-Parquet workbook(s) with sheets: Metadata (includes units matrix), Data (autosize, 2-decimal display), AlarmEvents, StatsSnapshots; split a single file into .1, .2 if exceeding Excel row limit"
@@ -230,8 +230,8 @@ timing:
   recording_rate_R_hz_max: 100
   plotting_update_rates_hz: [1, 5, 10]
   fast_channels:
-    definition: "Analog voltage + digital inputs"
-    acquisition: "Hardware sample at 10×R; anti-aliased; decimate to R for storage"
+    definition: "Analog voltage (and optionally current)"
+    acquisition: "Hardware sample at configurable factor×R (default 10×); anti-aliased via 4th-order IIR Butterworth (default) or averaging; decimate to R for storage"
   other_sources:
     definition: "TC/RTD/CAN/CCP/Modbus"
     acquisition: "Plugin-local acquisition loops; core samples latest available value at R grid (decoupled)"
@@ -280,7 +280,7 @@ config:
     run_mode: "demo | continuous"
     tick_interval_s: "publish interval (e.g., 0.1 for 10 Hz). Drives telemetry/record row cadence; recommended align to 1/R"
     plugin_enablement:
-      description: "Each plugin YAML may include an 'enabled' boolean at the root. Orchestrator loads all configs but only configures/starts plugins where enabled=true. Disabled plugins are skipped for alias aggregation and runtime steps."
+      description: "Two-gate enablement: orchestrator loads selected_plugins from configs/plugins.yaml (written by launch dialog) and each plugin's own config enabled field. A plugin runs only if it appears in selected_plugins AND its config does not have enabled: false. Channel_Manager and EngineTest are always-on. Falls back to all-enabled if plugins.yaml is missing. Disabled plugins are skipped for configure/start, alias aggregation, and runtime steps. Runtime changes are fully supported: ConsoleWindow sends sync_plugin_selections on connect; orchestrator _sync_all_plugin_selections() re-reads plugins.yaml, diffs all plugins, starts newly-enabled and stops newly-disabled. Per-plugin _reload_plugin also re-reads via _refresh_plugin_selection(). Both tick loops re-resolve plugin references each iteration so changes take effect on the next tick."
 
 logging:
   level_default: "info"
@@ -432,7 +432,7 @@ ui:
     payloads: ["JSON", "MessagePack"]
   displays:
     templates:
-      - "AllChannelsTable (grouped by type)"
+      - "AllChannelsTable (grouped by type) — auto-categorized via alias prefix into side-by-side panels with FlowLayout reflow"
       - "PlotsBlank (user selects channels)"
       - "DialsGauges (configurable)"
     update_rates_hz: [1, 5, 10, 20]

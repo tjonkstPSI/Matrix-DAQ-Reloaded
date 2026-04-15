@@ -27,6 +27,7 @@ from ._nidaq_acquisition import (
     start_snapshot_worker,
     stop_snapshot_worker,
 )
+from ._nidaq_scaling import presort_scaling_points
 
 
 class NiDAQPlugin(BasePlugin):
@@ -44,6 +45,11 @@ class NiDAQPlugin(BasePlugin):
         self._do_states: Dict[str, int] = {}
         self._ao_states: Dict[str, float] = {}
         self._oversample_factor: int = 10
+        self._oversample_applies_to: str = "voltage"
+        self._filter_type: str = "butterworth"
+        self._butterworth_order: int = 4
+        self._core_tick_rate_hz: float = 0.0
+        self._temp_unit_map: Dict[str, str] = {}
         self._sim_rate_hz: float = 10.0
         self._task_ai_fast = None
         self._task_ai_temp = None
@@ -98,24 +104,53 @@ class NiDAQPlugin(BasePlugin):
         if self.mode == "real" and self._nidaq_available():
             self._inventory = self._enumerate_system()
         self._parse_channels()
-        try:
-            self._sim_rate_hz = float(self.config.get("recording_rate_hz", 10.0))
-        except Exception:
-            self._sim_rate_hz = 10.0
+
+        # --- Tick rate alignment ---
+        # Prefer authoritative core tick rate set by orchestrator; fall back to local config.
+        core_rate = self._core_tick_rate_hz
+        local_rate_raw = self.config.get("recording_rate_hz", 10.0)
+        if core_rate > 0:
+            self._sim_rate_hz = core_rate
+            if str(local_rate_raw).lower() != "auto" and local_rate_raw != core_rate:
+                try:
+                    print(f"[NIDAQ] recording_rate_hz={local_rate_raw} overridden by core tick rate {core_rate} Hz")
+                except Exception:
+                    pass
+        else:
+            try:
+                self._sim_rate_hz = float(local_rate_raw) if str(local_rate_raw).lower() != "auto" else 10.0
+            except Exception:
+                self._sim_rate_hz = 10.0
         try:
             self._snapshot_period_s = max(0.01, 1.0 / max(1.0, float(self._sim_rate_hz)))
         except Exception:
             self._snapshot_period_s = 0.05
+
+        # --- Acquisition / oversample config ---
         try:
             acq = (self.config.get("acquisition") or {})
             self._read_timeout_margin_s = float(acq.get("read_timeout_margin_s", self._read_timeout_margin_s))
             self._threaded_fast_ai = bool(acq.get("threaded_fast_ai", False))
+            ovs = acq.get("oversample") or {}
+            self._oversample_factor = int(ovs.get("factor", self._oversample_factor))
+            self._oversample_applies_to = str(ovs.get("applies_to", self._oversample_applies_to))
+            self._filter_type = str(ovs.get("filter", self._filter_type)).lower()
+            self._butterworth_order = int(ovs.get("butterworth_order", self._butterworth_order))
             try:
-                print(f"[NIDAQ] configure: threaded_fast_ai={self._threaded_fast_ai}")
+                print(f"[NIDAQ] configure: threaded_fast_ai={self._threaded_fast_ai} "
+                      f"oversample={self._oversample_factor}x applies_to={self._oversample_applies_to} "
+                      f"filter={self._filter_type} tick_rate={self._sim_rate_hz}Hz")
             except Exception:
                 pass
         except Exception:
             pass
+
+        # --- Pre-sort table scaling points for voltage channels ---
+        for ch in self._ai_voltage:
+            sc = ch.get("scaling")
+            if sc and isinstance(sc, dict):
+                ch["scaling"] = presort_scaling_points(sc)
+
         try:
             hcfg = (self.config.get("health") or {})
             self._health_poll_hz = float(hcfg.get("poll_hz", self._health_poll_hz))
@@ -222,6 +257,11 @@ class NiDAQPlugin(BasePlugin):
         self._ao_states = {
             str(ch.get("alias")): float(ch.get("initial", 0.0))
             for ch in self._ao
+            if ch.get("alias") and bool(ch.get("enabled", True))
+        }
+        self._temp_unit_map = {
+            str(ch.get("alias")): str(ch.get("unit", "C"))
+            for ch in self._ai_temp
             if ch.get("alias") and bool(ch.get("enabled", True))
         }
         if self.mode == "real" and self._nidaq_available():

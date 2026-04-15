@@ -1,8 +1,5 @@
 mode: real
-recording_rate_hz: 1.0
-decimation:
-  filter: IIR_Butterworth
-  cutoff_hz: auto
+recording_rate_hz: 5.0
 channels:
   ai_voltage:
   - phys: AGENTMod1/ai0
@@ -676,6 +673,11 @@ channels:
       min: 0.0
       max: 10.0
 acquisition:
+  oversample:
+    factor: 10
+    applies_to: voltage
+    filter: butterworth
+    butterworth_order: 4
   threaded_fast_ai: true
   read_timeout_margin_s: 1.0
 health:

@@ -7,6 +7,8 @@ import threading
 from collections import defaultdict, deque
 from typing import Dict, Any, List, TYPE_CHECKING
 
+from ._nidaq_scaling import IIRFilter, apply_scaling
+
 if TYPE_CHECKING:
     from .ni_daq import NiDAQPlugin
 
@@ -18,7 +20,7 @@ def create_tasks_real(p: NiDAQPlugin) -> None:
     p._ai_fast_aliases = []
     p._ai_temp_aliases = []
     p._di_aliases = []
-    rec_rate = float(p.config.get("recording_rate_hz", 10.0))
+    rec_rate = float(p._sim_rate_hz) if p._sim_rate_hz > 0 else 10.0
     fast_rate = max(1.0, rec_rate * float(p._oversample_factor))
 
     _create_fast_ai_tasks(p, Task, AcquisitionType, fast_rate)
@@ -484,149 +486,294 @@ def write_ao_hardware(
 
 
 def start_fast_reader_threads(p: NiDAQPlugin) -> None:
-    """Start per-device reader threads that continuously drain DAQmx into deques."""
+    """Start per-device reader threads that continuously drain DAQmx.
+
+    In butterworth mode, each thread applies an IIR low-pass filter per
+    channel, then scaling, and writes the final float to a shared dict
+    under a brief lock (no deques needed).
+
+    In average/none mode, the legacy deque path is used.
+    """
     try:
+        filter_type = getattr(p, "_filter_type", "average")
         try:
-            print(f"[NIDAQ] starting fast reader threads for {len(p._fast_tasks)} device(s)")
+            print(f"[NIDAQ] starting fast reader threads for {len(p._fast_tasks)} device(s) filter={filter_type}")
         except Exception:
             pass
         p._fast_reader_threads = []
         n = max(1, p._oversample_factor)
+        core_rate = float(p._sim_rate_hz) if p._sim_rate_hz > 0 else 10.0
+        bw_order = getattr(p, "_butterworth_order", 4)
+
         for group in p._fast_tasks or []:
             task = group.get("task")
             device = str(group.get("device", ""))
             aliases = list(group.get("aliases", []) or [])
+            alias_to_cfg = group.get("alias_to_cfg", {})
             try:
                 print(f"[NIDAQ] fast reader pre-spawn: device={device} aliases={len(aliases)} task_none={task is None}")
             except Exception:
                 pass
             if task is None or not aliases:
                 continue
-            state = {
-                "device": device,
-                "task": task,
-                "stop": threading.Event(),
-                "lock": threading.Lock(),
-                "buffers": {alias: deque(maxlen=int(5*n)) for alias in aliases},
-            }
-            try:
-                print(f"[NIDAQ] spawn buffers: device={device} keys={list(state['buffers'].keys())} id={id(state['buffers'])}")
-            except Exception:
-                pass
 
-            def _loop(dev: str, tsk: Any, st: Any, lk: Any, bufs: Any) -> None:  # type: ignore
-                margin = float(p._read_timeout_margin_s)
-                fast_rate = max(1.0, float(p._fast_rate) or 1.0)
-                timeout_fast = max((n / fast_rate) + margin, 2.5 / max(1.0, float(p.config.get("recording_rate_hz", 10.0))))
-                last_ts = time.time()
+            if filter_type == "butterworth":
+                sample_hz = max(1.0, float(p._fast_rate))
+                cutoff_hz = core_rate / 2.0
+                filters: Dict[str, IIRFilter] = {}
+                for alias in aliases:
+                    filters[alias] = IIRFilter(bw_order, cutoff_hz, sample_hz)
+                filtered_values: Dict[str, float] = {}
+                state: Dict[str, Any] = {
+                    "device": device,
+                    "task": task,
+                    "stop": threading.Event(),
+                    "lock": threading.Lock(),
+                    "filter_type": "butterworth",
+                    "filters": filters,
+                    "filtered_values": filtered_values,
+                    "alias_to_cfg": alias_to_cfg,
+                }
                 try:
-                    print(f"[NIDAQ] Fast reader thread started: device={dev} timeout={timeout_fast:.3f}")
+                    print(f"[NIDAQ] butterworth init: device={device} cutoff={cutoff_hz:.1f}Hz sample={sample_hz:.0f}Hz order={bw_order}")
                 except Exception:
                     pass
-                while not st.is_set():
-                    try:
-                        avail = 0
-                        try:
-                            avail = int(getattr(tsk.in_stream, "avail_samp_per_chan", 0))
-                        except Exception:
-                            avail = 0
-                        now = time.time()
-                        produced = int(max(0.0, (now - last_ts)) * fast_rate + 0.5)
-                        read_count = max(n, produced, avail)
-                        read_count = min(read_count, int(100 * n))
-                        if read_count <= 0:
-                            st.wait(0.005)
-                            continue
-                        t0r = time.time()
-                        samples = tsk.read(number_of_samples_per_channel=int(read_count), timeout=timeout_fast)
-                        dt_ms = (time.time() - t0r) * 1000.0
-                        last_ts = now
-                        if isinstance(samples, list) and samples and isinstance(samples[0], list):
-                            lk.acquire()
-                            try:
-                                for idx, alias in enumerate(list(bufs.keys())):
-                                    ch_samples = samples[idx] if idx < len(samples) else []
-                                    for v in ch_samples:
-                                        bufs[alias].append(float(v))
-                            finally:
-                                lk.release()
-                            try:
-                                p._health["last_good_read_ts"] = now
-                                p._health["consec_failures"] = 0
-                                p._health["last_error"] = ""
-                            except Exception:
-                                pass
-                            try:
-                                c = int(p._fast_diag_counts.get(dev, 0))
-                                if c < 5:
-                                    print(f"[NIDAQ] Fast reader read: device={dev} dt_ms={dt_ms:.1f} read_count={int(read_count)} avail={avail}")
-                                    p._fast_diag_counts[dev] = c + 1
-                            except Exception:
-                                pass
-                        else:
-                            lk.acquire()
-                            try:
-                                alias = list(bufs.keys())[0] if bufs else None
-                                if alias is not None:
-                                    for v in (samples or []):
-                                        bufs[alias].append(float(v))
-                            finally:
-                                lk.release()
-                            try:
-                                p._health["last_good_read_ts"] = now
-                                p._health["consec_failures"] = 0
-                                p._health["last_error"] = ""
-                            except Exception:
-                                pass
-                            try:
-                                c = int(p._fast_diag_counts.get(dev, 0))
-                                if c < 5:
-                                    ln = len(samples) if isinstance(samples, list) else 0
-                                    print(f"[NIDAQ] Fast reader read: device={dev} dt_ms={dt_ms:.1f} read_count={int(read_count)} avail={avail} shape=list[{ln}]")
-                                    p._fast_diag_counts[dev] = c + 1
-                            except Exception:
-                                pass
-                    except Exception as e:
-                        try:
-                            p._health["consec_failures"] = int(p._health.get("consec_failures", 0)) + 1
-                            p._health["last_error"] = "read_error"
-                        except Exception:
-                            pass
-                        try:
-                            c = int(p._fast_err_counts.get(dev, 0))
-                            if c < 5:
-                                err_code = getattr(e, "error_code", None)
-                                try:
-                                    avail_now = int(getattr(tsk.in_stream, "avail_samp_per_chan", 0))
-                                except Exception:
-                                    avail_now = -1
-                                print(f"[NIDAQ] Fast reader error: device={dev} code={err_code} avail_now={avail_now} msg={e}")
-                                p._fast_err_counts[dev] = c + 1
-                        except Exception:
-                            pass
-                        st.wait(0.01)
+                _spawn_butterworth_reader(p, state, n, aliases)
+            else:
+                state = {
+                    "device": device,
+                    "task": task,
+                    "stop": threading.Event(),
+                    "lock": threading.Lock(),
+                    "filter_type": filter_type,
+                    "buffers": {alias: deque(maxlen=int(5 * n)) for alias in aliases},
+                }
+                try:
+                    print(f"[NIDAQ] deque init: device={device} keys={list(state['buffers'].keys())}")
+                except Exception:
+                    pass
+                _spawn_deque_reader(p, state, n)
 
-            try:
-                t = threading.Thread(target=_loop, args=(device, task, state["stop"], state["lock"], state["buffers"]), daemon=True)
-                t.start()
-                state["thread"] = t
-                try:
-                    print(f"[NIDAQ] Fast reader thread spawned: device={device}")
-                except Exception:
-                    pass
-                p._fast_reader_threads.append(state)
-            except Exception as e:
-                try:
-                    import traceback as _tb
-                    print(f"[NIDAQ] fast reader spawn failed: device={device} err={e}\n{_tb.format_exc()}")
-                except Exception:
-                    pass
     except Exception as e:
         try:
             print(f"[NIDAQ] starting fast reader threads failed: {e}")
         except Exception:
             pass
         p._fast_reader_threads = []
+
+
+def _spawn_butterworth_reader(p: NiDAQPlugin, state: Dict[str, Any], n: int, aliases: List[str]) -> None:
+    """Spawn a fast reader thread that applies Butterworth filter + scaling per sample."""
+    device = state["device"]
+    tsk = state["task"]
+    stop_ev = state["stop"]
+    lk = state["lock"]
+    filters = state["filters"]
+    filt_vals = state["filtered_values"]
+    alias_to_cfg = state["alias_to_cfg"]
+
+    def _loop() -> None:
+        margin = float(p._read_timeout_margin_s)
+        fast_rate = max(1.0, float(p._fast_rate) or 1.0)
+        rec_rate = float(p._sim_rate_hz) if p._sim_rate_hz > 0 else 10.0
+        timeout_fast = max((n / fast_rate) + margin, 2.5 / max(1.0, rec_rate))
+        last_ts = time.time()
+        try:
+            print(f"[NIDAQ] BW reader started: device={device} timeout={timeout_fast:.3f}")
+        except Exception:
+            pass
+        while not stop_ev.is_set():
+            try:
+                avail = 0
+                try:
+                    avail = int(getattr(tsk.in_stream, "avail_samp_per_chan", 0))
+                except Exception:
+                    avail = 0
+                now = time.time()
+                produced = int(max(0.0, (now - last_ts)) * fast_rate + 0.5)
+                read_count = max(n, produced, avail)
+                read_count = min(read_count, int(100 * n))
+                if read_count <= 0:
+                    stop_ev.wait(0.005)
+                    continue
+                t0r = time.time()
+                samples = tsk.read(number_of_samples_per_channel=int(read_count), timeout=timeout_fast)
+                dt_ms = (time.time() - t0r) * 1000.0
+                last_ts = now
+
+                local: Dict[str, float] = {}
+                if isinstance(samples, list) and samples and isinstance(samples[0], list):
+                    for idx, alias in enumerate(aliases):
+                        ch_samples = samples[idx] if idx < len(samples) else []
+                        if not ch_samples:
+                            continue
+                        filtered = filters[alias].process_batch(ch_samples)
+                        ch_cfg = alias_to_cfg.get(alias, {})
+                        local[alias] = apply_scaling(filtered, ch_cfg.get("scaling") or {})
+                else:
+                    alias = aliases[0]
+                    if samples:
+                        raw_list = samples if isinstance(samples, list) else [samples]
+                        filtered = filters[alias].process_batch(raw_list)
+                        ch_cfg = alias_to_cfg.get(alias, {})
+                        local[alias] = apply_scaling(filtered, ch_cfg.get("scaling") or {})
+
+                if local:
+                    with lk:
+                        filt_vals.update(local)
+
+                try:
+                    p._health["last_good_read_ts"] = now
+                    p._health["consec_failures"] = 0
+                    p._health["last_error"] = ""
+                except Exception:
+                    pass
+                try:
+                    c = int(p._fast_diag_counts.get(device, 0))
+                    if c < 5:
+                        print(f"[NIDAQ] BW reader read: device={device} dt_ms={dt_ms:.1f} read_count={int(read_count)} avail={avail}")
+                        p._fast_diag_counts[device] = c + 1
+                except Exception:
+                    pass
+            except Exception as e:
+                try:
+                    p._health["consec_failures"] = int(p._health.get("consec_failures", 0)) + 1
+                    p._health["last_error"] = "read_error"
+                except Exception:
+                    pass
+                try:
+                    c = int(p._fast_err_counts.get(device, 0))
+                    if c < 5:
+                        err_code = getattr(e, "error_code", None)
+                        try:
+                            avail_now = int(getattr(tsk.in_stream, "avail_samp_per_chan", 0))
+                        except Exception:
+                            avail_now = -1
+                        print(f"[NIDAQ] BW reader error: device={device} code={err_code} avail_now={avail_now} msg={e}")
+                        p._fast_err_counts[device] = c + 1
+                except Exception:
+                    pass
+                stop_ev.wait(0.01)
+
+    try:
+        t = threading.Thread(target=_loop, daemon=True)
+        t.start()
+        state["thread"] = t
+        try:
+            print(f"[NIDAQ] BW reader thread spawned: device={device}")
+        except Exception:
+            pass
+        p._fast_reader_threads.append(state)
+    except Exception as e:
+        try:
+            import traceback as _tb
+            print(f"[NIDAQ] BW reader spawn failed: device={device} err={e}\n{_tb.format_exc()}")
+        except Exception:
+            pass
+
+
+def _spawn_deque_reader(p: NiDAQPlugin, state: Dict[str, Any], n: int) -> None:
+    """Spawn a legacy fast reader thread that drains DAQmx into deques."""
+    device = state["device"]
+    tsk = state["task"]
+    stop_ev = state["stop"]
+    lk = state["lock"]
+    bufs = state["buffers"]
+
+    def _loop() -> None:
+        margin = float(p._read_timeout_margin_s)
+        fast_rate = max(1.0, float(p._fast_rate) or 1.0)
+        rec_rate = float(p._sim_rate_hz) if p._sim_rate_hz > 0 else 10.0
+        timeout_fast = max((n / fast_rate) + margin, 2.5 / max(1.0, rec_rate))
+        last_ts = time.time()
+        try:
+            print(f"[NIDAQ] Deque reader started: device={device} timeout={timeout_fast:.3f}")
+        except Exception:
+            pass
+        while not stop_ev.is_set():
+            try:
+                avail = 0
+                try:
+                    avail = int(getattr(tsk.in_stream, "avail_samp_per_chan", 0))
+                except Exception:
+                    avail = 0
+                now = time.time()
+                produced = int(max(0.0, (now - last_ts)) * fast_rate + 0.5)
+                read_count = max(n, produced, avail)
+                read_count = min(read_count, int(100 * n))
+                if read_count <= 0:
+                    stop_ev.wait(0.005)
+                    continue
+                t0r = time.time()
+                samples = tsk.read(number_of_samples_per_channel=int(read_count), timeout=timeout_fast)
+                dt_ms = (time.time() - t0r) * 1000.0
+                last_ts = now
+                if isinstance(samples, list) and samples and isinstance(samples[0], list):
+                    lk.acquire()
+                    try:
+                        for idx, alias in enumerate(list(bufs.keys())):
+                            ch_samples = samples[idx] if idx < len(samples) else []
+                            for v in ch_samples:
+                                bufs[alias].append(float(v))
+                    finally:
+                        lk.release()
+                else:
+                    lk.acquire()
+                    try:
+                        alias = list(bufs.keys())[0] if bufs else None
+                        if alias is not None:
+                            for v in (samples or []):
+                                bufs[alias].append(float(v))
+                    finally:
+                        lk.release()
+                try:
+                    p._health["last_good_read_ts"] = now
+                    p._health["consec_failures"] = 0
+                    p._health["last_error"] = ""
+                except Exception:
+                    pass
+                try:
+                    c = int(p._fast_diag_counts.get(device, 0))
+                    if c < 5:
+                        print(f"[NIDAQ] Deque reader read: device={device} dt_ms={dt_ms:.1f} read_count={int(read_count)} avail={avail}")
+                        p._fast_diag_counts[device] = c + 1
+                except Exception:
+                    pass
+            except Exception as e:
+                try:
+                    p._health["consec_failures"] = int(p._health.get("consec_failures", 0)) + 1
+                    p._health["last_error"] = "read_error"
+                except Exception:
+                    pass
+                try:
+                    c = int(p._fast_err_counts.get(device, 0))
+                    if c < 5:
+                        err_code = getattr(e, "error_code", None)
+                        try:
+                            avail_now = int(getattr(tsk.in_stream, "avail_samp_per_chan", 0))
+                        except Exception:
+                            avail_now = -1
+                        print(f"[NIDAQ] Deque reader error: device={device} code={err_code} avail_now={avail_now} msg={e}")
+                        p._fast_err_counts[device] = c + 1
+                except Exception:
+                    pass
+                stop_ev.wait(0.01)
+
+    try:
+        t = threading.Thread(target=_loop, daemon=True)
+        t.start()
+        state["thread"] = t
+        try:
+            print(f"[NIDAQ] Deque reader thread spawned: device={device}")
+        except Exception:
+            pass
+        p._fast_reader_threads.append(state)
+    except Exception as e:
+        try:
+            import traceback as _tb
+            print(f"[NIDAQ] Deque reader spawn failed: device={device} err={e}\n{_tb.format_exc()}")
+        except Exception:
+            pass
 
 
 def stop_fast_reader_threads(p: NiDAQPlugin) -> None:

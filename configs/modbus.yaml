@@ -10,7 +10,7 @@ servers:
   max_retries: 3
 writes: []
 reads:
-- alias: Room Temp
+- alias: xTP_Amb
   fc: 4
   address: 30001
   length: 2
@@ -25,7 +25,7 @@ reads:
   poll_hz: 10.0
   enabled: true
   server: ComApp
-- alias: Humidity
+- alias: xTP_Hum
   fc: 4
   address: 30002
   length: 2
@@ -76,7 +76,7 @@ devices:
     serial_type: RTU
     word_order: big
   reads:
-  - alias: Room Temp
+  - alias: xTP_Amb
     fc: 4
     address: 30001
     length: 2
@@ -90,7 +90,7 @@ devices:
       unit: C
     poll_hz: 10.0
     enabled: true
-  - alias: Humidity
+  - alias: xTP_Hum
     fc: 4
     address: 30002
     length: 2

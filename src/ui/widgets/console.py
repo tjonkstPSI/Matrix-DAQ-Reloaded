@@ -625,6 +625,14 @@ class ConsoleWindow(QMainWindow):
         self._poll_timer.setInterval(20)  # 50 Hz poll for messages
         self._poll_timer.timeout.connect(self._poll_telemetry)  # type: ignore
         self._poll_timer.start()
+        try:
+            from src.core.ipc.bus import create_ui_control_push
+            _sync_bus = create_ui_control_push()
+            if _sync_bus is not None:
+                _msg = json.dumps({"type": "sync_plugin_selections"}).encode("utf-8")
+                _sync_bus["control_push"].send(_msg)
+        except Exception:
+            pass
         # Progress dialog placeholder
         self._merge_dlg = None
 

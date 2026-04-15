@@ -30,7 +30,7 @@ mta_addr_endian: big
 addr_ext_high: false
 reconnect_interval_s: 2.0
 measurements:
-  naming_prefix: CCP_
+  naming_prefix: emaster
   list: &id001
   - name: AAT
     unit_override: deg F
@@ -268,5 +268,5 @@ devices:
     path: C:/Projects/Python/CCP Streamer/dll_a2l/v577 Master_R1.a2l
   poll_interval_ms: 10
   measurements:
-    naming_prefix: CCP_
+    naming_prefix: emaster
     list: *id001

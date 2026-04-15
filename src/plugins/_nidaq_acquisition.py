@@ -19,10 +19,7 @@ def read_real(p: NiDAQPlugin) -> Dict[str, Any]:
         if p._inject_fail_remaining > 0:
             p._inject_fail_remaining -= 1
             raise RuntimeError("Injected NI_DAQ read failure (test)")
-        try:
-            rec_rate = float(p.config.get("recording_rate_hz", 10.0))
-        except Exception:
-            rec_rate = 10.0
+        rec_rate = float(p._sim_rate_hz) if p._sim_rate_hz > 0 else 10.0
         n = max(1, p._oversample_factor)
         margin = float(p._read_timeout_margin_s)
         fast_rate = max(1.0, float(p._fast_rate) or 1.0)
@@ -42,11 +39,13 @@ def read_real(p: NiDAQPlugin) -> Dict[str, Any]:
                     p._fast_path_printed = True
                 any_success = _read_legacy_fast_ai(p, vals, n, timeout_fast)
 
-        temp_unit_map: Dict[str, str] = {}
-        for ch in p._ai_temp:
-            a = ch.get("alias")
-            if a:
-                temp_unit_map[str(a)] = str(ch.get("unit", "C"))
+        temp_unit_map = getattr(p, "_temp_unit_map", None)
+        if temp_unit_map is None:
+            temp_unit_map = {}
+            for ch in p._ai_temp:
+                a = ch.get("alias")
+                if a:
+                    temp_unit_map[str(a)] = str(ch.get("unit", "C"))
 
         if p._temp_tasks:
             for tt in p._temp_tasks:
@@ -144,10 +143,52 @@ def read_real(p: NiDAQPlugin) -> Dict[str, Any]:
 def _read_threaded_fast_ai(p: NiDAQPlugin, vals: Dict[str, Any], n: int) -> bool:
     if not p._fast_path_printed:
         try:
-            print("[NIDAQ] read: using THREADED fast-AI path")
+            ft_type = getattr(p, "_filter_type", "average")
+            print(f"[NIDAQ] read: using THREADED fast-AI path (filter={ft_type})")
         except Exception:
             pass
         p._fast_path_printed = True
+
+    filter_type = getattr(p, "_filter_type", "average")
+
+    if filter_type == "butterworth":
+        return _read_threaded_butterworth(p, vals)
+    return _read_threaded_deque(p, vals, n)
+
+
+def _read_threaded_butterworth(p: NiDAQPlugin, vals: Dict[str, Any]) -> bool:
+    """Copy pre-computed filtered+scaled values from fast reader threads."""
+    any_success = False
+    for ft in p._fast_reader_threads:
+        try:
+            filt_vals = ft.get("filtered_values")
+            if not filt_vals:
+                continue
+            lock = ft.get("lock")
+            if lock is not None:
+                lock.acquire()
+            try:
+                snapshot = dict(filt_vals)
+            finally:
+                if lock is not None:
+                    lock.release()
+            if snapshot:
+                vals.update(snapshot)
+                any_success = True
+        except Exception:
+            pass
+    try:
+        c = int(getattr(p, "_thr_vals_diag_count", 0))
+        if c < 5:
+            print(f"[NIDAQ] read(bw): copied {len(vals)} alias(es)")
+            setattr(p, "_thr_vals_diag_count", c + 1)
+    except Exception:
+        pass
+    return any_success
+
+
+def _read_threaded_deque(p: NiDAQPlugin, vals: Dict[str, Any], n: int) -> bool:
+    """Legacy path: iterate deques to compute averages under lock."""
     any_success = False
     produced_aliases: List[str] = []
     deque_lengths: List[str] = []

@@ -69,7 +69,11 @@ class CANPlugin(BasePlugin):
         signals = self.config.get("signals", [])
         if not isinstance(signals, list):
             return PluginStatus(ok=False, message="signals must be a list")
-        aliases = [str(item.get("alias")) for item in (signals or []) if isinstance(item, dict) and item.get("alias")]
+        aliases = [
+            str(item.get("alias"))
+            for item in (signals or [])
+            if isinstance(item, dict) and item.get("alias") and bool(item.get("enabled", True))
+        ]
         if len(aliases) != len(set(aliases)):
             return PluginStatus(ok=False, message="Duplicate aliases within CAN plugin configuration")
         if self.mode == "real":

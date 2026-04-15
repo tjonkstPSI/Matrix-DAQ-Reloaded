@@ -28,6 +28,13 @@ from ..plugins.engine_test import EngineTestPlugin
 from .recording import begin_recording, end_recording, kickoff_export, build_parquet_settings
 
 
+_DEBUG_PREFIXES = ("CAN/", "CCP/", "Core/", "EngineTest/", "NI_DAQ/")
+
+
+def _strip_debug_keys(d: dict) -> dict:
+    return {k: v for k, v in d.items() if not k.startswith(_DEBUG_PREFIXES)}
+
+
 @dataclass
 class Settings:
     recording_rate_hz: float = 10.0
@@ -67,6 +74,18 @@ class Orchestrator:
         ch_cfg_path = (self.configs_dir / "channel_manager.yaml").resolve()
         self.channel_cfg = load_yaml_config(ch_cfg_path)
         self._apply_channel_manager_runtime()
+        # Load launch selections to determine which plugins the user enabled
+        selected_set: set = set()
+        try:
+            plugins_cfg_path = (self.configs_dir / "plugins.yaml").resolve()
+            plugins_cfg = load_yaml_config(plugins_cfg_path)
+            selected_set = {str(x) for x in (plugins_cfg.get("selected_plugins") or [])}
+        except Exception:
+            pass
+        if selected_set:
+            print(f"[INFO] selected_plugins from plugins.yaml: {sorted(selected_set)}")
+        else:
+            print("[WARN] No selected_plugins found in plugins.yaml; all plugins default to enabled")
         # Load configs for each plugin and run basic validation
         all_ok = True
         ALWAYS_ON = {"Channel_Manager", "EngineTest"}
@@ -75,12 +94,17 @@ class Orchestrator:
             enabled = True
             try:
                 if pid not in ALWAYS_ON:
-                    enabled = bool(plugin.config.get("enabled", True))
+                    config_enabled = bool(plugin.config.get("enabled", True))
+                    in_selection = (pid in selected_set) if selected_set else True
+                    enabled = in_selection and config_enabled
             except Exception:
                 enabled = True
             self._plugin_enabled[pid] = enabled
             if not enabled:
-                print(f"[INFO] Plugin '{pid}' disabled by config; skipping init")
+                if selected_set and pid not in selected_set:
+                    print(f"[INFO] Plugin '{pid}' not in selected_plugins; skipping")
+                else:
+                    print(f"[INFO] Plugin '{pid}' disabled by config; skipping init")
                 continue
             status = plugin.validate()
             if not status.ok:
@@ -89,6 +113,7 @@ class Orchestrator:
             # Optional early configure for NI_DAQ to enumerate inventory
             if pid == "NI_DAQ" and status.ok:
                 try:
+                    plugin._core_tick_rate_hz = self.settings.recording_rate_hz
                     plugin.configure()
                     inv = getattr(plugin, "inventory")()
                     devices = inv.get("devices", []) if isinstance(inv, dict) else []
@@ -177,6 +202,7 @@ class Orchestrator:
             if vaisala:
                 vaisala.configure(); vaisala.validate(); vaisala.start()
             if nidaq:
+                nidaq._core_tick_rate_hz = self.settings.recording_rate_hz
                 nidaq.configure(); nidaq.validate(); nidaq.start()
             if cycle:
                 cycle.configure(); cycle.validate(); cycle.start()
@@ -219,6 +245,16 @@ class Orchestrator:
                     tick_dt_s = interval if last_tick_start_mono is None else max(0.0, tick_start_mono - last_tick_start_mono)
                     tick_jitter_s = tick_dt_s - interval
                     last_tick_start_mono = tick_start_mono
+                    modbus = self.plugins.get("Modbus") if self._plugin_enabled.get("Modbus") else None
+                    can = self.plugins.get("CAN") if self._plugin_enabled.get("CAN") else None
+                    ccp = self.plugins.get("CCP") if self._plugin_enabled.get("CCP") else None
+                    lb = self.plugins.get("LoadBank") if self._plugin_enabled.get("LoadBank") else None
+                    cycle = self.plugins.get("Cycle") if self._plugin_enabled.get("Cycle") else None
+                    stats = self.plugins.get("Statistics") if self._plugin_enabled.get("Statistics") else None
+                    vaisala = self.plugins.get("Vaisala") if self._plugin_enabled.get("Vaisala") else None
+                    nidaq = self.plugins.get("NI_DAQ") if self._plugin_enabled.get("NI_DAQ") else None
+                    calc = self.plugins.get("Calculated_Channels") if self._plugin_enabled.get("Calculated_Channels") else None
+                    engine_test = self.plugins.get("EngineTest") if self._plugin_enabled.get("EngineTest") else None
                     vals = {}
                     units = {}
                     if modbus is not None:
@@ -260,6 +296,11 @@ class Orchestrator:
                             units.update(getattr(calc, "units")())
                         except Exception:
                             pass
+                    if vaisala:
+                        try:
+                            vaisala.update_telemetry(vals)
+                        except Exception:
+                            pass
                     # Update statistics plugin and handle outputs (persist only)
                     if stats:
                         getattr(stats, "update")(vals, units, now_ts)
@@ -284,12 +325,6 @@ class Orchestrator:
                     elapsed = time.time() - t0
                     vals["Time_Relative_s"] = elapsed
                     units["Time_Relative_s"] = "s"
-                    vals["Core/tick_dt_s"] = float(tick_dt_s)
-                    units["Core/tick_dt_s"] = "s"
-                    vals["Core/tick_jitter_s"] = float(tick_jitter_s)
-                    units["Core/tick_jitter_s"] = "s"
-                    vals["Core/tick_overrun"] = 1.0 if tick_dt_s > (interval * 1.10) else 0.0
-                    units["Core/tick_overrun"] = ""
                     # Evaluate alarms
                     states, summary, events = ({}, {"any_warning": False, "any_shutdown": False}, [])
                     # Handle control messages (e.g., manual stats, recording control, export)
@@ -325,6 +360,8 @@ class Orchestrator:
                             elif ctrl_msg.get("type") == "reload_plugin":
                                 pid = str(ctrl_msg.get("plugin", ""))
                                 self._reload_plugin(pid)
+                            elif ctrl_msg.get("type") == "sync_plugin_selections":
+                                self._sync_all_plugin_selections()
                         except Exception as e:
                             try:
                                 print(f"[WARN] Control handling error: {e}")
@@ -352,10 +389,12 @@ class Orchestrator:
                     vals["iOT_Alarm"] = 1.0 if bool(summary.get("any_shutdown", False)) else 0.0
                     units["iOT_Warning"] = ""
                     units["iOT_Alarm"] = ""
+                    pub_vals = _strip_debug_keys(vals)
+                    pub_units = _strip_debug_keys(units)
                     payload = json.dumps({
                         "ts": time.time(),
-                        "values": vals,
-                        "units": units,
+                        "values": pub_vals,
+                        "units": pub_units,
                         "states": states,
                         "alarm_summary": summary,
                         "alarm_events": events,
@@ -373,7 +412,7 @@ class Orchestrator:
                     # Append to Parquet data stream when recording
                     try:
                         if self._recording and self._parquet is not None:
-                            self._parquet.append(now_ts, vals, units)
+                            self._parquet.append(now_ts, pub_vals, pub_units)
                     except Exception:
                         pass
                     sleep_s = max(0.0, next_tick_deadline - time.monotonic())
@@ -392,6 +431,16 @@ class Orchestrator:
                     tick_dt_s = interval if last_tick_start_mono is None else max(0.0, tick_start_mono - last_tick_start_mono)
                     tick_jitter_s = tick_dt_s - interval
                     last_tick_start_mono = tick_start_mono
+                    modbus = self.plugins.get("Modbus") if self._plugin_enabled.get("Modbus") else None
+                    can = self.plugins.get("CAN") if self._plugin_enabled.get("CAN") else None
+                    ccp = self.plugins.get("CCP") if self._plugin_enabled.get("CCP") else None
+                    lb = self.plugins.get("LoadBank") if self._plugin_enabled.get("LoadBank") else None
+                    cycle = self.plugins.get("Cycle") if self._plugin_enabled.get("Cycle") else None
+                    stats = self.plugins.get("Statistics") if self._plugin_enabled.get("Statistics") else None
+                    vaisala = self.plugins.get("Vaisala") if self._plugin_enabled.get("Vaisala") else None
+                    nidaq = self.plugins.get("NI_DAQ") if self._plugin_enabled.get("NI_DAQ") else None
+                    calc = self.plugins.get("Calculated_Channels") if self._plugin_enabled.get("Calculated_Channels") else None
+                    engine_test = self.plugins.get("EngineTest") if self._plugin_enabled.get("EngineTest") else None
                     vals = {}
                     units = {}
                     if modbus is not None:
@@ -430,6 +479,11 @@ class Orchestrator:
                             units.update(getattr(calc, "units")())
                         except Exception:
                             pass
+                    if vaisala:
+                        try:
+                            vaisala.update_telemetry(vals)
+                        except Exception:
+                            pass
                     # Update statistics plugin and handle outputs (persist only)
                     if stats:
                         getattr(stats, "update")(vals, units, now_ts)
@@ -453,12 +507,6 @@ class Orchestrator:
                     elapsed = time.time() - t0
                     vals["Time_Relative_s"] = elapsed
                     units["Time_Relative_s"] = "s"
-                    vals["Core/tick_dt_s"] = float(tick_dt_s)
-                    units["Core/tick_dt_s"] = "s"
-                    vals["Core/tick_jitter_s"] = float(tick_jitter_s)
-                    units["Core/tick_jitter_s"] = "s"
-                    vals["Core/tick_overrun"] = 1.0 if tick_dt_s > (interval * 1.10) else 0.0
-                    units["Core/tick_overrun"] = ""
                     # Evaluate alarms
                     states, summary, events = ({}, {"any_warning": False, "any_shutdown": False}, [])
                     # Handle control messages
@@ -494,6 +542,8 @@ class Orchestrator:
                                 self._handle_inject_fail(ctrl_msg)
                             elif ctrl_msg.get("type") == "ccp_test":
                                 self._kickoff_ccp_test(ctrl_msg)
+                            elif ctrl_msg.get("type") == "sync_plugin_selections":
+                                self._sync_all_plugin_selections()
                         except Exception as e:
                             try:
                                 print(f"[WARN] Control handling error: {e}")
@@ -521,10 +571,12 @@ class Orchestrator:
                     vals["iOT_Alarm"] = 1.0 if bool(summary.get("any_shutdown", False)) else 0.0
                     units["iOT_Warning"] = ""
                     units["iOT_Alarm"] = ""
+                    pub_vals = _strip_debug_keys(vals)
+                    pub_units = _strip_debug_keys(units)
                     payload = json.dumps({
                         "ts": time.time(),
-                        "values": vals,
-                        "units": units,
+                        "values": pub_vals,
+                        "units": pub_units,
                         "states": states,
                         "alarm_summary": summary,
                         "alarm_events": events,
@@ -534,7 +586,7 @@ class Orchestrator:
                     # Append to Parquet data stream when recording
                     try:
                         if self._recording and self._parquet is not None:
-                            self._parquet.append(now_ts, vals, units)
+                            self._parquet.append(now_ts, pub_vals, pub_units)
                     except Exception:
                         pass
                     sleep_s = max(0.0, next_tick_deadline - time.monotonic())
@@ -671,6 +723,80 @@ class Orchestrator:
             except Exception:
                 pass
 
+    def _sync_all_plugin_selections(self) -> None:
+        """Re-read plugins.yaml and start/stop plugins whose enabled state changed."""
+        ALWAYS_ON = {"Channel_Manager", "EngineTest"}
+        try:
+            plugins_cfg_path = (self.configs_dir / "plugins.yaml").resolve()
+            plugins_cfg = load_yaml_config(plugins_cfg_path)
+            selected_set = {str(x) for x in (plugins_cfg.get("selected_plugins") or [])}
+        except Exception:
+            selected_set = set()
+        if not selected_set:
+            return
+        print(f"[INFO] Syncing plugin selections: {sorted(selected_set)}")
+        for pid, plugin in self.plugins.items():
+            if pid in ALWAYS_ON:
+                self._plugin_enabled[pid] = True
+                continue
+            config_enabled = True
+            try:
+                config_enabled = bool(plugin.config.get("enabled", True))
+            except Exception:
+                config_enabled = True
+            new_enabled = (pid in selected_set) and config_enabled
+            old_enabled = self._plugin_enabled.get(pid, False)
+            if new_enabled == old_enabled:
+                continue
+            self._plugin_enabled[pid] = new_enabled
+            if new_enabled:
+                print(f"[INFO] Plugin '{pid}' newly enabled; configuring")
+                try:
+                    plugin.load_config()
+                    if pid == "NI_DAQ":
+                        plugin._core_tick_rate_hz = self.settings.recording_rate_hz
+                    plugin.configure()
+                    status = plugin.validate()
+                    if getattr(status, "ok", True):
+                        plugin.start()
+                        print(f"[INFO] Plugin '{pid}' started via selection sync")
+                    else:
+                        print(f"[WARN] Plugin '{pid}' validate failed: {getattr(status, 'message', '')}")
+                except Exception as e:
+                    print(f"[WARN] Plugin '{pid}' start failed: {e}")
+            else:
+                print(f"[INFO] Plugin '{pid}' disabled; stopping")
+                try:
+                    plugin.stop()
+                except Exception:
+                    pass
+
+    def _refresh_plugin_selection(self, plugin_id: str) -> None:
+        """Re-read plugins.yaml and update _plugin_enabled for a single plugin."""
+        ALWAYS_ON = {"Channel_Manager", "EngineTest"}
+        if plugin_id in ALWAYS_ON:
+            self._plugin_enabled[plugin_id] = True
+            return
+        try:
+            plugins_cfg_path = (self.configs_dir / "plugins.yaml").resolve()
+            plugins_cfg = load_yaml_config(plugins_cfg_path)
+            selected_set = {str(x) for x in (plugins_cfg.get("selected_plugins") or [])}
+        except Exception:
+            selected_set = set()
+        p = self.plugins.get(plugin_id)
+        config_enabled = True
+        if p is not None:
+            try:
+                config_enabled = bool(p.config.get("enabled", True))
+            except Exception:
+                config_enabled = True
+        in_selection = (plugin_id in selected_set) if selected_set else True
+        enabled = in_selection and config_enabled
+        prev = self._plugin_enabled.get(plugin_id)
+        self._plugin_enabled[plugin_id] = enabled
+        if prev != enabled:
+            print(f"[INFO] Plugin '{plugin_id}' enabled state: {prev} -> {enabled}")
+
     def _reload_plugin(self, plugin_id: str) -> None:
         if not plugin_id:
             return
@@ -683,22 +809,26 @@ class Orchestrator:
             except Exception as e:
                 print(f"[WARN] Reload failed for Channel_Manager: {e}")
             return
+        self._refresh_plugin_selection(plugin_id)
         try:
             p = self.plugins.get(plugin_id)
             if p is None:
                 print(f"[WARN] Reload ignored: plugin not found: {plugin_id}")
                 return
-            # Stop plugin
             try:
                 p.stop()
             except Exception:
                 pass
-            # Reload config and restart
+            if not self._plugin_enabled.get(plugin_id, False):
+                print(f"[INFO] Plugin '{plugin_id}' not enabled; stopped")
+                return
             try:
                 p.load_config()
             except Exception as e:
                 print(f"[WARN] Reload: failed to load config for {plugin_id}: {e}")
             try:
+                if plugin_id == "NI_DAQ":
+                    p._core_tick_rate_hz = self.settings.recording_rate_hz
                 p.configure()
                 status = p.validate()
                 if not getattr(status, 'ok', True):
@@ -724,6 +854,16 @@ class Orchestrator:
         self._tick_interval_s = max(0.001, float(interval))
         try:
             self.settings.recording_rate_hz = 1.0 / self._tick_interval_s
+        except Exception:
+            pass
+        # Propagate new tick rate to NI DAQ snapshot period without full restart.
+        try:
+            nidaq = self.plugins.get("NI_DAQ")
+            if nidaq is not None and self._plugin_enabled.get("NI_DAQ", True):
+                new_rate = self.settings.recording_rate_hz
+                nidaq._core_tick_rate_hz = new_rate
+                nidaq._sim_rate_hz = new_rate
+                nidaq._snapshot_period_s = max(0.01, 1.0 / max(1.0, new_rate))
         except Exception:
             pass
 

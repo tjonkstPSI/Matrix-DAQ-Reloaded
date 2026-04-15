@@ -6,10 +6,4 @@ channels:
     x: qPR_Amb
   unit: kPa
   enabled: true
-- alias: mTEST
-  expr: sin(rh)
-  symbols:
-    rh: Ambient RH
-  unit: '%RH'
-  enabled: true
 recording_rate_hz: 50.0

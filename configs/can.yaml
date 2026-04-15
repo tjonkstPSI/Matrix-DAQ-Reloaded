@@ -24,11 +24,6 @@ signals:
   signal: cTP_EngClt
   unit: C
   enabled: true
-- alias: cFL_EngFul
-  message: LFE_65266
-  signal: cFL_EngFul
-  unit: L/h
-  enabled: true
 - alias: cVL_Bat
   message: VEP1_65271
   signal: cVL_Bat

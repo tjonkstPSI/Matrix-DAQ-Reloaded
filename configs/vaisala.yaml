@@ -1,29 +1,59 @@
-# Author: T. Onkst | Date: 08122025
 enabled: true
-
 mode: sim
-recording_rate_hz: 10
-
 connection:
-  host: 127.0.0.1
+  host: 192.168.1.100
   port: 502
-  unit_id: 1
-
+  unit_id: 241
+  timeout_ms: 1000
+  poll_rate_hz: 1
 model:
-  selected: "HMT330"           # example model id; for sim it is informational
-  map_file: null               # future: path to register map yaml for real device
-
-polling:
-  override_poll_hz: null
-
-calibration_offsets: { "Ambient Temp": 0.0, "Ambient RH": 0.0, "Ambient Pressure": 0.0 }
-
+  selected: Indigo510
 channels:
-  - alias: "Ambient Temp"
-    unit: "C"
-  - alias: "Ambient RH"
-    unit: "%RH"
-  - alias: "Ambient Pressure"
-    unit: "kPa"
-
-
+- id: RH
+  alias: vHM_Amb
+  enabled: true
+- id: T
+  alias: vTP_Amb
+  enabled: true
+- id: Td
+  alias: vTP_AmbDew
+  enabled: true
+- id: Tdf
+  alias: ''
+  enabled: false
+- id: a
+  alias: ''
+  enabled: false
+- id: x
+  alias: ''
+  enabled: false
+- id: Tw
+  alias: vTP_AmbWet
+  enabled: true
+- id: H2Ov
+  alias: ''
+  enabled: false
+- id: pw
+  alias: ''
+  enabled: false
+- id: pws
+  alias: ''
+  enabled: false
+- id: H
+  alias: ''
+  enabled: false
+- id: dT
+  alias: ''
+  enabled: false
+- id: H2Ow
+  alias: ''
+  enabled: false
+pressure:
+  mode: fixed
+  fixed_value_hpa: 1013.25
+  dynamic:
+    source_channel: WS_AmbientTemp
+    source_unit: hPa
+    gain: 1.0
+    offset: 0.0
+filtering: none

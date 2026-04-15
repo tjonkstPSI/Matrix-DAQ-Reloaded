@@ -4,7 +4,80 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased] - 03/10/2026
+## [Unreleased] - 03/09/2026
+
+### Strip debug channels from telemetry — 03/09/2026
+#### Changed
+- Diagnostic channels with prefixes `CAN/`, `CCP/`, `Core/`, `EngineTest/`, `NI_DAQ/` are no longer published in the telemetry stream or recorded to Parquet. Plugins still compute them internally; a `_strip_debug_keys()` filter at the orchestrator publish boundary removes them. To re-enable, remove the prefix from the `_DEBUG_PREFIXES` tuple.
+
+### Vaisala config UI cleanup — 03/09/2026
+#### Removed
+- "Plugin enabled" checkbox removed from Vaisala config dialog (enablement is driven by console plugin selection list).
+- "Poll rate", "Timeout", and "Calibration offsets" removed from the Vaisala config UI. Poll rate and timeout remain in `vaisala.yaml` for super-user access; calibration offsets removed entirely from UI, YAML, and plugin code.
+
+### Grouped All Channels Table — 03/09/2026
+#### Changed
+- All Channels Table (`channels_table.py`) redesigned from a single flat alphabetical table into side-by-side category panels ("Death by Numbers" style). Channels are auto-categorized by alias prefix: Temperatures (TP), Pressures (PR), ECU Data (CAN `c` / CCP `e` prefix), Facility (Ldb/Alm/Fan keywords, HM code), Engine Conditions (Modbus `m` prefix), and Other (catch-all).
+- Each category is a `QGroupBox` with a compact `QTableWidget` (Alias, Value, Unit columns) including alarm state coloring.
+- Panels with no channels are hidden automatically.
+- `FlowLayout` arranges panels left-to-right and wraps to the next row when the window is too narrow; the whole view is vertically scrollable.
+
+### Vaisala parameter writes (pressure & filtering) — 03/09/2026
+#### Added
+- Pressure compensation mode (Fixed / Dynamic) written to Vaisala temporary register 771-772 every poll cycle. Fixed mode writes a constant hPa value; Dynamic mode reads a source channel from any plugin's telemetry, applies `gain * value + offset`, and writes the result.
+- Filtering mode (None / Standard / Extended) written to flag registers 1281 and 1282 every poll cycle. Flags are mutually exclusive per Vaisala spec.
+- `_encode_float32()` helper in `vaisala.py` — inverse of `_decode_float32`, packs a Python float into two Big-Endian 16-bit register values.
+- `update_telemetry(vals)` method on `VaisalaPlugin` — orchestrator feeds the full merged telemetry dict each tick so the poll thread can resolve the dynamic pressure source channel.
+- `_write_parameters()` in `vaisala.py` — called each poll cycle to write pressure and filtering registers with error isolation from the read path.
+- Config dialog gains Pressure Compensation group (mode combo, fixed hPa spin box, dynamic sub-panel with editable channel picker populated from plugin YAMLs, source unit, gain, offset) and Filtering group (None/Standard/Extended combo).
+- Orchestrator (`orchestrator.py`) calls `vaisala.update_telemetry(vals)` in both demo and real tick loops after Calculated Channels, before Statistics.
+
+#### Changed
+- `configs/vaisala.yaml` gains `pressure` and `filtering` blocks.
+
+### Vaisala Modbus TCP plugin — 03/09/2026
+#### Added
+- Vaisala plugin (`vaisala.py`) now supports real-mode Modbus TCP acquisition via pymodbus. Reads float32 holding registers for 13 measurement channels (RH, T, Td, Td/f, a, x, Tw, H2Ov, pw, pws, H, dT, H2Ow) using two bulk register reads per poll cycle.
+- Hardcoded `REGISTER_MAP` constant with register addresses, units, and simulation parameters for all Vaisala HMT/HMP channels.
+- Threaded poll loop with configurable poll rate, automatic reconnect on connection loss, and sample-and-hold on read errors.
+- Config dialog redesigned with checkbox-based channel selection from the register map, user-editable aliases per channel (blank by default, matching NI DAQ convention), connection settings (host, port, timeout, poll rate), and duplicate-alias validation.
+- Model dropdown (HMT330 / Indigo510) with automatic Modbus unit ID assignment (HMT330=1, Indigo510=241). Unit ID is hidden from the user.
+
+#### Changed
+- `configs/vaisala.yaml` restructured: channels now reference register map by `id` with per-channel `alias` and `enabled` fields.
+
+### CAN duplicate alias fix — 03/09/2026
+#### Fixed
+- `validate()` in `can.py` now only checks enabled signals for duplicate aliases, matching the filter used by `configure()` and `aliases()`. Previously, a DBC with the same signal name in multiple messages would fail validation even if only one was checked.
+- CAN config dialog (`can_config.py`) now blocks save when checked signals produce duplicate aliases, showing a warning that names the conflicting aliases and their source messages so the user can deselect one.
+
+### Fix runtime plugin enable/disable — 03/09/2026
+#### Fixed
+- Plugins added to or removed from `selected_plugins` after core startup are now recognized automatically. ConsoleWindow sends a `sync_plugin_selections` control message on connect; the orchestrator's new `_sync_all_plugin_selections()` method re-reads `plugins.yaml`, diffs against `_plugin_enabled`, and starts newly-enabled or stops newly-disabled plugins in one pass. Per-plugin `_reload_plugin` also re-reads via `_refresh_plugin_selection()` for configure-triggered reloads.
+- Both tick loops (demo and real) now re-resolve plugin references from `_plugin_enabled` each iteration, so runtime enable/disable takes effect on the next tick without a core restart.
+
+### Fix plugin enablement — 03/09/2026
+#### Fixed
+- Orchestrator now reads `selected_plugins` from `configs/plugins.yaml` (written by the launch dialog) to determine which plugins run. Previously, all plugins with `enabled: true` in their own config files would configure/start/stream data regardless of the user's launch selection. A plugin now runs only if it appears in `selected_plugins` AND its own config does not have `enabled: false`. `Channel_Manager` and `EngineTest` remain always-on. Falls back to all-enabled if `plugins.yaml` is missing or empty.
+
+### NI DAQ streaming optimization — 03/09/2026
+#### Added
+- Configurable oversample block (`acquisition.oversample`) in `ni_daq.yaml`: `factor` (default 10), `applies_to` (voltage|all), `filter` (butterworth|average|none), `butterworth_order` (default 4).
+- `IIRFilter` class in `_nidaq_scaling.py`: stateful 4th-order IIR Butterworth low-pass filter using SOS (second-order sections) via scipy for numerical stability; coefficients computed once, per-sample cost ~8 multiply-adds per order; graceful fallback to passthrough if scipy unavailable.
+- `presort_scaling_points()` helper in `_nidaq_scaling.py`: pre-sorts table scaling points at config load time to avoid runtime sort overhead in `_table_interp`.
+- Butterworth fast reader thread mode (`_spawn_butterworth_reader` in `_nidaq_tasks.py`): applies IIR filter + scaling per sample (thread-local, no lock), writes pre-computed float per alias to shared dict under brief lock.
+- ZMQ PUB/SUB high-water mark (HWM=10) in `bus.py` to bound memory on laggy subscribers.
+
+#### Changed
+- **Tick rate alignment**: NI DAQ snapshot period now inherits from core tick rate (`channel_manager.yaml` `recording_rate_hz`) via orchestrator; `ni_daq.yaml` `recording_rate_hz` deprecated to `auto` (numeric value overrides with logged warning).
+- Orchestrator passes `_core_tick_rate_hz` to NI DAQ plugin before `configure()` in start, run, and reload paths.
+- Fast reader thread architecture: butterworth mode eliminates deques entirely for voltage channels; data copy chain reduced from 6 stages to 4; lock hold time reduced from O(aliases * deque_size) to O(1) per alias.
+- `_read_threaded_fast_ai` in `_nidaq_acquisition.py` dispatches to `_read_threaded_butterworth` (dict copy) or `_read_threaded_deque` (legacy averaging) based on filter mode.
+- Temperature unit map cached once at `start()` in `ni_daq.py` (`_temp_unit_map`) instead of rebuilt per `read_real()` call.
+- Table scaling points pre-sorted at config load via `presort_scaling_points()`; `_table_interp` assumes sorted input.
+- `create_tasks_real` in `_nidaq_tasks.py` uses `_sim_rate_hz` (core-aligned rate) instead of reading `recording_rate_hz` from config directly.
+- NI DAQ config dialog "Recording rate (Hz)" field is now read-only, displaying inherited rate; save always writes `recording_rate_hz: auto`.
+- Orchestrator `_apply_channel_manager_runtime()` now propagates the new tick rate to NI DAQ's `_snapshot_period_s` live, without requiring a full plugin restart.
 
 ### NI DAQ constrained aliases and channel scaling — 03/09/2026
 #### Added

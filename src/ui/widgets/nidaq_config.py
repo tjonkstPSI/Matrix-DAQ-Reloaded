@@ -100,15 +100,13 @@ class NiDaqConfigDialog(QDialog):
 		# Sampling tab
 		samp = QWidget(self)
 		fl = QFormLayout(samp)
-		self.txt_rate = QLineEdit(samp)
 		self.chk_wd = QCheckBox("Enable Watchdog", samp)
 		self.cmb_wd_mode = QComboBox(samp); self.cmb_wd_mode.addItems(["driver", "digital_loopback"]) 
 		self.txt_wd_timeout = QLineEdit(samp)
-		fl.addRow("Recording rate (Hz)", self.txt_rate)
 		fl.addRow("Watchdog", self.chk_wd)
 		fl.addRow("Watchdog mode", self.cmb_wd_mode)
 		fl.addRow("Watchdog timeout (ms)", self.txt_wd_timeout)
-		self.tabs.addTab(samp, "Sampling")
+		self.tabs.addTab(samp, "Watchdog")
 		# Buttons
 		btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=self)
 		btns.accepted.connect(self._on_accept)  # type: ignore
@@ -171,12 +169,7 @@ class NiDaqConfigDialog(QDialog):
 				self._regenerate_defaults_from_inventory()
 				self._cfg = self._read_yaml(self._cfg_path)
 		self._populate_tables()
-		# Populate sampling/watchdog defaults
-		try:
-			rate = float(self._cfg.get("recording_rate_hz", 10.0))
-			self.txt_rate.setText(str(rate))
-		except Exception:
-			self.txt_rate.setText("10")
+		# Populate watchdog defaults
 		wd = self._cfg.get("watchdog") or {}
 		self.chk_wd.setChecked(bool(wd.get("enabled", False)))
 		self.cmb_wd_mode.setCurrentText(str(wd.get("mode", "driver")))
@@ -352,9 +345,7 @@ class NiDaqConfigDialog(QDialog):
 			for key in ("acquisition", "health", "decimation", "watchdog"):
 				if key in (self._cfg or {}):
 					new_cfg[key] = self._cfg.get(key)
-			# Preserve existing recording_rate_hz if present
-			if isinstance(self._cfg, dict) and "recording_rate_hz" in self._cfg:
-				new_cfg["recording_rate_hz"] = self._cfg.get("recording_rate_hz")
+			new_cfg["recording_rate_hz"] = "auto"
 			# Merge per-channel details (aliases, enable flags, units, and sensor for TC/RTD)
 			old_ch = (self._cfg.get("channels") or {})
 			old_ai_v = {str(c.get("phys")): c for c in (old_ch.get("ai_voltage") or []) if c.get("phys")}
@@ -466,11 +457,7 @@ class NiDaqConfigDialog(QDialog):
 		updated: Dict[str, Any] = {}
 		# Mode (preserve existing)
 		updated["mode"] = str(self._cfg.get("mode", "real"))
-		# Recording rate
-		try:
-			updated["recording_rate_hz"] = float(self.txt_rate.text().strip())
-		except Exception:
-			updated["recording_rate_hz"] = self._cfg.get("recording_rate_hz", 10.0)
+		updated["recording_rate_hz"] = "auto"
 		# Channels with merge-on-save for existing RTD/TC sensor fields
 		chs: Dict[str, Any] = {"ai_voltage": [], "ai_temp": [], "di": [], "do": [], "ao": []}
 		old_ch = (self._cfg.get("channels") or {})
