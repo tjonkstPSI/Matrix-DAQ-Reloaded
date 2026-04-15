@@ -6,6 +6,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased] - 03/10/2026
 
+### NI DAQ constrained aliases and channel scaling — 03/09/2026
+#### Added
+- Constrained alias system for all NI DAQ channel types: regex-enforced naming convention with `AliasPickerDialog` (searchable library tab from `configs/alias_library.yaml` + custom entry with live validation).
+- Channel scaling for AI voltage: `ScalingEditorDialog` with No Scale / Linear (gain+offset) / Table (multi-point interpolation) modes, live telemetry preview at 5 Hz, and import from `configs/scale_library.yaml`.
+- Table scaling extrapolation option: "Extrapolate beyond table range" checkbox allows linear extrapolation past table min/max instead of clamping; persisted as `extrapolate: true` in scaling config.
+- Temperature unit picker dialog for RTD/TC channels (C / F / K selection).
+- Shared scaling helper module `src/plugins/_nidaq_scaling.py` with `apply_scaling()`, `convert_temp_unit()`, `scaling_summary()`.
+- Stub YAML library files: `configs/alias_library.yaml` (60+ premade aliases), `configs/scale_library.yaml` (10+ premade linear/table scales).
+
+#### Changed
+- NI DAQ config dialog: all editing is now via double-click dialogs (alias picker, scaling editor); inline cell editing disabled; alias regex validation enforced on save.
+- NI DAQ config dialog: disabled channels now display blank alias and unit columns on load for cleaner presentation.
+- NI DAQ YAML scaling format expanded from `{m, b, unit}` to `{type, gain, offset, unit, points, extrapolate}` for full linear/table support.
+- Real acquisition path (`_nidaq_acquisition.py`): applies `apply_scaling()` to voltage reads and `convert_temp_unit()` to temperature reads before publishing to orchestrator.
+- Simulation path (`_nidaq_simulation.py`): applies same scaling/unit conversion as real path for consistent behavior.
+
 ### Config UIs, CCP tuning, UI responsiveness — 03/09/2026
 #### Added
 - Cycle config dialog: embedded QtCharts staircase plot preview (step/hold matching load bank behavior), BOM-safe CSV parsing, status bar with point count/loops/duration.

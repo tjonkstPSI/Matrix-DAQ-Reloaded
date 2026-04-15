@@ -1,0 +1,75 @@
+# Author: T. Onkst | Date: 03092026
+# Premade scale library for NI DAQ analog voltage channels.
+# Each entry defines a named scaling that can be imported into the NI DAQ config.
+# This file can be expanded or replaced with a database in the future.
+
+scales:
+  # Linear scales (scaled = raw * gain + offset)
+  - name: "0-10V -> 0-100 PSI"
+    type: linear
+    gain: 10.0
+    offset: 0.0
+    unit: "PSI"
+
+  - name: "0-10V -> 0-200 PSI"
+    type: linear
+    gain: 20.0
+    offset: 0.0
+    unit: "PSI"
+
+  - name: "0-10V -> 0-500 PSI"
+    type: linear
+    gain: 50.0
+    offset: 0.0
+    unit: "PSI"
+
+  - name: "0-5V -> 0-100 kPa"
+    type: linear
+    gain: 20.0
+    offset: 0.0
+    unit: "kPa"
+
+  - name: "0-10V -> 0-1000 RPM"
+    type: linear
+    gain: 100.0
+    offset: 0.0
+    unit: "RPM"
+
+  - name: "4-20mA -> 0-100% (via 250ohm shunt)"
+    type: linear
+    gain: 6.25
+    offset: -6.25
+    unit: "%"
+
+  - name: "0-10V -> 0-100%"
+    type: linear
+    gain: 10.0
+    offset: 0.0
+    unit: "%"
+
+  - name: "0-10V -> 0-50 GPM"
+    type: linear
+    gain: 5.0
+    offset: 0.0
+    unit: "GPM"
+
+  # Table scales (linear interpolation between points)
+  - name: "Pressure Transducer PT-200 (0-10V)"
+    type: table
+    unit: "PSI"
+    points:
+      - [0.0, 0.0]
+      - [2.5, 50.0]
+      - [5.0, 100.0]
+      - [7.5, 150.0]
+      - [10.0, 200.0]
+
+  - name: "Fuel Flow Sensor (0-5V)"
+    type: table
+    unit: "GPH"
+    points:
+      - [0.0, 0.0]
+      - [1.0, 5.0]
+      - [2.5, 15.0]
+      - [4.0, 30.0]
+      - [5.0, 40.0]

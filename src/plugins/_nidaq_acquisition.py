@@ -6,6 +6,8 @@ import time
 import threading
 from typing import Dict, Any, List, TYPE_CHECKING
 
+from ._nidaq_scaling import apply_scaling, convert_temp_unit
+
 if TYPE_CHECKING:
     from .ni_daq import NiDAQPlugin
 
@@ -40,6 +42,12 @@ def read_real(p: NiDAQPlugin) -> Dict[str, Any]:
                     p._fast_path_printed = True
                 any_success = _read_legacy_fast_ai(p, vals, n, timeout_fast)
 
+        temp_unit_map: Dict[str, str] = {}
+        for ch in p._ai_temp:
+            a = ch.get("alias")
+            if a:
+                temp_unit_map[str(a)] = str(ch.get("unit", "C"))
+
         if p._temp_tasks:
             for tt in p._temp_tasks:
                 task = tt.get("task")
@@ -51,13 +59,15 @@ def read_real(p: NiDAQPlugin) -> Dict[str, Any]:
                     if isinstance(temp_samples, list) and temp_samples and isinstance(temp_samples[0], list):
                         for idx, alias in enumerate(aliases):
                             try:
-                                vals[alias] = float(temp_samples[idx][0])
+                                raw_c = float(temp_samples[idx][0])
+                                vals[alias] = convert_temp_unit(raw_c, temp_unit_map.get(alias, "C"))
                                 any_success = True
                             except Exception:
                                 continue
                     elif isinstance(temp_samples, list):
                         try:
-                            vals[aliases[0]] = float(temp_samples[0])
+                            raw_c = float(temp_samples[0])
+                            vals[aliases[0]] = convert_temp_unit(raw_c, temp_unit_map.get(aliases[0], "C"))
                             any_success = True
                         except Exception:
                             pass
@@ -170,9 +180,7 @@ def _read_threaded_fast_ai(p: NiDAQPlugin, vals: Dict[str, Any], n: int) -> bool
                         continue
                     avg = sum(data) / float(len(data) or 1)
                     ch = alias_to_cfg.get(alias, {})
-                    sc = ch.get("scaling") or {}
-                    m = float(sc.get("m", 1.0)); b = float(sc.get("b", 0.0))
-                    vals[alias] = m * avg + b
+                    vals[alias] = apply_scaling(avg, ch.get("scaling") or {})
                     produced_aliases.append(alias)
                     any_success = True
             finally:
@@ -224,18 +232,14 @@ def _read_legacy_fast_ai(p: NiDAQPlugin, vals: Dict[str, Any], n: int, timeout_f
                     take = ch_samples[-n:] if len(ch_samples) >= n else ch_samples
                     avg = sum(take) / float(len(take) or 1)
                     ch = alias_to_cfg.get(alias, {})
-                    sc = ch.get("scaling") or {}
-                    m = float(sc.get("m", 1.0)); b = float(sc.get("b", 0.0))
-                    vals[alias] = m * avg + b
+                    vals[alias] = apply_scaling(avg, ch.get("scaling") or {})
                 any_success = True
             elif isinstance(samples, list):
                 take = samples[-n:] if len(samples) >= n else samples
                 avg = sum(take) / float(len(take) or 1)
                 alias = aliases[0]
                 ch = alias_to_cfg.get(alias, {})
-                sc = ch.get("scaling") or {}
-                m = float(sc.get("m", 1.0)); b = float(sc.get("b", 0.0))
-                vals[alias] = m * avg + b
+                vals[alias] = apply_scaling(avg, ch.get("scaling") or {})
                 any_success = True
             try:
                 cnt = int(p._fast_diag_counts.get(device, 0))

@@ -21,11 +21,13 @@ code_layout:
         - path: "src/plugins/_nidaq_discovery.py"
           role: "NI MAX / device enumeration; structured YAML template generation by module family"
         - path: "src/plugins/_nidaq_simulation.py"
-          role: "Simulation timestep for configured channels"
+          role: "Simulation timestep for configured channels; applies scaling/temp unit conversion"
         - path: "src/plugins/_nidaq_tasks.py"
           role: "DAQmx task construction, buffering, per-device fast-AI task management"
         - path: "src/plugins/_nidaq_acquisition.py"
-          role: "Acquisition worker, snapshot buffer, real-mode read/drain path"
+          role: "Acquisition worker, snapshot buffer, real-mode read/drain path; applies scaling/temp unit conversion"
+        - path: "src/plugins/_nidaq_scaling.py"
+          role: "Shared scaling helpers: apply_scaling (none/linear/table), convert_temp_unit, scaling_summary"
     ccp:
       primary: "src/plugins/ccp.py"
       helpers:
@@ -82,7 +84,7 @@ hardware:
 
 plugins:
   - id: "NI_DAQ"
-    description: "NI cDAQ acquisition (modular: ni_daq.py + _nidaq_discovery, _nidaq_simulation, _nidaq_tasks, _nidaq_acquisition): discovery helper generates structured YAML (categorized by module family); sim emits configured channels; real path supports AI voltage (10×R oversample+average), AI temperature at R, DI on-demand; per-device fast AI tasks with adaptive timeouts and warm-up; scaling/units and aliases from config. Runtime publishes latest-value snapshots decoupled from core tick."
+    description: "NI cDAQ acquisition (modular: ni_daq.py + _nidaq_discovery, _nidaq_simulation, _nidaq_tasks, _nidaq_acquisition, _nidaq_scaling): discovery helper generates structured YAML (categorized by module family); sim emits configured channels; real path supports AI voltage (10×R oversample+average), AI temperature at R, DI on-demand; per-device fast AI tasks with adaptive timeouts and warm-up. Channel scaling applied at plugin level (none/linear/table for voltage; C/F/K unit conversion for temp) via shared _nidaq_scaling helpers; table scaling supports optional extrapolation beyond table range. Constrained alias system enforces naming convention regex; aliases selected via AliasPickerDialog (library + custom entry with live validation). Config dialog double-click opens ScalingEditorDialog (voltage) or TempUnitPickerDialog (temp) with live telemetry preview and scale library import. Disabled channels display blank alias/unit on load. Runtime publishes latest-value snapshots decoupled from core tick."
     engineering_notes:
       - "Fast-AI robustness: increase device input buffer and adaptively drain based on backlog to avoid -200279 on network cDAQ + NI‑9239"
       - "Future option: move fast‑AI reads to a lightweight acquisition thread per device; continuously drain task buffer into a per-device queue; Core tick consumes latest samples and decimates to n (most recent 10×R) for publication"
@@ -136,7 +138,7 @@ workflows:
 inputs:
   - id: "IN-CDAQ"
     type: "cDAQ channels"
-    schema: "Module/channel, scaling, range, rate; fast channels (analog voltage + digital) oversample at 10×R"
+    schema: "Module/channel, constrained alias, scaling (none/linear/table for voltage; C/F/K for temp), range, rate; fast channels (analog voltage + digital) oversample at 10×R"
   - id: "IN-CAN"
     type: "CAN/CCP"
     schema: "DBC/XML, A2L + access-key unlock inputs provided by operator"

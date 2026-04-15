@@ -1,0 +1,74 @@
+# Author: T. Onkst | Date: 03092026
+# Premade alias library for NI DAQ channels.
+# Aliases must match the constrained naming convention.
+# This file can be expanded or replaced with a database in the future.
+
+aliases:
+  # Temperatures
+  - { alias: "cTP_Eng", description: "Engine Coolant Temperature" }
+  - { alias: "cTP_Oil", description: "Oil Temperature" }
+  - { alias: "cTP_Amb", description: "Ambient Temperature" }
+  - { alias: "cTP_Exh", description: "Exhaust Temperature" }
+  - { alias: "cTP_Int", description: "Intake Temperature" }
+  - { alias: "cTP_Rad", description: "Radiator Temperature" }
+  - { alias: "cTP_Cac", description: "Charge Air Cooler Temperature" }
+  - { alias: "cTP_Trb", description: "Turbo Temperature" }
+  - { alias: "cTP_Hed", description: "Head Temperature" }
+  - { alias: "cTP_Blk", description: "Block Temperature" }
+  - { alias: "cTP_Gly", description: "Glycol Temperature" }
+  - { alias: "cTP_Ful", description: "Fuel Temperature" }
+  - { alias: "cTP_Air", description: "Air Temperature" }
+  - { alias: "cTP_Wat", description: "Water Temperature" }
+  - { alias: "cTP_Dew", description: "Dew Point Temperature" }
+  - { alias: "cTP_Cat", description: "Catalyst Temperature" }
+
+  # Pressures
+  - { alias: "cPR_Oil", description: "Oil Pressure" }
+  - { alias: "cPR_Ful", description: "Fuel Pressure" }
+  - { alias: "cPR_Amb", description: "Ambient Pressure" }
+  - { alias: "cPR_Int", description: "Intake Manifold Pressure" }
+  - { alias: "cPR_Exh", description: "Exhaust Pressure" }
+  - { alias: "cPR_Cac", description: "Charge Air Cooler Pressure" }
+  - { alias: "cPR_Trb", description: "Turbo Pressure" }
+  - { alias: "cPR_Eng", description: "Engine Coolant Pressure" }
+  - { alias: "cPR_Hyd", description: "Hydraulic Pressure" }
+
+  # Flows
+  - { alias: "cFL_Ful", description: "Fuel Flow" }
+  - { alias: "cFL_Air", description: "Air Flow" }
+  - { alias: "cFL_Oil", description: "Oil Flow" }
+  - { alias: "cFL_Gly", description: "Glycol Flow" }
+  - { alias: "cFL_Exh", description: "Exhaust Flow" }
+  - { alias: "cFL_Wat", description: "Water Flow" }
+
+  # Voltages
+  - { alias: "cVL_Bat", description: "Battery Voltage" }
+  - { alias: "cVL_Alt", description: "Alternator Voltage" }
+  - { alias: "cVL_Gen", description: "Generator Voltage" }
+
+  # Speeds / Frequency
+  - { alias: "cFQ_Eng", description: "Engine Speed (Frequency)" }
+  - { alias: "cFQ_Dyn", description: "Dyno Speed (Frequency)" }
+  - { alias: "cFQ_Fan", description: "Fan Speed (Frequency)" }
+  - { alias: "cFQ_Trb", description: "Turbo Speed (Frequency)" }
+  - { alias: "cFQ_Pmp", description: "Pump Speed (Frequency)" }
+
+  # Power
+  - { alias: "cPW_Eng", description: "Engine Power" }
+  - { alias: "cPW_Dyn", description: "Dyno Power" }
+  - { alias: "cPW_Gen", description: "Generator Power" }
+  - { alias: "cPW_Ldb", description: "Load Bank Power" }
+
+  # Torque
+  - { alias: "cTQ_Eng", description: "Engine Torque" }
+  - { alias: "cTQ_Dyn", description: "Dyno Torque" }
+
+  # Digital / Miscellaneous
+  - { alias: "cDS_Eng", description: "Engine Digital Status" }
+  - { alias: "cDG_Eng", description: "Engine Diagnostic" }
+  - { alias: "cCT_Eng", description: "Engine Counter" }
+  - { alias: "cSP_Eng", description: "Engine Setpoint" }
+
+  # Load
+  - { alias: "cMS_Lod", description: "Load Measurement" }
+  - { alias: "cMS_Hyd", description: "Hydraulic Measurement" }

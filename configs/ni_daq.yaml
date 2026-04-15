@@ -10,141 +10,175 @@ channels:
     enabled: false
     scaling:
       unit: V
+      type: none
   - phys: AGENTMod1/ai1
     alias: AGENTMod1_ai1_V
     enabled: false
     scaling:
       unit: V
+      type: none
   - phys: AGENTMod1/ai2
-    alias: qPR_CompIn1
+    alias: qPR_CmpIn1
     enabled: true
     scaling:
+      type: table
       unit: V
+      points:
+      - - 0.0
+        - 0.0
+      - - 10.0
+        - 100.0
+      extrapolate: true
   - phys: AGENTMod1/ai3
     alias: AGENTMod1_ai3
     enabled: false
     scaling:
       unit: V
+      type: none
   - phys: AGENTMod2/ai0
     alias: AGENTMod2_ai0_V
     enabled: false
     scaling:
       unit: V
+      type: none
   - phys: AGENTMod2/ai1
     alias: AGENTMod2_ai1_V
     enabled: false
     scaling:
       unit: V
+      type: none
   - phys: AGENTMod2/ai2
     alias: AGENTMod2_ai2
     enabled: false
     scaling:
       unit: V
+      type: none
   - phys: AGENTMod2/ai3
     alias: AGENTMod2_ai3
     enabled: false
     scaling:
       unit: V
+      type: none
   - phys: AGENTMod3/ai0
     alias: AGENTMod3_ai0_V
     enabled: false
     scaling:
       unit: V
+      type: none
   - phys: AGENTMod3/ai1
     alias: AGENTMod3_ai1_V
     enabled: false
     scaling:
       unit: V
+      type: none
   - phys: AGENTMod3/ai2
     alias: AGENTMod3_ai2
     enabled: false
     scaling:
       unit: V
+      type: none
   - phys: AGENTMod3/ai3
     alias: AGENTMod3_ai3
     enabled: false
     scaling:
       unit: V
+      type: none
   - phys: AGENTMod4/ai0
     alias: AGENTMod4_ai0
     enabled: false
     scaling:
       unit: V
+      type: none
   - phys: AGENTMod4/ai1
     alias: AGENTMod4_ai1
     enabled: false
     scaling:
       unit: V
+      type: none
   - phys: AGENTMod4/ai2
     alias: AGENTMod4_ai2
     enabled: false
     scaling:
       unit: V
+      type: none
   - phys: AGENTMod4/ai3
     alias: AGENTMod4_ai3
     enabled: false
     scaling:
       unit: V
+      type: none
   - phys: AGENTMod5/ai0
     alias: AGENTMod5_ai0
     enabled: false
     scaling:
       unit: V
+      type: none
   - phys: AGENTMod5/ai1
     alias: AGENTMod5_ai1
     enabled: false
     scaling:
       unit: V
+      type: none
   - phys: AGENTMod5/ai2
     alias: AGENTMod5_ai2
     enabled: false
     scaling:
       unit: V
+      type: none
   - phys: AGENTMod5/ai3
     alias: AGENTMod5_ai3
     enabled: false
     scaling:
       unit: V
+      type: none
   - phys: MATRIXMod3/ai0
     alias: qPR_Amb
     enabled: true
     scaling:
       unit: V
+      type: none
   - phys: MATRIXMod3/ai1
     alias: MATRIXMod3_ai1_V
     enabled: false
     scaling:
       unit: V
+      type: none
   - phys: MATRIXMod3/ai2
     alias: MATRIXMod3_ai2
     enabled: false
     scaling:
       unit: V
+      type: none
   - phys: MATRIXMod3/ai3
     alias: MATRIXMod3_ai3
     enabled: false
     scaling:
       unit: V
+      type: none
   - phys: MATRIXMod4/ai0
     alias: qFL_Coolant
-    enabled: true
+    enabled: false
     scaling:
       unit: V
+      type: none
   - phys: MATRIXMod4/ai1
     alias: MATRIXMod4_ai1
     enabled: false
     scaling:
       unit: V
+      type: none
   - phys: MATRIXMod4/ai2
     alias: MATRIXMod4_ai2
     enabled: false
     scaling:
       unit: V
+      type: none
   - phys: MATRIXMod4/ai3
     alias: MATRIXMod4_ai3
     enabled: false
     scaling:
       unit: V
+      type: none
   ai_temp:
   - phys: AGENTMod7/ai0
     alias: qTP_Amb
@@ -256,7 +290,7 @@ channels:
       excitation_current_a: 0.001
   - phys: MATRIXMod1/ai0
     alias: qTP_CoolantIn
-    enabled: true
+    enabled: false
     unit: C
     sensor:
       type: TC
@@ -480,164 +514,164 @@ channels:
       subtype: K
   di:
   - phys: MATRIXMod6/port0/line0
-    alias: qDI_In1
-    enabled: true
+    alias: ''
+    enabled: false
     initial: 0
   - phys: MATRIXMod6/port0/line1
-    alias: MATRIXMod6_port0_line1_DI
+    alias: ''
     enabled: false
     initial: 0
   - phys: MATRIXMod6/port0/line2
-    alias: MATRIXMod6_port0_line2
+    alias: ''
     enabled: false
     initial: 0
   - phys: MATRIXMod6/port0/line3
-    alias: MATRIXMod6_port0_line3
+    alias: ''
     enabled: false
     initial: 0
   - phys: MATRIXMod6/port0/line4
-    alias: MATRIXMod6_port0_line4
+    alias: ''
     enabled: false
     initial: 0
   - phys: MATRIXMod6/port0/line5
-    alias: MATRIXMod6_port0_line5
+    alias: ''
     enabled: false
     initial: 0
   - phys: MATRIXMod6/port0/line6
-    alias: MATRIXMod6_port0_line6
+    alias: ''
     enabled: false
     initial: 0
   - phys: MATRIXMod6/port0/line7
-    alias: MATRIXMod6_port0_line7
+    alias: ''
     enabled: false
     initial: 0
   - phys: MATRIXMod6/port0/line8
-    alias: MATRIXMod6_port0_line8
+    alias: ''
     enabled: false
     initial: 0
   - phys: MATRIXMod6/port0/line9
-    alias: MATRIXMod6_port0_line9
+    alias: ''
     enabled: false
     initial: 0
   - phys: MATRIXMod6/port0/line10
-    alias: MATRIXMod6_port0_line10
+    alias: ''
     enabled: false
     initial: 0
   - phys: MATRIXMod6/port0/line11
-    alias: MATRIXMod6_port0_line11
+    alias: ''
     enabled: false
     initial: 0
   - phys: MATRIXMod6/port0/line12
-    alias: MATRIXMod6_port0_line12
+    alias: ''
     enabled: false
     initial: 0
   - phys: MATRIXMod6/port0/line13
-    alias: MATRIXMod6_port0_line13
+    alias: ''
     enabled: false
     initial: 0
   - phys: MATRIXMod6/port0/line14
-    alias: MATRIXMod6_port0_line14
+    alias: ''
     enabled: false
     initial: 0
   - phys: MATRIXMod6/port0/line15
-    alias: MATRIXMod6_port0_line15
+    alias: ''
     enabled: false
     initial: 0
   do:
   - phys: MATRIXMod6/port1/line0
-    alias: qDO_Out1
-    enabled: true
+    alias: ''
+    enabled: false
     initial: 0
   - phys: MATRIXMod6/port1/line1
-    alias: MATRIXMod6_port1_line1_DO
+    alias: ''
     enabled: false
     initial: 0
   - phys: MATRIXMod6/port1/line2
-    alias: MATRIXMod6_port1_line2
+    alias: ''
     enabled: false
     initial: 0
   - phys: MATRIXMod6/port1/line3
-    alias: MATRIXMod6_port1_line3
+    alias: ''
     enabled: false
     initial: 0
   - phys: MATRIXMod6/port1/line4
-    alias: MATRIXMod6_port1_line4
+    alias: ''
     enabled: false
     initial: 0
   - phys: MATRIXMod6/port1/line5
-    alias: MATRIXMod6_port1_line5
+    alias: ''
     enabled: false
     initial: 0
   - phys: MATRIXMod6/port1/line6
-    alias: MATRIXMod6_port1_line6
+    alias: ''
     enabled: false
     initial: 0
   - phys: MATRIXMod6/port1/line7
-    alias: MATRIXMod6_port1_line7
+    alias: ''
     enabled: false
     initial: 0
   - phys: MATRIXMod6/port1/line8
-    alias: MATRIXMod6_port1_line8
+    alias: ''
     enabled: false
     initial: 0
   - phys: MATRIXMod6/port1/line9
-    alias: MATRIXMod6_port1_line9
+    alias: ''
     enabled: false
     initial: 0
   - phys: MATRIXMod6/port1/line10
-    alias: MATRIXMod6_port1_line10
+    alias: ''
     enabled: false
     initial: 0
   - phys: MATRIXMod6/port1/line11
-    alias: MATRIXMod6_port1_line11
+    alias: ''
     enabled: false
     initial: 0
   - phys: MATRIXMod6/port1/line12
-    alias: MATRIXMod6_port1_line12
+    alias: ''
     enabled: false
     initial: 0
   - phys: MATRIXMod6/port1/line13
-    alias: MATRIXMod6_port1_line13
+    alias: ''
     enabled: false
     initial: 0
   - phys: MATRIXMod6/port1/line14
-    alias: MATRIXMod6_port1_line14
+    alias: ''
     enabled: false
     initial: 0
   - phys: MATRIXMod6/port1/line15
-    alias: MATRIXMod6_port1_line15
+    alias: ''
     enabled: false
     initial: 0
   ao:
   - phys: MATRIXMod5/ao0
-    alias: qVO_ValvePos
-    enabled: true
+    alias: ''
+    enabled: false
     scaling:
-      unit: V
+      unit: ''
     range_v:
       min: 0.0
       max: 10.0
   - phys: MATRIXMod5/ao1
-    alias: MATRIXMod5_ao1
+    alias: ''
     enabled: false
     scaling:
-      unit: V
+      unit: ''
     range_v:
       min: 0.0
       max: 10.0
   - phys: MATRIXMod5/ao2
-    alias: MATRIXMod5_ao2
+    alias: ''
     enabled: false
     scaling:
-      unit: V
+      unit: ''
     range_v:
       min: 0.0
       max: 10.0
   - phys: MATRIXMod5/ao3
-    alias: MATRIXMod5_ao3
+    alias: ''
     enabled: false
     scaling:
-      unit: V
+      unit: ''
     range_v:
       min: 0.0
       max: 10.0

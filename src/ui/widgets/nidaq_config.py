@@ -1,4 +1,4 @@
-# Author: T. Onkst | Date: 08192025
+# Author: T. Onkst | Date: 03092026
 
 from __future__ import annotations
 
@@ -27,6 +27,15 @@ try:
 except Exception:
 	raise
 
+from .nidaq_alias_picker import AliasPickerDialog, validate_alias
+from .nidaq_scaling_editor import ScalingEditorDialog, TempUnitPickerDialog
+
+try:
+	from src.plugins._nidaq_scaling import scaling_summary
+except Exception:
+	def scaling_summary(s: dict) -> str:
+		return str(s.get("type", "none"))
+
 
 class NiDaqConfigDialog(QDialog):
 	"""Configurator for NI_DAQ plugin. Reads/writes configs/ni_daq.yaml.
@@ -49,6 +58,29 @@ class NiDaqConfigDialog(QDialog):
 		self._inv_path = self._cfg_dir / "ni_daq.generated.yaml"
 		self._cfg: Dict[str, Any] = {}
 		self._inventory: Dict[str, List[str]] = {"ai": [], "di": [], "do": [], "ao": []}
+		self._ai_scaling: Dict[int, Dict[str, Any]] = {}
+		self._telemetry_getter = None
+		try:
+			from src.core.ipc.bus import create_ui_subscriber  # type: ignore
+			sockets = create_ui_subscriber()
+			if sockets is not None:
+				sub = sockets.telemetry_sub
+				self._telem_sub = sub
+				self._telem_cache: Dict[str, Any] = {}
+				def _getter() -> Dict[str, Any]:
+					import zmq  # type: ignore
+					try:
+						while True:
+							parts = self._telem_sub.recv_multipart(zmq.NOBLOCK)
+							if len(parts) >= 2:
+								import json
+								self._telem_cache = json.loads(parts[1]).get("values", {})
+					except Exception:
+						pass
+					return dict(self._telem_cache)
+				self._telemetry_getter = _getter
+		except Exception:
+			pass
 		self._init_ui()
 		self._load()
 
@@ -96,7 +128,8 @@ class NiDaqConfigDialog(QDialog):
 		h.setSectionResizeMode(QHeaderView.Stretch)
 		tbl.verticalHeader().setVisible(False)
 		tbl.setSelectionBehavior(QAbstractItemView.SelectRows)
-		tbl.setEditTriggers(QAbstractItemView.AllEditTriggers)
+		tbl.setEditTriggers(QAbstractItemView.NoEditTriggers)
+		tbl.cellDoubleClicked.connect(lambda r, c, t=tbl: self._on_cell_double_click(t, r, c))  # type: ignore
 		return tbl
 
 	# Data I/O
@@ -157,37 +190,41 @@ class NiDaqConfigDialog(QDialog):
 		di_cfg = {str(c.get("phys")): c for c in (ch.get("di") or []) if c.get("phys")}
 		do_cfg = {str(c.get("phys")): c for c in (ch.get("do") or []) if c.get("phys")}
 		ao_cfg = {str(c.get("phys")): c for c in (ch.get("ao") or []) if c.get("phys")}
-		# AI
+		self._ai_scaling.clear()
 		self.tbl_ai.setRowCount(len(self._inventory["ai"]))
 		for row, phys in enumerate(self._inventory["ai"]):
 			cfg = ai_cfg.get(phys, {})
 			enabled = bool(cfg.get("enabled", False))
-			alias = str(cfg.get("alias", ""))
-			unit = (cfg.get("scaling") or {}).get("unit") or cfg.get("unit", "")
+			alias = str(cfg.get("alias", "")) if enabled else ""
+			sc = dict(cfg.get("scaling") or {})
+			unit = (sc.get("unit") or cfg.get("unit", "")) if enabled else ""
 			meas = "Voltage"
-			if cfg in ai_cfg.values() and cfg.get("sensor"):
+			if cfg.get("sensor"):
 				stype = str((cfg.get("sensor") or {}).get("type", "TC")).upper()
 				meas = "RTD" if stype == "RTD" else "TC"
-			# Enabled
+				if not sc.get("type"):
+					sc = {"type": "none", "unit": unit or "C"}
+			else:
+				if not sc.get("type"):
+					sc["type"] = "none"
+			self._ai_scaling[row] = sc
 			self._set_checkbox(self.tbl_ai, row, 0, enabled)
-			# Hardware
-			self.tbl_ai.setItem(row, 1, QTableWidgetItem(phys))
-			self.tbl_ai.item(row, 1).setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
-			# Alias
+			hw_item = QTableWidgetItem(phys)
+			hw_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
+			self.tbl_ai.setItem(row, 1, hw_item)
 			self.tbl_ai.setItem(row, 2, QTableWidgetItem(alias))
-			# Unit
 			self.tbl_ai.setItem(row, 3, QTableWidgetItem(unit))
-			# Measurement combobox
 			cb = QComboBox(self.tbl_ai); cb.addItems(["Voltage", "TC", "RTD", "Current"]); cb.setCurrentText(meas)
 			self.tbl_ai.setCellWidget(row, 4, cb)
-			# Scaling (simple text placeholder)
-			self.tbl_ai.setItem(row, 5, QTableWidgetItem("No Scale"))
+			scale_item = QTableWidgetItem(scaling_summary(sc))
+			scale_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
+			self.tbl_ai.setItem(row, 5, scale_item)
 		# DI
 		self.tbl_di.setRowCount(len(self._inventory["di"]))
 		for row, phys in enumerate(self._inventory["di"]):
 			cfg = di_cfg.get(phys, {})
 			enabled = bool(cfg.get("enabled", False))
-			alias = str(cfg.get("alias", ""))
+			alias = str(cfg.get("alias", "")) if enabled else ""
 			self._set_checkbox(self.tbl_di, row, 0, enabled)
 			self.tbl_di.setItem(row, 1, QTableWidgetItem(phys)); self.tbl_di.item(row, 1).setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
 			self.tbl_di.setItem(row, 2, QTableWidgetItem(alias))
@@ -196,7 +233,7 @@ class NiDaqConfigDialog(QDialog):
 		for row, phys in enumerate(self._inventory["do"]):
 			cfg = do_cfg.get(phys, {})
 			enabled = bool(cfg.get("enabled", False))
-			alias = str(cfg.get("alias", ""))
+			alias = str(cfg.get("alias", "")) if enabled else ""
 			self._set_checkbox(self.tbl_do, row, 0, enabled)
 			self.tbl_do.setItem(row, 1, QTableWidgetItem(phys)); self.tbl_do.item(row, 1).setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
 			self.tbl_do.setItem(row, 2, QTableWidgetItem(alias))
@@ -205,12 +242,58 @@ class NiDaqConfigDialog(QDialog):
 		for row, phys in enumerate(self._inventory["ao"]):
 			cfg = ao_cfg.get(phys, {})
 			enabled = bool(cfg.get("enabled", False))
-			alias = str(cfg.get("alias", ""))
-			unit = (cfg.get("scaling") or {}).get("unit") or cfg.get("unit", "")
+			alias = str(cfg.get("alias", "")) if enabled else ""
+			unit = ((cfg.get("scaling") or {}).get("unit") or cfg.get("unit", "")) if enabled else ""
 			self._set_checkbox(self.tbl_ao, row, 0, enabled)
 			self.tbl_ao.setItem(row, 1, QTableWidgetItem(phys)); self.tbl_ao.item(row, 1).setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
 			self.tbl_ao.setItem(row, 2, QTableWidgetItem(alias))
 			self.tbl_ao.setItem(row, 3, QTableWidgetItem(unit))
+
+	def _on_cell_double_click(self, table: QTableWidget, row: int, col: int) -> None:
+		if table is self.tbl_ai:
+			if col == 2:
+				self._open_alias_picker(table, row, col)
+			elif col == 5:
+				self._open_scaling_editor(row)
+			elif col == 3:
+				pass
+		elif table in (self.tbl_di, self.tbl_do, self.tbl_ao):
+			if col == 2:
+				self._open_alias_picker(table, row, col)
+
+	def _open_alias_picker(self, table: QTableWidget, row: int, col: int) -> None:
+		current = table.item(row, col).text().strip() if table.item(row, col) else ""
+		dlg = AliasPickerDialog(parent=self, current_alias=current)
+		if dlg.exec() == QDialog.Accepted and dlg.selected_alias:
+			table.setItem(row, col, QTableWidgetItem(dlg.selected_alias))
+
+	def _open_scaling_editor(self, row: int) -> None:
+		meas_cb = self.tbl_ai.cellWidget(row, 4)
+		meas = meas_cb.currentText() if isinstance(meas_cb, QComboBox) else "Voltage"
+		alias = self.tbl_ai.item(row, 2).text().strip() if self.tbl_ai.item(row, 2) else ""
+		if meas in ("TC", "RTD"):
+			current_unit = self.tbl_ai.item(row, 3).text().strip() if self.tbl_ai.item(row, 3) else "C"
+			dlg = TempUnitPickerDialog(parent=self, current_unit=current_unit or "C")
+			if dlg.exec() == QDialog.Accepted:
+				self.tbl_ai.setItem(row, 3, QTableWidgetItem(dlg.selected_unit))
+				sc = {"type": "none", "unit": dlg.selected_unit}
+				self._ai_scaling[row] = sc
+				self.tbl_ai.setItem(row, 5, QTableWidgetItem(scaling_summary(sc)))
+		else:
+			current_sc = dict(self._ai_scaling.get(row) or {"type": "none", "unit": "V"})
+			dlg = ScalingEditorDialog(
+				parent=self,
+				current_scaling=current_sc,
+				channel_alias=alias,
+				telemetry_getter=self._telemetry_getter,
+			)
+			if dlg.exec() == QDialog.Accepted and dlg.result_scaling:
+				sc = dlg.result_scaling
+				self._ai_scaling[row] = sc
+				self.tbl_ai.setItem(row, 3, QTableWidgetItem(sc.get("unit", "")))
+				scale_item = QTableWidgetItem(scaling_summary(sc))
+				scale_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
+				self.tbl_ai.setItem(row, 5, scale_item)
 
 	def _set_checkbox(self, table: QTableWidget, row: int, col: int, checked: bool) -> None:
 		item = QTableWidgetItem()
@@ -345,7 +428,6 @@ class NiDaqConfigDialog(QDialog):
 			pass
 
 	def _on_accept(self) -> None:
-		# Collect all rows (enabled and disabled) so YAML preserves full inventory
 		def _collect_all(table: QTableWidget, alias_col: int) -> List[Tuple[str, str, bool, str, str]]:
 			rows: List[Tuple[str, str, bool, str, str]] = []
 			for r in range(table.rowCount()):
@@ -365,10 +447,20 @@ class NiDaqConfigDialog(QDialog):
 		di_rows = _collect_all(self.tbl_di, 2)
 		do_rows = _collect_all(self.tbl_do, 2)
 		ao_rows = _collect_all(self.tbl_ao, 2)
-		# Enforce alias present for enabled rows only
 		missing = [phys for (phys, alias, en, _, _) in (ai_rows + di_rows + do_rows + ao_rows) if en and not alias]
 		if missing:
-			QMessageBox.warning(self, "Missing Aliases", f"Please set an alias for: {', '.join(missing[:10])}{'…' if len(missing)>10 else ''}")
+			QMessageBox.warning(self, "Missing Aliases", f"Please set an alias for: {', '.join(missing[:10])}{'...' if len(missing)>10 else ''}")
+			return
+		invalid = [
+			f"{alias} ({phys})"
+			for (phys, alias, en, _, _) in (ai_rows + di_rows + do_rows + ao_rows)
+			if en and alias and not validate_alias(alias)
+		]
+		if invalid:
+			QMessageBox.warning(
+				self, "Invalid Aliases",
+				f"The following aliases do not match the naming convention:\n{chr(10).join(invalid[:10])}{'...' if len(invalid)>10 else ''}"
+			)
 			return
 		# Build updated blocks to merge back into existing YAML (preserve unknown/top-level keys)
 		updated: Dict[str, Any] = {}
@@ -384,7 +476,7 @@ class NiDaqConfigDialog(QDialog):
 		old_ch = (self._cfg.get("channels") or {})
 		old_ai_v = {str(c.get("phys")): c for c in (old_ch.get("ai_voltage") or []) if c.get("phys")}
 		old_ai_t = {str(c.get("phys")): c for c in (old_ch.get("ai_temp") or []) if c.get("phys")}
-		for phys, alias, en, unit, meas in ai_rows:
+		for row_idx, (phys, alias, en, unit, meas) in enumerate(ai_rows):
 			m = meas or "Voltage"
 			if m == "RTD":
 				base = dict(old_ai_t.get(phys) or {})
@@ -393,21 +485,25 @@ class NiDaqConfigDialog(QDialog):
 				sensor.setdefault("subtype", "PT100")
 				sensor.setdefault("wires", 3)
 				sensor.setdefault("excitation_current_a", 0.001)
-				item = {"phys": phys, "alias": alias or base.get("alias", ""), "enabled": en if en is not None else base.get("enabled", False), "unit": unit or base.get("unit", "C"), "sensor": sensor}
+				sc = dict(self._ai_scaling.get(row_idx) or {})
+				item = {"phys": phys, "alias": alias or base.get("alias", ""), "enabled": en if en is not None else base.get("enabled", False), "unit": sc.get("unit") or unit or base.get("unit", "C"), "sensor": sensor}
 				chs["ai_temp"].append(item)
 			elif m == "TC":
 				base = dict(old_ai_t.get(phys) or {})
 				sensor = dict(base.get("sensor") or {})
 				sensor["type"] = "TC"
 				sensor.setdefault("subtype", "K")
-				item = {"phys": phys, "alias": alias or base.get("alias", ""), "enabled": en if en is not None else base.get("enabled", False), "unit": unit or base.get("unit", "C"), "sensor": sensor}
+				sc = dict(self._ai_scaling.get(row_idx) or {})
+				item = {"phys": phys, "alias": alias or base.get("alias", ""), "enabled": en if en is not None else base.get("enabled", False), "unit": sc.get("unit") or unit or base.get("unit", "C"), "sensor": sensor}
 				chs["ai_temp"].append(item)
 			else:
 				base = dict(old_ai_v.get(phys) or {})
-				scaling = dict(base.get("scaling") or {})
-				if unit:
-					scaling["unit"] = unit
-				item = {"phys": phys, "alias": alias or base.get("alias", ""), "enabled": en if en is not None else base.get("enabled", False), "scaling": scaling or {"unit": unit}}
+				sc = dict(self._ai_scaling.get(row_idx) or base.get("scaling") or {})
+				if unit and not sc.get("unit"):
+					sc["unit"] = unit
+				if not sc.get("type"):
+					sc["type"] = "none"
+				item = {"phys": phys, "alias": alias or base.get("alias", ""), "enabled": en if en is not None else base.get("enabled", False), "scaling": sc}
 				chs["ai_voltage"].append(item)
 		for phys, alias, en, _, _ in di_rows:
 			chs["di"].append({"phys": phys, "alias": alias, "enabled": en, "initial": 0})

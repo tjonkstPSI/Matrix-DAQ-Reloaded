@@ -43,7 +43,11 @@ channels:
       alias: qPR_Amb
       enabled: true
       range_v: { min: 0, max: 10 }
-      scaling: { m: 10.0, b: 0.0, unit: kPa }
+      scaling:
+        type: linear
+        gain: 10.0
+        offset: 0.0
+        unit: kPa
   ai_temp:
     - phys: Dev1/ai1
       alias: qTP_Amb
@@ -65,9 +69,41 @@ watchdog:
   enabled: false
 ```
 
+### Scaling System
+
+Voltage channels support three scaling types persisted in `scaling`:
+
+| Type | Keys | Behavior |
+|------|------|----------|
+| `none` | `unit` | Raw voltage passed through |
+| `linear` | `gain`, `offset`, `unit` | `scaled = raw * gain + offset` |
+| `table` | `points`, `unit`, `extrapolate` | Piecewise linear interpolation between `[raw, scaled]` pairs; clamp outside range by default, or linearly extrapolate when `extrapolate: true` |
+
+Temperature channels (RTD/TC) support unit selection (`C`, `F`, `K`); NI-DAQmx reads in Celsius and the plugin converts using well-known formulas.
+
+Scaling is applied at the plugin level before values are published to the orchestrator. Both the real acquisition path (`_nidaq_acquisition.py`) and the simulation path (`_nidaq_simulation.py`) call the shared `apply_scaling()` / `convert_temp_unit()` helpers in `_nidaq_scaling.py`.
+
+**Scale Library**: Premade scales are stored in `configs/scale_library.yaml` and can be imported into the scaling editor dialog.
+
+### Constrained Alias System
+
+All NI DAQ channel aliases (AI, DI, DO, AO) must match a constrained naming convention enforced by regex validation. The pattern requires:
+
+- A prefix character from `[qcemixypvl]` (or `[eiyx]` for freeform aliases)
+- A two-letter measurement-type code (e.g., `TP`, `PR`, `FL`, `VL`)
+- An underscore separator
+- One or more three-letter subsystem/location codes (e.g., `Eng`, `Oil`, `Amb`)
+
+Aliases are selected via the `AliasPickerDialog` which offers:
+- A searchable library loaded from `configs/alias_library.yaml`
+- A custom-entry tab with live regex validation
+
+Alias validation is also enforced on config save; invalid aliases on enabled channels block the save with a diagnostic message.
+
 ### Validation Rules (Current)
 - In real mode, NI-DAQmx Python package must be available.
 - Enabled aliases must be unique within NI_DAQ plugin.
+- Enabled aliases must match the constrained naming convention regex.
 - Real-mode inventory check compares configured physical channels to discovered hardware.
 - Watchdog block is validated when enabled:
   - mode `driver` or `digital_loopback`

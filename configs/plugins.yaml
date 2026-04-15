@@ -1,16 +1,10 @@
 selected_plugins:
-- CAN
 - EngineTest
-- CCP
-- Calculated_Channels
 - NI_DAQ
-- Modbus
 - Channel_Manager
-- Statistics
-- Cycle
-- LoadBank
 selected_displays:
 - AllChannelsTable (grouped by type)
+- PlotsBlank (user selects channels)
 data_root: C:/Projects/Python/Matrix_v2_retry/runs
 test_cell: '0'
 data_mode: real
