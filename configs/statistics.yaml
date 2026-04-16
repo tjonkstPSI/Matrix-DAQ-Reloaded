@@ -1,36 +1,30 @@
-# Author: T. Onkst | Date: 08122025
-
-# Snapshot-based statistics: compute metrics over a configurable window
-# only when manually triggered or when an automatic trigger fires (rising edge).
 enabled: true
-
 snapshot:
   window:
-    seconds: 5
+    seconds: 5.0
     samples: null
-  capture_mode: backward      # backward | forward
-  notify_on_skip: true        # notify operator if a snapshot is skipped due to min_samples
-
+  capture_mode: backward
+  notify_on_skip: true
 metrics:
-  selected: [mean, stdev, min, max, p2p]   # default metrics if a channel does not override
-
+  selected:
+  - mean
+  - stdev
+  - min
+  - max
+  - p2p
 manual_logging:
   enabled: true
-
 automatic_logging:
   enabled: false
   trigger:
-    channel: "Room Temp"
-    comparator: ">"          # one of: >, >=, <, <=
+    channel: Room Temp
+    comparator: '>'
     threshold: 25.0
-    edge: rising              # rising | falling
-    holdoff_s: 0.0            # optional re-arm delay after a log
-
+    edge: rising
+    holdoff_s: 0.0
 output:
-  format: wide                # wide | long (export deferred until recording pipeline ready)
+  format: wide
   enable_excel_export: false
   excel_per_stat_sheet: true
-
-channels: []                  # e.g., [{ alias: "Room Temp", stats: [mean, stdev, min, max, p2p], enabled: true }]
-
-
+channels: []
+recording_rate_hz: 10

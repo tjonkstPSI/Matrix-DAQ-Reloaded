@@ -84,6 +84,10 @@ hardware:
       interface: "Ethernet"
       protocols: ["Modbus TCP"]
       drivers: []
+    - name: "Omega Weather Station"
+      interface: "Ethernet"
+      protocols: ["Modbus TCP"]
+      drivers: []
     - name: "Load Bank"
       interface: "Ethernet"
       protocols: ["Modbus TCP"]
@@ -91,12 +95,12 @@ hardware:
 
 plugins:
   - id: "NI_DAQ"
-    description: "NI cDAQ acquisition (modular: ni_daq.py + _nidaq_discovery, _nidaq_simulation, _nidaq_tasks, _nidaq_acquisition, _nidaq_scaling): discovery helper generates structured YAML (categorized by module family); sim emits configured channels; real path supports AI voltage with configurable oversample (default 10×R) and IIR Butterworth decimation filter (cutoff=R/2, 4th-order SOS) or legacy averaging; AI temperature at R; DI on-demand; per-device fast AI tasks with adaptive timeouts and warm-up. Tick rate aligned to core tick from channel_manager.yaml recording_rate_hz (ni_daq.yaml recording_rate_hz deprecated to 'auto'). Butterworth mode eliminates deques: fast reader thread applies filter+scaling per sample, writes pre-computed values to shared dict under brief lock; snapshot worker copies dict only. Channel scaling applied at plugin level (none/linear/table for voltage; C/F/K unit conversion for temp) via shared _nidaq_scaling helpers; table scaling supports optional extrapolation beyond table range; points pre-sorted at config load. Constrained alias system enforces naming convention regex; aliases selected via shared AliasPickerDialog (loads standard channels from configs/standard_channels.json + custom entry with live validation). Config dialog double-click opens ScalingEditorDialog (voltage) or TempUnitPickerDialog (temp) with live telemetry preview and scale library import. Disabled channels display blank alias/unit on load. Runtime publishes latest-value snapshots decoupled from core tick. ZMQ PUB/SUB HWM bounded to 10."
+    description: "NI cDAQ acquisition (modular: ni_daq.py + _nidaq_discovery, _nidaq_simulation, _nidaq_tasks, _nidaq_acquisition, _nidaq_scaling): discovery helper generates structured YAML (categorized by module family); sim emits configured channels; real path supports AI voltage with configurable oversample (default 10×R) and IIR Butterworth decimation filter (cutoff=R/2, 4th-order SOS) or legacy averaging; AI temperature at R; DI on-demand; per-device fast AI tasks with adaptive timeouts and warm-up. Tick rate aligned to core tick from channel_manager.yaml recording_rate_hz (ni_daq.yaml recording_rate_hz deprecated to 'auto'). Butterworth mode eliminates deques: fast reader thread applies filter+scaling per sample, writes pre-computed values to shared dict under brief lock; snapshot worker copies dict only. Channel scaling applied at plugin level (none/linear/table for voltage; C/F/K unit conversion for temp) via shared _nidaq_scaling helpers; table scaling supports optional extrapolation beyond table range; points pre-sorted at config load. Constrained alias system enforces naming convention regex; aliases selected via shared AliasPickerDialog (loads standard channels from configs/standard_channels.json + custom entry with live validation). Config dialog double-click opens ScalingEditorDialog (voltage) or TempUnitPickerDialog (temp) with live telemetry preview and scale library import. Disabled channels display blank alias/unit on load. Runtime publishes latest-value snapshots decoupled from core tick. ZMQ PUB/SUB HWM bounded to 10. Hardware migration system: ni_daq.yaml persists device_map (name → product_type); when hardware inventory diverges from config, compute_hardware_diff() classifies old devices by capability (AI voltage / AI thermocouple-RTD / Digital / AO, inferred from channel categories) and channel count; HardwareMigrationDialog (nidaq_migration_dialog.py) offers only compatible new modules (chassis excluded; type-safe; channel count ≥ old); auto-suggests mappings by matching product_type or AI sub-type (TC/RTD pattern: 9210/11/12/13/14/16/17/19/26/35/36/37); apply_migration() rewrites phys strings preserving aliases/scaling/sensor config, falls back to regenerate-defaults prompt when no mappable modules exist."
     engineering_notes:
       - "Fast-AI robustness: increase device input buffer and adaptively drain based on backlog to avoid -200279 on network cDAQ + NI‑9239"
       - "Future option: move fast‑AI reads to a lightweight acquisition thread per device; continuously drain task buffer into a per-device queue; Core tick consumes latest samples and decimates to n (most recent 10×R) for publication"
   - id: "CAN"
-    description: "Import DBC/XML, discover/select CAN signals with aliases; configure buses and acquire via NI-XNET. Includes CAN configure dialog with QTableWidget-based signal list (checkbox, Message, Signal, Unit, Alias columns); double-click Alias column opens shared AliasPickerDialog (standard channels from JSON + custom). Blank aliases on checked signals are blocked on save. Duplicate-alias validation only checks enabled signals; config dialog blocks save with a descriptive warning when checked signals produce duplicate aliases. Real-mode DBC decode, J1939 PGN-aware fallback matching, and runtime diagnostics channels (frames_rx/decode_hits/last_decode_age_s)."
+    description: "Import DBC/XML, discover/select CAN signals with aliases; configure buses and acquire via NI-XNET. Includes CAN configure dialog with QTableWidget-based signal list (checkbox, Message, Signal, Unit, Alias columns); double-click Alias column opens shared AliasPickerDialog (standard channels from JSON + custom). Blank aliases on checked signals are blocked on save. Duplicate-alias validation only checks enabled signals; config dialog blocks save with a descriptive warning when checked signals produce duplicate aliases. Real-mode DBC decode, J1939 PGN-aware fallback matching, and runtime diagnostics channels (frames_rx/decode_hits/last_decode_age_s). Sim/real mode is controlled globally via the launch dialog Offline Mode checkbox, not per-plugin."
   - id: "CCP"
     description: "CCP over CAN (read-only; modular: ccp.py + _ccp_a2l, _ccp_protocol): import A2L, configure bus/session, algorithmic access-key unlock, select measurements (use A2L names) with optional global naming prefix. Supports multi-device placeholder configuration for up to two ECMs using devices[*] with Primary/Secondary role mapping to station_address 0x0/0x1. Runtime is decoupled from core tick via latest-value snapshot buffering and exposes freshness telemetry. SHORT_UP poll timeout honors configured io_timeout_s (no hard cap); occasional poll fails under bus contention are normal and handled by sample-and-hold."
   - id: "Calculated_Channels"
@@ -110,7 +114,9 @@ plugins:
   - id: "Statistics"
     description: "Secondary logger of stats (mean, stdev, min, max) with rolling/fixed windows and optional triggers. Runtime processing is decoupled from core tick through queued updates and background processing. Config UI (right-click configure) covers window settings, metrics selection, auto-trigger, and per-channel overrides."
   - id: "Vaisala"
-    description: "Vaisala humidity transmitter (HMT330 / Indigo510) via Modbus TCP. Reads float32 holding registers for 13 measurement channels (RH, T, Td, Td/f, a, x, Tw, H2Ov, pw, pws, H, dT, H2Ow) with a hardcoded REGISTER_MAP. Writes pressure compensation (fixed hPa or dynamic from any telemetry channel with gain/offset) to temporary register 771-772 and filtering flags (None/Std/Ext) to registers 1281/1282 every poll cycle. Orchestrator feeds merged telemetry via update_telemetry(vals) for dynamic pressure. Threaded poll loop with configurable rate and auto-reconnect. Sim mode provides sine-wave values per channel. Config UI has model dropdown (auto-sets unit_id: HMT330=1, Indigo510=241), checkbox-based channel selection with read-only aliases (blank by default, double-click opens shared AliasPickerDialog), pressure/filtering groups, and connection settings."
+    description: "Vaisala humidity transmitter (HMT330 / Indigo510) via Modbus TCP. Reads float32 holding registers for 13 measurement channels (RH, T, Td, Td/f, a, x, Tw, H2Ov, pw, pws, H, dT, H2Ow) with a hardcoded REGISTER_MAP. Writes pressure compensation (fixed hPa or dynamic from any telemetry channel with gain/offset) to temporary register 771-772 and filtering flags (None/Std/Ext) to registers 1281/1282 every poll cycle. Orchestrator feeds merged telemetry via update_telemetry(vals) for dynamic pressure. Threaded poll loop with configurable rate and auto-reconnect. Sim mode provides sine-wave values per channel. Config UI has model dropdown (auto-sets unit_id: HMT330=1, Indigo510=241), checkbox-based channel selection with read-only aliases (blank by default, double-click opens shared AliasPickerDialog), pressure/filtering groups, and connection settings. Sim/real mode is controlled globally via the launch dialog Offline Mode checkbox, not per-plugin."
+  - id: "Omega"
+    description: "Omega weather station via Modbus TCP. Reads 3 fixed channels (temp addr 8, baro addr 10, humidity addr 12) as big-endian float32 from holding registers in a single bulk read. Handles Omega-specific error/NaN sentinel codes (0x7F800000-03) which are reported as NaN in telemetry. Default aliases xTP_Amb (C), xPR_Amb (kPa), xHM_Amb (Pct) are user-configurable via a table in the config dialog (ID/Unit/Alias columns, double-click Alias column opens shared AliasPickerDialog). Aliases persist in omega.yaml channels block. Threaded poll loop with auto-reconnect. Config dialog exposes host/port; poll rate and timeout stay in YAML for super-users."
   - id: "EngineTest"
     description: "Collects run metadata (lock-test fields); implemented in src/plugins/engine_test.py (no longer an orchestrator stub)."
   - id: "Channel_Manager"
@@ -122,8 +128,9 @@ workflows:
     trigger: "User"
     steps:
       - "Show splash screen with version and logo while loading"
-      - "Launch configuration dialog: select plugins, choose data root folder, enter Test Cell name, toggle data mode (real|sim), optional: import previous configuration"
-      - "On 'Launch': apply selections, write temp launch settings, open Console"
+      - "Launch configuration dialog: select plugins, choose data root folder, enter Test Cell name, toggle Offline Mode (global sim for all selected plugins), optional: import previous configuration"
+      - "On 'Launch': apply selections, write data_mode to plugins.yaml, open Console"
+      - "Orchestrator reads data_mode at startup and on reload; when offline, forces every plugin.mode=sim and restarts plugins dynamically if the global toggle changes mid-session"
       - "Console shows plugin health (green/red)"
       - "Streaming starts (not recording)"
   - id: "WF-LOCK_START_STOP"
@@ -491,7 +498,7 @@ system_health:
   watchdog:
     ni_daq:
       enabled: true
-        notes: "Health worker tracks consec_failures and last_good_read_age_s; failures increment only when no device read succeeds in a tick; warm-up window suppresses early counts. Optional telemetry channels exposed via config."
+      notes: "Health worker tracks consec_failures and last_good_read_age_s; failures increment only when no device read succeeds in a tick; warm-up window suppresses early counts. Optional telemetry channels exposed via config."
       modes:
         driver:
           refresh_rate_hz_default: 2

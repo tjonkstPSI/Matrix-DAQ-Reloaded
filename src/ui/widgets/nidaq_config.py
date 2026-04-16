@@ -58,6 +58,7 @@ class NiDaqConfigDialog(QDialog):
 		self._inv_path = self._cfg_dir / "ni_daq.generated.yaml"
 		self._cfg: Dict[str, Any] = {}
 		self._inventory: Dict[str, List[str]] = {"ai": [], "di": [], "do": [], "ao": []}
+		self._inv_raw: Dict[str, Any] = {"devices": []}
 		self._ai_scaling: Dict[int, Dict[str, Any]] = {}
 		self._telemetry_getter = None
 		try:
@@ -147,6 +148,7 @@ class NiDaqConfigDialog(QDialog):
 			inv = self._read_yaml(self._inv_path)
 		# If we have a structured inventory, use it to populate tables
 		if isinstance(inv, dict) and inv.get("devices"):
+			self._inv_raw = inv
 			ai: List[str] = []; di: List[str] = []; do: List[str] = []; ao: List[str] = []
 			for d in inv.get("devices", []):
 				ai.extend([str(x) for x in (d.get("ai") or [])])
@@ -162,18 +164,73 @@ class NiDaqConfigDialog(QDialog):
 			do = [str(c.get("phys")) for c in (self._cfg.get("channels", {}).get("do") or []) if c.get("phys")]
 			ao = [str(c.get("phys")) for c in (self._cfg.get("channels", {}).get("ao") or []) if c.get("phys")]
 			self._inventory = {"ai": ai, "di": di, "do": do, "ao": ao}
-		# Compare inventory to current config; if mismatch, prompt to regenerate defaults
+		# Compare inventory to current config; if mismatch, try migration or regenerate
 		if not self._inventory_matches_current_cfg():
-			resp = QMessageBox.question(self, "NI DAQ Inventory Changed", "Detected hardware inventory mismatch with current ni_daq.yaml. Regenerate default config from inventory?", QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
-			if resp == QMessageBox.Yes:
-				self._regenerate_defaults_from_inventory()
-				self._cfg = self._read_yaml(self._cfg_path)
+			self._handle_hardware_mismatch(inv)
 		self._populate_tables()
 		# Populate watchdog defaults
 		wd = self._cfg.get("watchdog") or {}
 		self.chk_wd.setChecked(bool(wd.get("enabled", False)))
 		self.cmb_wd_mode.setCurrentText(str(wd.get("mode", "driver")))
 		self.txt_wd_timeout.setText(str(wd.get("timeout_ms", "1000")))
+
+	def _handle_hardware_mismatch(self, inv: Dict[str, Any]) -> None:
+		"""Handle a hardware inventory mismatch: try migration, fall back to regenerate."""
+		try:
+			from src.plugins._nidaq_discovery import compute_hardware_diff, apply_migration
+		except Exception:
+			self._fallback_regenerate()
+			return
+
+		if not (isinstance(inv, dict) and inv.get("devices")):
+			self._fallback_regenerate()
+			return
+
+		diff = compute_hardware_diff(self._cfg, inv)
+		if diff.get("missing") and (diff.get("new") or diff.get("suggested_mappings")):
+			from .nidaq_migration_dialog import HardwareMigrationDialog
+			dlg = HardwareMigrationDialog(diff, parent=self)
+			if dlg.exec() == QDialog.Accepted:
+				mappings = dlg.confirmed_mappings()
+				new_cfg = apply_migration(self._cfg, inv, mappings)
+				for key in ("acquisition", "health", "decimation", "watchdog"):
+					if key in self._cfg and key not in new_cfg:
+						new_cfg[key] = self._cfg[key]
+				new_cfg["recording_rate_hz"] = "auto"
+				try:
+					import yaml  # type: ignore
+					self._cfg_path.write_text(yaml.safe_dump(new_cfg, sort_keys=False), encoding="utf-8")
+					self._cfg = self._read_yaml(self._cfg_path)
+				except Exception as e:
+					QMessageBox.critical(self, "Write Error", f"Failed to save migrated config:\n{e}")
+				self._rebuild_inventory_from_raw(inv)
+			return
+
+		self._fallback_regenerate()
+
+	def _fallback_regenerate(self) -> None:
+		resp = QMessageBox.question(
+			self, "NI DAQ Inventory Changed",
+			"Detected hardware inventory mismatch with current ni_daq.yaml.\n"
+			"Regenerate default config from inventory?",
+			QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes,
+		)
+		if resp == QMessageBox.Yes:
+			self._regenerate_defaults_from_inventory()
+			self._cfg = self._read_yaml(self._cfg_path)
+
+	def _rebuild_inventory_from_raw(self, inv: Dict[str, Any]) -> None:
+		"""Rebuild the flattened _inventory from a raw devices dict."""
+		if not isinstance(inv, dict) or not inv.get("devices"):
+			return
+		self._inv_raw = inv
+		ai: List[str] = []; di: List[str] = []; do: List[str] = []; ao: List[str] = []
+		for d in inv.get("devices", []):
+			ai.extend([str(x) for x in (d.get("ai") or [])])
+			di.extend([str(x) for x in (d.get("di") or [])])
+			do.extend([str(x) for x in (d.get("do") or [])])
+			ao.extend([str(x) for x in (d.get("ao") or [])])
+		self._inventory = {"ai": ai, "di": di, "do": do, "ao": ao}
 
 	def _populate_tables(self) -> None:
 		# Helper maps from current config
@@ -414,6 +471,11 @@ class NiDaqConfigDialog(QDialog):
 			new_ch["do"] = _merge_simple(new_ch.get("do"), old_do)
 			new_ch["ao"] = _merge_simple(new_ch.get("ao"), old_ao)
 			new_cfg["channels"] = new_ch
+			try:
+				from src.plugins._nidaq_discovery import build_device_map
+				new_cfg["device_map"] = build_device_map(inv)
+			except Exception:
+				pass
 			self._cfg_path.write_text(yaml.safe_dump(new_cfg, sort_keys=False), encoding="utf-8")
 		except Exception:
 			pass
@@ -512,6 +574,13 @@ class NiDaqConfigDialog(QDialog):
 		new_cfg = dict(self._cfg)
 		for k, v in updated.items():
 			new_cfg[k] = v
+		# Persist device_map from current inventory
+		try:
+			from src.plugins._nidaq_discovery import build_device_map
+			if self._inv_raw.get("devices"):
+				new_cfg["device_map"] = build_device_map(self._inv_raw)
+		except Exception:
+			pass
 		# Write YAML
 		try:
 			import yaml  # type: ignore

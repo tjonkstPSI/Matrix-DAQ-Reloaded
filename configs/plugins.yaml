@@ -1,16 +1,10 @@
 selected_plugins:
-- CCP
-- Modbus
-- CAN
 - EngineTest
-- Statistics
 - Channel_Manager
 - NI_DAQ
-- Vaisala
-- LoadBank
-- Calculated_Channels
 selected_displays:
-- AllChannelsTable (grouped by type)
+- "AllChannelsTable (grouped by type) \u2014 auto-categorized via alias prefix into\
+  \ side-by-side panels with FlowLayout reflow"
 data_root: C:/Projects/Python/Matrix_v2_retry/runs
 test_cell: '0'
 data_mode: real

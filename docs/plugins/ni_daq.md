@@ -140,6 +140,35 @@ Alias validation is also enforced on config save; invalid aliases on enabled cha
 - Tool available: `py -m src.tools.nidaq_discover`
 - Generates `configs/ni_daq.generated.yaml` template from discovered devices/channels.
 
+### Hardware Migration
+When chassis are swapped or cards are moved to a different slot, `ni_daq.yaml` channel configuration (aliases, scaling, sensor settings) would be lost because `phys` strings reference the old device names. The migration system preserves that work.
+
+**How it works**
+1. On every NI DAQ config-dialog open, `inventory_matches_config()` compares the set of `phys` channels in `ni_daq.yaml` against the live NI-DAQmx inventory.
+2. If they diverge, `compute_hardware_diff()` classifies each old device by:
+   - **Capability**: `ai` / `digital` / `ao` (inferred from which channel categories the device has entries in: `ai_voltage`/`ai_temp` → `ai`, `di`/`do` → `digital`, `ao` → `ao`).
+   - **AI sub-type**: `voltage` or `temp` (inferred from `ai_voltage` vs `ai_temp` on the old side; inferred from product-number pattern on the new side — NI 9210/9211/9212/9213/9214/9216/9217/9219/9226/9235/9236/9237 are classified as TC/RTD/bridge).
+   - **Channel count**: preserved for each missing device.
+3. `HardwareMigrationDialog` (`src/ui/widgets/nidaq_migration_dialog.py`) presents old modules that need remapping with a "Map To" dropdown:
+   - **Chassis are excluded** (cDAQ-9178/9189 etc. have no I/O and can't inherit a module config).
+   - Only new modules with **matching capability** and **channel count ≥ old** are offered.
+   - Within AI, **sub-type match first** (voltage→voltage, TC→TC), then other compatible modules after a separator.
+   - Matching **product type** listed above other matches; each option label shows `DeviceName (ProductType, Nch)`.
+4. `apply_migration()` rewrites `phys` strings based on confirmed mappings, preserving the full channel sub-tree (alias, scaling, sensor, enabled flag). Unmapped new devices get default entries.
+5. If no mappable old modules exist (e.g., totally new chassis), the system falls back to the "Regenerate default config?" prompt.
+
+**device_map persistence**
+`ni_daq.yaml` now includes a top-level `device_map` block that maps device name → product type:
+
+```yaml
+device_map:
+  AGENTMod1: "NI 9215"
+  AGENTMod2: "NI 9239"
+  MATRIXMod1: "NI 9214"
+```
+
+This is written automatically on every save and regeneration. It enables the migration dialog to auto-suggest exact product-type matches even after the old hardware has been disconnected (when DAQmx can no longer report its product type directly).
+
 ### Health and Diagnostics
 - Internal health state tracks:
   - last good read time

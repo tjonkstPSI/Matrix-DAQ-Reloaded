@@ -9,6 +9,7 @@ from typing import List, Dict, Any
 try:
     from PySide6.QtCore import Qt
     from PySide6.QtWidgets import (
+        QCheckBox,
         QDialog,
         QVBoxLayout,
         QHBoxLayout,
@@ -18,7 +19,6 @@ try:
         QLineEdit,
         QPushButton,
         QFileDialog,
-        QComboBox,
         QWidget,
         QMessageBox,
     )
@@ -66,6 +66,7 @@ def _load_plugin_ids_from_context() -> List[str]:
             "Cycle",
             "LoadBank",
             "Modbus",
+            "Omega",
             "Statistics",
             "Vaisala",
         ]
@@ -175,13 +176,8 @@ class LaunchDialog(QDialog):
         self.edit_test_cell = QLineEdit()
         row2.addWidget(self.edit_test_cell, 1)
         v.addLayout(row2)
-        # Data mode
-        row3 = QHBoxLayout()
-        row3.addWidget(QLabel("Data Mode:"))
-        self.combo_mode = QComboBox()
-        self.combo_mode.addItems(["real", "sim"])
-        row3.addWidget(self.combo_mode)
-        v.addLayout(row3)
+        self.chk_offline = QCheckBox("Offline Mode (simulated data)")
+        v.addWidget(self.chk_offline)
         # Import old configs
         row4 = QHBoxLayout()
         self.lbl_import = QLabel("Imported: 0 file(s)")
@@ -216,8 +212,7 @@ class LaunchDialog(QDialog):
             pr, tc, dm, selected, disp_sel = "", "", "real", set(), set()
         self.edit_data_root.setText(pr)
         self.edit_test_cell.setText(tc)
-        idx = max(0, self.combo_mode.findText("sim" if dm == "sim" else "real"))
-        self.combo_mode.setCurrentIndex(idx)
+        self.chk_offline.setChecked(dm == "sim")
         for i in range(self.list_plugins.count()):
             it = self.list_plugins.item(i)
             if it.text() in selected:
@@ -254,7 +249,7 @@ class LaunchDialog(QDialog):
             selected_displays.append(it.text())
         data_root = self.edit_data_root.text().strip()
         test_cell = self.edit_test_cell.text().strip()
-        data_mode = self.combo_mode.currentText().strip().lower()
+        data_mode = "sim" if self.chk_offline.isChecked() else "real"
         if not selected:
             QMessageBox.warning(self, "Missing selection", "Please select at least one plugin.")
             return

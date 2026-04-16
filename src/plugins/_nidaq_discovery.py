@@ -2,9 +2,32 @@
 
 from __future__ import annotations
 
+import re
 from typing import Dict, Any, List, Optional
 
 from .base import PluginStatus
+
+
+_TC_RTD_BRIDGE_RE = re.compile(
+    r"\b92(?:10|11|12|13|14|16|17|19|26|35|36|37)\b",
+    re.IGNORECASE,
+)
+
+
+def _ai_subtype_from_product(product_type: str) -> str:
+    """Guess AI sub-type from NI product number: 'temp' for TC/RTD/bridge, 'voltage' otherwise."""
+    if not product_type:
+        return ""
+    return "temp" if _TC_RTD_BRIDGE_RE.search(product_type) else "voltage"
+
+
+def _ai_subtype_from_channels(channels_by_key: Dict[str, List[Dict[str, Any]]]) -> str:
+    """Derive AI sub-type from old config: 'temp' if ai_temp channels exist, else 'voltage'."""
+    if channels_by_key.get("ai_temp"):
+        return "temp"
+    if channels_by_key.get("ai_voltage"):
+        return "voltage"
+    return ""
 
 
 def nidaq_available() -> bool:
@@ -74,6 +97,238 @@ def inventory_matches_config(
         return inv_ai == cfg_ai and inv_di == cfg_di and inv_do == cfg_do and inv_ao == cfg_ao
     except Exception:
         return True
+
+
+def build_device_map(inv: Dict[str, Any]) -> Dict[str, str]:
+    """Build {device_name: product_type} from an inventory dict."""
+    dm: Dict[str, str] = {}
+    for d in inv.get("devices", []):
+        name = str(d.get("name", "")).strip()
+        ptype = str(d.get("product_type", "")).strip()
+        if name:
+            dm[name] = ptype
+    return dm
+
+
+def _cfg_device_names(config: Dict[str, Any]) -> set:
+    """Extract unique device names from all phys strings in a config."""
+    names: set = set()
+    ch = config.get("channels", {}) or {}
+    for key in ("ai_voltage", "ai_temp", "di", "do", "ao"):
+        for c in (ch.get(key) or []):
+            phys = str(c.get("phys", ""))
+            if "/" in phys:
+                names.add(phys.split("/", 1)[0])
+    return names
+
+
+def _cfg_channels_for_device(config: Dict[str, Any], device: str) -> Dict[str, List[Dict[str, Any]]]:
+    """Return all config channel entries whose phys belongs to a given device."""
+    prefix = device + "/"
+    ch = config.get("channels", {}) or {}
+    result: Dict[str, List[Dict[str, Any]]] = {}
+    for key in ("ai_voltage", "ai_temp", "di", "do", "ao"):
+        entries = [dict(c) for c in (ch.get(key) or []) if str(c.get("phys", "")).startswith(prefix)]
+        if entries:
+            result[key] = entries
+    return result
+
+
+def _channel_count(dev_or_channels) -> int:
+    """Count total channels in a device inventory dict or a channels-by-key dict."""
+    total = 0
+    for k in ("ai", "di", "do", "ao", "ai_voltage", "ai_temp"):
+        lst = dev_or_channels.get(k)
+        if isinstance(lst, list):
+            total += len(lst)
+    return total
+
+
+def _cap_str(has_ai: bool, has_di: bool, has_do: bool, has_ao: bool) -> str:
+    """Canonical capability string for a device."""
+    cats: List[str] = []
+    if has_ai:
+        cats.append("ai")
+    if has_di or has_do:
+        cats.append("digital")
+    if has_ao:
+        cats.append("ao")
+    return "+".join(cats) if cats else "none"
+
+
+def _capability_from_config_channels(channels_by_key: Dict[str, List[Dict[str, Any]]]) -> str:
+    """Infer a device's capability category from its saved channel config."""
+    has_ai = bool(channels_by_key.get("ai_voltage") or channels_by_key.get("ai_temp"))
+    has_di = bool(channels_by_key.get("di"))
+    has_do = bool(channels_by_key.get("do"))
+    has_ao = bool(channels_by_key.get("ao"))
+    return _cap_str(has_ai, has_di, has_do, has_ao)
+
+
+def _capability_from_inventory(device: Dict[str, Any]) -> str:
+    """Infer a device's capability category from its discovered inventory."""
+    has_ai = bool(device.get("ai"))
+    has_di = bool(device.get("di"))
+    has_do = bool(device.get("do"))
+    has_ao = bool(device.get("ao"))
+    return _cap_str(has_ai, has_di, has_do, has_ao)
+
+
+def compute_hardware_diff(
+    config: Dict[str, Any],
+    inv: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Compare old config devices against new inventory devices.
+
+    Returns a dict with keys: missing, new, unchanged, suggested_mappings.
+    Chassis (devices with no I/O channels) are excluded from 'new'.
+    Each missing/new entry includes a 'capability' field for type-safe matching.
+    """
+    inv_devs = {str(d["name"]): d for d in inv.get("devices", []) if d.get("name")}
+    cfg_names = _cfg_device_names(config)
+    inv_names = set(inv_devs.keys())
+
+    device_map = config.get("device_map") or {}
+
+    missing = []
+    for name in sorted(cfg_names - inv_names):
+        ptype = str(device_map.get(name, ""))
+        channels = _cfg_channels_for_device(config, name)
+        capability = _capability_from_config_channels(channels)
+        ai_sub = _ai_subtype_from_channels(channels) if capability == "ai" else ""
+        missing.append({
+            "name": name,
+            "product_type": ptype,
+            "channels": channels,
+            "capability": capability,
+            "ai_subtype": ai_sub,
+            "ch_count": sum(len(v) for v in channels.values() if isinstance(v, list)),
+        })
+
+    new = []
+    for name in sorted(inv_names - cfg_names):
+        d = inv_devs[name]
+        capability = _capability_from_inventory(d)
+        if capability == "none":
+            continue
+        entry = dict(d)
+        entry["capability"] = capability
+        entry["ai_subtype"] = _ai_subtype_from_product(str(d.get("product_type", ""))) if capability == "ai" else ""
+        entry["ch_count"] = _channel_count(d)
+        new.append(entry)
+
+    unchanged = []
+    for name in sorted(cfg_names & inv_names):
+        d = inv_devs.get(name, {"name": name})
+        unchanged.append(dict(d))
+
+    suggested: List[Dict[str, str]] = []
+    claimed_new: set = set()
+    for m in missing:
+        ptype = m["product_type"]
+        cap = m["capability"]
+        old_sub = m.get("ai_subtype", "")
+        old_ct = int(m.get("ch_count", 0) or 0)
+
+        candidates = [
+            n for n in new
+            if n["name"] not in claimed_new
+            and n.get("capability") == cap
+            and int(n.get("ch_count", 0) or 0) >= old_ct
+        ]
+        if cap == "ai" and old_sub:
+            sub_match = [n for n in candidates if n.get("ai_subtype") == old_sub]
+            if sub_match:
+                candidates = sub_match
+        if ptype:
+            typed = [n for n in candidates if str(n.get("product_type", "")) == ptype]
+            if typed:
+                candidates = typed
+        if candidates:
+            pick = candidates[0]
+            suggested.append({
+                "old": m["name"],
+                "new": pick["name"],
+                "product_type": str(pick.get("product_type", "")),
+            })
+            claimed_new.add(pick["name"])
+
+    return {
+        "missing": missing,
+        "new": new,
+        "unchanged": unchanged,
+        "suggested_mappings": suggested,
+    }
+
+
+def apply_migration(
+    config: Dict[str, Any],
+    inv: Dict[str, Any],
+    mappings: List[Dict[str, str]],
+) -> Dict[str, Any]:
+    """Rewrite config phys strings according to confirmed mappings.
+
+    Returns a new config dict ready to be written to YAML.
+    """
+    mapping_old_to_new = {m["old"]: m["new"] for m in mappings}
+
+    new_cfg = dict(config)
+    ch = dict((config.get("channels") or {}))
+    new_ch: Dict[str, List[Dict[str, Any]]] = {}
+
+    inv_all_phys: Dict[str, set] = {"ai": set(), "di": set(), "do": set(), "ao": set()}
+    for d in inv.get("devices", []):
+        for k in ("ai", "di", "do", "ao"):
+            for p in (d.get(k) or []):
+                inv_all_phys[k].add(str(p))
+
+    for key in ("ai_voltage", "ai_temp", "di", "do", "ao"):
+        old_entries = list(ch.get(key) or [])
+        migrated: List[Dict[str, Any]] = []
+        for entry in old_entries:
+            phys = str(entry.get("phys", ""))
+            if "/" not in phys:
+                continue
+            device = phys.split("/", 1)[0]
+            suffix = phys.split("/", 1)[1]
+            if device in mapping_old_to_new:
+                new_device = mapping_old_to_new[device]
+                new_entry = dict(entry)
+                new_entry["phys"] = new_device + "/" + suffix
+                migrated.append(new_entry)
+            elif device not in {m["old"] for m in mappings}:
+                migrated.append(dict(entry))
+
+        new_ch[key] = migrated
+
+    inv_covered: set = set()
+    for entries in new_ch.values():
+        for e in entries:
+            inv_covered.add(str(e.get("phys", "")))
+
+    inv_map = {"ai": "ai_voltage", "di": "di", "do": "do", "ao": "ao"}
+    for inv_key, cfg_key in inv_map.items():
+        for phys in sorted(inv_all_phys[inv_key]):
+            if phys not in inv_covered:
+                if cfg_key == "ai_voltage":
+                    new_ch.setdefault(cfg_key, []).append({
+                        "phys": phys, "alias": "", "enabled": False,
+                        "scaling": {"type": "none", "unit": "V"},
+                    })
+                elif cfg_key in ("di", "do"):
+                    new_ch.setdefault(cfg_key, []).append({
+                        "phys": phys, "alias": "", "enabled": False, "initial": 0,
+                    })
+                elif cfg_key == "ao":
+                    new_ch.setdefault(cfg_key, []).append({
+                        "phys": phys, "alias": "", "enabled": False,
+                        "scaling": {"unit": "V"}, "range_v": {"min": 0.0, "max": 10.0},
+                    })
+                inv_covered.add(phys)
+
+    new_cfg["channels"] = new_ch
+    new_cfg["device_map"] = build_device_map(inv)
+    return new_cfg
 
 
 def validate_watchdog_cfg(

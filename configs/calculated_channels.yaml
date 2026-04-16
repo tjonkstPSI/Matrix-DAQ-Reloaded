@@ -1,9 +1,3 @@
 enabled: true
-channels:
-- alias: mPR_Amb
-  expr: x*35
-  symbols:
-    x: qPR_Amb
-  unit: kPa
-  enabled: true
+channels: []
 recording_rate_hz: 50.0

@@ -6,6 +6,33 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased] - 03/09/2026
 
+### NI DAQ hardware migration system — 03/09/2026
+#### Added
+- **Hardware migration dialog** (`src/ui/widgets/nidaq_migration_dialog.py`): when NI DAQ hardware changes (chassis swap, card moved to a different slot), a module-level migration dialog auto-suggests mappings by `product_type` so the user can transfer aliases, scaling, and sensor config to new physical channels without starting from scratch.
+- **Diff engine** in `_nidaq_discovery.py`: `compute_hardware_diff()` compares old config devices against new inventory and produces missing/new/unchanged/suggested_mappings. `apply_migration()` rewrites `phys` strings per confirmed mappings while preserving all channel configuration.
+- **`device_map`** persistence in `ni_daq.yaml`: maps device names to product types (e.g., `AGENTMod1: "NI 9239"`). Populated automatically on config save and regeneration. Enables type-matching even after old hardware is disconnected.
+- `build_device_map()` helper in `_nidaq_discovery.py`.
+- **Type-safe candidate filtering** in the migration dialog: chassis (no I/O channels) are excluded from candidates; modules are filtered by I/O capability (AI voltage / AI thermocouple-RTD / Digital / AO) inferred from the old config's channel categories and new modules' product type pattern (TC/RTD modules: NI 9210/9211/9212/9213/9214/9216/9217/9219/9226/9235/9236/9237). Additional filter by channel count (new ≥ old) prevents data loss. Matching product types listed first, then compatible types, with channel counts shown in each option label.
+#### Changed
+- NI DAQ config dialog mismatch flow: now attempts migration dialog first (when mappable modules exist), falls back to regenerate prompt otherwise.
+
+### Global offline mode and Omega config improvements — 03/09/2026
+#### Changed
+- **Launch dialog**: replaced "Data Mode" dropdown with an "Offline Mode (simulated data)" checkbox. When checked, all plugins run in simulation mode regardless of individual config.
+- **Orchestrator**: reads `data_mode` from `plugins.yaml` at startup; overrides every plugin's `mode` to `sim` when offline. Applied consistently across all `load_config()` paths (startup, reload, sync, CCP test, EngineTest recording).
+- **Omega config dialog**: replaced fixed-channels text label with an editable table (ID, Unit, Alias). Aliases default to planned values (`xTP_Amb`, `xPR_Amb`, `xHM_Amb`) but are user-configurable via double-click (opens shared AliasPickerDialog). Blank aliases trigger a warning. Saved to `omega.yaml` channels block.
+- **Omega plugin**: `configure()` now reads aliases from `omega.yaml` channels config, falling back to CHANNEL_MAP defaults. Active channels list drives aliases, units, simulation, and Modbus reads.
+#### Removed
+- Mode (sim/real) dropdowns removed from Omega, Vaisala, and CAN config dialogs. Mode is now controlled globally via the launch dialog's offline checkbox.
+
+### Omega Weather Station plugin — 03/09/2026
+#### Added
+- New `Omega` plugin (`src/plugins/omega.py`) for Omega weather station via Modbus TCP. Reads 3 fixed channels (temperature, barometric pressure, humidity) from holding registers 8-13 as big-endian float32. Handles Omega-specific error/NaN sentinel codes (0x7F800000-0x7F800003). Aliases configurable, defaults: `xTP_Amb` (C), `xPR_Amb` (kPa), `xHM_Amb` (Pct).
+- `configs/omega.yaml` — minimal config with connection settings (host, port, timeout) and optional channels block for alias overrides.
+- `src/ui/widgets/omega_config.py` — minimal config dialog with mode, host/IP, and port fields.
+- Orchestrator integration: registered in both demo and real tick loops, plugin enablement list, and plugin cleanup.
+- Console tile: right-click "Configure..." context menu for the Omega tile.
+
 ### Standard alias picker across all plugins — 03/09/2026
 #### Added
 - `configs/standard_channels.json` — server-ready JSON file converted from `StandardChannels.csv` containing 243 standard channel aliases with units. Schema includes `version`, `source`, and `channels` array for future API migration.

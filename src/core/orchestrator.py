@@ -22,6 +22,7 @@ from .storage.alarm_events import AlarmEventsSink
 from ..plugins.statistics import StatisticsPlugin
 from .storage.stats_snapshots import StatsSnapshotsSink
 from ..plugins.vaisala import VaisalaPlugin
+from ..plugins.omega import OmegaPlugin
 from .storage.parquet_writer import ParquetWriter, ParquetWriterSettings
 from ..plugins.channel_manager import ChannelManagerPlugin
 from ..plugins.engine_test import EngineTestPlugin
@@ -62,6 +63,7 @@ class Orchestrator:
         self._export_in_progress: bool = False
         self._plugin_enabled: Dict[str, bool] = {}
         self._tick_interval_s: float = 0.1
+        self._global_sim_mode: bool = False
 
     def start(self) -> None:
         # Placeholder: load configs, initialize IPC bus, register simulated plugins
@@ -76,21 +78,28 @@ class Orchestrator:
         self._apply_channel_manager_runtime()
         # Load launch selections to determine which plugins the user enabled
         selected_set: set = set()
+        global_data_mode: str = ""
         try:
             plugins_cfg_path = (self.configs_dir / "plugins.yaml").resolve()
             plugins_cfg = load_yaml_config(plugins_cfg_path)
             selected_set = {str(x) for x in (plugins_cfg.get("selected_plugins") or [])}
+            global_data_mode = str(plugins_cfg.get("data_mode", "")).strip().lower()
         except Exception:
             pass
         if selected_set:
             print(f"[INFO] selected_plugins from plugins.yaml: {sorted(selected_set)}")
         else:
             print("[WARN] No selected_plugins found in plugins.yaml; all plugins default to enabled")
+        self._global_sim_mode = (global_data_mode == "sim")
+        if self._global_sim_mode:
+            print("[INFO] Offline mode active: all plugins will run in simulation mode")
         # Load configs for each plugin and run basic validation
         all_ok = True
         ALWAYS_ON = {"Channel_Manager", "EngineTest"}
         for pid, plugin in self.plugins.items():
             plugin.load_config()
+            if self._global_sim_mode:
+                plugin.mode = "sim"
             enabled = True
             try:
                 if pid not in ALWAYS_ON:
@@ -252,6 +261,7 @@ class Orchestrator:
                     cycle = self.plugins.get("Cycle") if self._plugin_enabled.get("Cycle") else None
                     stats = self.plugins.get("Statistics") if self._plugin_enabled.get("Statistics") else None
                     vaisala = self.plugins.get("Vaisala") if self._plugin_enabled.get("Vaisala") else None
+                    omega = self.plugins.get("Omega") if self._plugin_enabled.get("Omega") else None
                     nidaq = self.plugins.get("NI_DAQ") if self._plugin_enabled.get("NI_DAQ") else None
                     calc = self.plugins.get("Calculated_Channels") if self._plugin_enabled.get("Calculated_Channels") else None
                     engine_test = self.plugins.get("EngineTest") if self._plugin_enabled.get("EngineTest") else None
@@ -272,16 +282,17 @@ class Orchestrator:
                     if lb and cycle:
                         sp = float(getattr(cycle, "current_setpoint_kw")())
                         now_complete = getattr(cycle, "is_complete")()
-                        # Edge-aware final send: send when not complete, or on transition to complete
                         if (not now_complete) or (not prev_complete and now_complete):
                             getattr(lb, "command_setpoint_pct")(sp)
                         prev_complete = now_complete
                         vals.update(getattr(lb, "simulate_step")())
                         units.update(getattr(lb, "units")())
-                    # Vaisala simulated environment values
                     if vaisala:
                         vals.update(getattr(vaisala, "simulate_step")())
                         units.update(getattr(vaisala, "units")())
+                    if omega:
+                        vals.update(getattr(omega, "simulate_step")())
+                        units.update(getattr(omega, "units")())
                     if engine_test:
                         vals.update(getattr(engine_test, "simulate_step")())
                         units.update(getattr(engine_test, "units")())
@@ -438,6 +449,7 @@ class Orchestrator:
                     cycle = self.plugins.get("Cycle") if self._plugin_enabled.get("Cycle") else None
                     stats = self.plugins.get("Statistics") if self._plugin_enabled.get("Statistics") else None
                     vaisala = self.plugins.get("Vaisala") if self._plugin_enabled.get("Vaisala") else None
+                    omega = self.plugins.get("Omega") if self._plugin_enabled.get("Omega") else None
                     nidaq = self.plugins.get("NI_DAQ") if self._plugin_enabled.get("NI_DAQ") else None
                     calc = self.plugins.get("Calculated_Channels") if self._plugin_enabled.get("Calculated_Channels") else None
                     engine_test = self.plugins.get("EngineTest") if self._plugin_enabled.get("EngineTest") else None
@@ -466,12 +478,13 @@ class Orchestrator:
                     if vaisala:
                         vals.update(getattr(vaisala, "simulate_step")())
                         units.update(getattr(vaisala, "units")())
+                    if omega:
+                        vals.update(getattr(omega, "simulate_step")())
+                        units.update(getattr(omega, "units")())
                     if engine_test:
                         vals.update(getattr(engine_test, "simulate_step")())
                         units.update(getattr(engine_test, "units")())
-                    # Capture current timestamp for this tick
                     now_ts = time.time()
-                    # Run calculated channels before alarms/stats
                     if calc is not None:
                         try:
                             calc_vals = getattr(calc, "simulate_step")(vals)
@@ -604,7 +617,7 @@ class Orchestrator:
                 modbus.stop()
             except Exception:
                 pass
-            for pid in ("CAN", "CCP", "LoadBank", "NI_DAQ", "Vaisala", "Statistics", "Calculated_Channels", "Modbus", "Cycle", "EngineTest"):
+            for pid in ("CAN", "CCP", "LoadBank", "NI_DAQ", "Vaisala", "Omega", "Statistics", "Calculated_Channels", "Modbus", "Cycle", "EngineTest"):
                 try:
                     p = self.plugins.get(pid)
                     if p and self._plugin_enabled.get(pid, True):
@@ -731,13 +744,24 @@ class Orchestrator:
             plugins_cfg = load_yaml_config(plugins_cfg_path)
             selected_set = {str(x) for x in (plugins_cfg.get("selected_plugins") or [])}
         except Exception:
+            plugins_cfg = {}
             selected_set = set()
         if not selected_set:
             return
+
+        prev_sim = self._global_sim_mode
+        self._global_sim_mode = str(plugins_cfg.get("data_mode", "")).strip().lower() == "sim"
+        mode_changed = (prev_sim != self._global_sim_mode)
+        if mode_changed:
+            label = "offline (sim)" if self._global_sim_mode else "online (real)"
+            print(f"[INFO] Global data mode changed to {label}")
+
         print(f"[INFO] Syncing plugin selections: {sorted(selected_set)}")
         for pid, plugin in self.plugins.items():
             if pid in ALWAYS_ON:
                 self._plugin_enabled[pid] = True
+                if mode_changed:
+                    self._apply_mode_and_restart(pid, plugin)
                 continue
             config_enabled = True
             try:
@@ -746,13 +770,19 @@ class Orchestrator:
                 config_enabled = True
             new_enabled = (pid in selected_set) and config_enabled
             old_enabled = self._plugin_enabled.get(pid, False)
-            if new_enabled == old_enabled:
-                continue
             self._plugin_enabled[pid] = new_enabled
-            if new_enabled:
-                print(f"[INFO] Plugin '{pid}' newly enabled; configuring")
+
+            if new_enabled and (not old_enabled or mode_changed):
+                action = "mode change" if old_enabled else "newly enabled"
+                print(f"[INFO] Plugin '{pid}' {action}; configuring")
+                try:
+                    plugin.stop()
+                except Exception:
+                    pass
                 try:
                     plugin.load_config()
+                    if self._global_sim_mode:
+                        plugin.mode = "sim"
                     if pid == "NI_DAQ":
                         plugin._core_tick_rate_hz = self.settings.recording_rate_hz
                     plugin.configure()
@@ -764,12 +794,29 @@ class Orchestrator:
                         print(f"[WARN] Plugin '{pid}' validate failed: {getattr(status, 'message', '')}")
                 except Exception as e:
                     print(f"[WARN] Plugin '{pid}' start failed: {e}")
-            else:
+            elif not new_enabled and old_enabled:
                 print(f"[INFO] Plugin '{pid}' disabled; stopping")
                 try:
                     plugin.stop()
                 except Exception:
                     pass
+
+    def _apply_mode_and_restart(self, pid: str, plugin) -> None:
+        """Stop, reload config with global mode override, and restart a plugin."""
+        try:
+            plugin.stop()
+        except Exception:
+            pass
+        try:
+            plugin.load_config()
+            if self._global_sim_mode:
+                plugin.mode = "sim"
+            plugin.configure()
+            status = plugin.validate()
+            if getattr(status, "ok", True):
+                plugin.start()
+        except Exception as e:
+            print(f"[WARN] Mode restart failed for {pid}: {e}")
 
     def _refresh_plugin_selection(self, plugin_id: str) -> None:
         """Re-read plugins.yaml and update _plugin_enabled for a single plugin."""
@@ -824,6 +871,8 @@ class Orchestrator:
                 return
             try:
                 p.load_config()
+                if self._global_sim_mode:
+                    p.mode = "sim"
             except Exception as e:
                 print(f"[WARN] Reload: failed to load config for {plugin_id}: {e}")
             try:
@@ -909,6 +958,8 @@ class Orchestrator:
                 _emit("start", True, "Starting CCP connection test...")
                 try:
                     ccp.load_config()
+                    if self._global_sim_mode:
+                        ccp.mode = "sim"
                     ccp.configure()
                 except Exception as e:
                     _emit("load_config", False, f"Failed to load/configure CCP: {e}", done=True)
@@ -983,6 +1034,7 @@ class Orchestrator:
             PluginSpec(id="Modbus", cls=ModbusPlugin, config_name="modbus.yaml"),
             PluginSpec(id="Statistics", cls=StatisticsPlugin, config_name="statistics.yaml"),
             PluginSpec(id="Vaisala", cls=VaisalaPlugin, config_name="vaisala.yaml"),
+            PluginSpec(id="Omega", cls=OmegaPlugin, config_name="omega.yaml"),
             PluginSpec(id="EngineTest", cls=EngineTestPlugin, config_name="engine_test.yaml"),
             PluginSpec(id="Channel_Manager", cls=ChannelManagerPlugin, config_name="channel_manager.yaml"),
         ]
@@ -1023,6 +1075,8 @@ class Orchestrator:
         if et is not None and self._plugin_enabled.get("EngineTest", True):
             try:
                 et.load_config()
+                if self._global_sim_mode:
+                    et.mode = "sim"
                 et.configure()
                 st = et.validate()
                 if not st.ok:

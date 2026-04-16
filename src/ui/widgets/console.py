@@ -99,6 +99,9 @@ class ConsoleWindow(QMainWindow):
             if pid == "Vaisala":
                 tile.setContextMenuPolicy(Qt.CustomContextMenu)
                 tile.customContextMenuRequested.connect(self._show_vaisala_menu)  # type: ignore
+            if pid == "Omega":
+                tile.setContextMenuPolicy(Qt.CustomContextMenu)
+                tile.customContextMenuRequested.connect(self._show_omega_menu)  # type: ignore
             if pid == "Cycle":
                 tile.setContextMenuPolicy(Qt.CustomContextMenu)
                 tile.customContextMenuRequested.connect(self._show_cycle_menu)  # type: ignore
@@ -483,6 +486,36 @@ class ConsoleWindow(QMainWindow):
             except Exception as e:
                 try:
                     QMessageBox.critical(self, "Vaisala Configure Error", f"Failed to open Vaisala config dialog:\n{e}")
+                except Exception:
+                    pass
+
+    def _show_omega_menu(self, pos) -> None:
+        try:
+            from PySide6.QtWidgets import QMenu, QMessageBox
+        except Exception:
+            return
+        sender = self.sender()
+        if sender is None:
+            return
+        anchor = sender if hasattr(sender, "mapToGlobal") else self
+        menu = QMenu(self)
+        act_cfg = menu.addAction("Configure…")
+        act = menu.exec_(anchor.mapToGlobal(pos))
+        if act == act_cfg:
+            try:
+                from .omega_config import OmegaConfigDialog
+            except Exception as e:
+                try:
+                    QMessageBox.critical(self, "Omega Configure Error", f"Failed to import Omega config dialog:\n{e}")
+                except Exception:
+                    pass
+                return
+            try:
+                dlg = OmegaConfigDialog(self)
+                dlg.exec()
+            except Exception as e:
+                try:
+                    QMessageBox.critical(self, "Omega Configure Error", f"Failed to open Omega config dialog:\n{e}")
                 except Exception:
                     pass
 
@@ -894,6 +927,7 @@ class ConsoleWindow(QMainWindow):
             "Modbus": "modbus.yaml",
             "Statistics": "statistics.yaml",
             "Vaisala": "vaisala.yaml",
+            "Omega": "omega.yaml",
             "EngineTest": "engine_test.yaml",
             "Channel_Manager": "channel_manager.yaml",
         }

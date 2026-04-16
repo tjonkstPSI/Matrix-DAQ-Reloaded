@@ -1,0 +1,12 @@
+mode: sim
+connection:
+  host: 192.168.76.45
+  port: 502
+  timeout_ms: 2000
+channels:
+- id: temp
+  alias: xTP_Amb
+- id: baro
+  alias: xPR_Amb
+- id: humidity
+  alias: xHM_Amb

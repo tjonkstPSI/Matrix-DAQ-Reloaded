@@ -7,7 +7,7 @@ storage:
   coalesce_on_finalize: true
   keep_chunk_files: false
 engine_running:
-  source_alias: CCP_rpm
+  source_alias: cSP_Eng
   rpm_threshold: 0.0
 channels:
 - alias: Ambient Pressure
@@ -26,7 +26,7 @@ channels:
     high: null
     high_enter_delay_s: 0.0
     high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
+    action: visible_alert
   enabling_condition: always_enabled
   enable_threshold: 0.0
 - alias: Ambient RH
@@ -45,7 +45,7 @@ channels:
     high: null
     high_enter_delay_s: 0.0
     high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
+    action: visible_alert
   enabling_condition: always_enabled
   enable_threshold: 0.0
 - alias: Ambient Temp
@@ -64,7 +64,7 @@ channels:
     high: null
     high_enter_delay_s: 0.0
     high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
+    action: visible_alert
   enabling_condition: always_enabled
   enable_threshold: 0.0
 - alias: CCP_AAT

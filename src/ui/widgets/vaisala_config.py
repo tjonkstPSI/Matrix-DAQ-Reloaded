@@ -57,11 +57,8 @@ class VaisalaConfigDialog(QDialog):
         root = QVBoxLayout(self)
 
         top_form = QFormLayout()
-        self.cmb_mode = QComboBox(self)
-        self.cmb_mode.addItems(["sim", "real"])
         self.cmb_model = QComboBox(self)
         self.cmb_model.addItems(["HMT330", "Indigo510"])
-        top_form.addRow("Mode", self.cmb_mode)
         top_form.addRow("Model", self.cmb_model)
         root.addLayout(top_form)
 
@@ -253,10 +250,6 @@ class VaisalaConfigDialog(QDialog):
         self._cfg = self._read_yaml(self._cfg_path)
         c = self._cfg
 
-        mode = str(c.get("mode", "sim"))
-        mi = self.cmb_mode.findText(mode)
-        self.cmb_mode.setCurrentIndex(mi if mi >= 0 else 0)
-
         model = (c.get("model") or {}) if isinstance(c.get("model"), dict) else {}
         model_name = str(model.get("selected", "HMT330") or "HMT330")
         mi_model = self.cmb_model.findText(model_name)
@@ -366,7 +359,6 @@ class VaisalaConfigDialog(QDialog):
         filt_val = filt_map.get(filt_text, "none")
 
         doc: Dict[str, Any] = dict(self._cfg)
-        doc["mode"] = self.cmb_mode.currentText()
         doc["connection"] = {
             "host": self.txt_host.text().strip() or "192.168.1.100",
             "port": int(self.spin_port.value()),

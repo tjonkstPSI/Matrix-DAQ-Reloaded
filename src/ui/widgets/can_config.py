@@ -49,9 +49,6 @@ class CANConfigDialog(QDialog):
         self.txt_channel.setPlaceholderText("CAN channel, e.g. CAN1")
         self.cmb_baudrate = QComboBox(self)
         self.cmb_baudrate.addItems(["125000", "250000", "500000", "1000000"])
-        self.cmb_mode = QComboBox(self)
-        self.cmb_mode.addItems(["real", "sim"])
-        form.addRow("Mode", self.cmb_mode)
         form.addRow("CAN channel", self.txt_channel)
         form.addRow("Baudrate", self.cmb_baudrate)
         root.addLayout(form)
@@ -106,8 +103,6 @@ class CANConfigDialog(QDialog):
 
     def _load(self) -> None:
         self._cfg = self._read_yaml(self._cfg_path)
-        mode = str(self._cfg.get("mode", "sim")).strip().lower()
-        self.cmb_mode.setCurrentText("real" if mode == "real" else "sim")
         session = self._cfg.get("session") or {}
         self.txt_channel.setText(str(session.get("channel", "CAN1")))
         baud = str(session.get("baudrate", "500000"))
@@ -281,10 +276,6 @@ class CANConfigDialog(QDialog):
             QMessageBox.warning(self, "Missing channel", "CAN channel is required.")
             return
         dbc_path = self.txt_dbc_path.text().strip()
-        mode = self.cmb_mode.currentText().strip().lower()
-        if mode == "real" and not dbc_path:
-            QMessageBox.warning(self, "Missing DBC", "DBC path is required in real mode.")
-            return
         signals = self._checked_signals()
         if not signals:
             QMessageBox.warning(self, "Missing signals", "Select at least one signal from DBC.")
@@ -316,7 +307,6 @@ class CANConfigDialog(QDialog):
 
         doc: Dict[str, Any] = dict(self._cfg)
         doc["enabled"] = bool(doc.get("enabled", True))
-        doc["mode"] = mode
         doc["recording_rate_hz"] = int(doc.get("recording_rate_hz", 10))
         doc["session"] = {
             "channel": channel,
