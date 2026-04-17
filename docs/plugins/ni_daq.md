@@ -109,7 +109,14 @@ Temperature channels (RTD/TC) support unit selection (`C`, `F`, `K`); NI-DAQmx r
 
 Scaling is applied at the plugin level before values are published to the orchestrator. Both the real acquisition path (`_nidaq_acquisition.py`) and the simulation path (`_nidaq_simulation.py`) call the shared `apply_scaling()` / `convert_temp_unit()` helpers in `_nidaq_scaling.py`.
 
-**Scale Library**: Premade scales are stored in `configs/scale_library.yaml` and can be imported into the scaling editor dialog.
+**Scale Library**: Premade scales are stored in `configs/scale_library.json` and loaded via the shared `load_scale_library()` helper in `src/ui/widgets/scale_library.py`. The scaling editor's "Import from Library..." button opens a searchable picker backed by this library.
+
+- **Schema**: a top-level envelope (`version`, `source`, `scales`) mirrors `configs/standard_channels.json`. Each scale entry has a required `name` (used as the selection key, matching the old tool's "Druck 100psi" style), a `type` of `linear` or `table`, a `unit`, and an optional `description` shown as a tooltip.
+  - `linear`: `gain`, `offset` (formula `scaled = raw * gain + offset`).
+  - `table`: `points` (array of `[raw, scaled]` pairs, supports up to 100+ points for factory calibrations like 12-point turbine flow meters) and `extrapolate` flag.
+- **Read-only from this app**. A separate web-based super-user tool will handle add/edit/delete operations against a shared server database. This app only reads and applies scales to channels; custom per-channel scales are still built freely in the scaling editor.
+- **Server swap-point**: `load_scale_library()` is the single function that needs to change when the server endpoint is wired in (local JSON will become an HTTP GET with a file cache fallback).
+- **Picker UI**: searchable list (case-insensitive match against `name`, `description`, `unit`) with tooltips showing the formula or point count. The legacy `configs/scale_library.yaml` is deprecated and no longer loaded; see `scale_library.json` for the active source.
 
 ### Constrained Alias System
 
@@ -187,5 +194,16 @@ This is written automatically on every save and regeneration. It enables the mig
 - ZMQ PUB/SUB high-water marks are bounded (HWM=10) to limit memory use on laggy subscribers.
 - Temperature unit map is cached at `start()` to avoid per-tick dict construction.
 - Table scaling points are pre-sorted at config load for O(n) interpolation without runtime sort overhead.
+
+### Future: high-speed subset acquisition (not implemented)
+Some tests need **much higher sample rates on a handful of channels** (for example pressure transients above ~500 Hz or accelerometers above ~1 kHz) while the rest of the plant stays on the normal **Channel Manager** cadence (typically 1–10 Hz for durability vs development work). The legacy approach was often a **second DAQ system in parallel** with the main LabVIEW recorder.
+
+For this application, the intended direction (queued for design and implementation) is:
+
+- **Do not** drive the entire `NI_DAQ` channel table or the core tick at kHz rates.
+- Add an optional **dedicated high-speed path**: a small allowlisted set of NI channels, one (or few) focused DAQmx task(s), rates chosen per module capabilities, with **storage beside the main run** (for example under `data/high_speed/` with Parquet or binary + sidecar metadata) and **decimated or hold** values feeding the slow telemetry/record grid for UI and parity with existing Parquet columns.
+- **Same repo / same run folder** so metadata, EngineTest lock lifecycle, and operator workflow stay unified; a **separate process** remains an escape hatch only if timing or crash isolation requirements demand it after a prototype.
+
+See **Queued → High-speed NI subset acquisition** in [docs/ROADMAP.md](../ROADMAP.md) for the roadmap entry.
 
 

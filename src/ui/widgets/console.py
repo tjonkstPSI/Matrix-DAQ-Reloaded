@@ -116,29 +116,22 @@ class ConsoleWindow(QMainWindow):
         cv.setSpacing(8)
         self.btn_primary = QPushButton("Lock Test"); self.btn_primary.setEnabled(False)
         self.btn_primary.clicked.connect(self._on_primary_clicked)  # type: ignore
-        self.btn_export = QPushButton("Export Workbook"); self.btn_export.setEnabled(False)
-        self.btn_export.clicked.connect(self._on_export_clicked)  # type: ignore
+        self.btn_unlock = QPushButton("Unlock Test"); self.btn_unlock.setVisible(False)
+        self.btn_unlock.clicked.connect(self._on_unlock_clicked)  # type: ignore
         self.btn_stats = QPushButton("Log Statistics"); self.btn_stats.setEnabled(False)
         self.btn_stats.clicked.connect(self._on_stats_clicked)  # type: ignore
-        for b in (self.btn_primary, self.btn_export, self.btn_stats):
+        self.btn_restore_displays = QPushButton("Restore Displays")
+        self.btn_restore_displays.clicked.connect(self._on_restore_displays_clicked)  # type: ignore
+        for b in (self.btn_primary, self.btn_unlock, self.btn_stats, self.btn_restore_displays):
             cv.addWidget(b)
         v.addWidget(controls_box)
 
         # Create selected displays as separate windows
         self._display_windows: Dict[str, _QMainWindow] = {}
         for name in self._load_selected_displays():
-            if name.lower().startswith("allchannels"):
-                try:
-                    from .channels_table import ChannelsTable
-                    win = _QMainWindow(self)
-                    win.setWindowTitle("All Channels Table")
-                    table = ChannelsTable(win)
-                    win.setCentralWidget(table)
-                    win.resize(800, 600)
-                    win.show()
-                    self._display_windows["AllChannelsTable"] = win
-                except Exception:
-                    pass
+            key = self._resolve_display_key(name)
+            if key and not self._display_alive(key):
+                self._create_display(key)
 
         # Error / messages area
         msg_box = QGroupBox("Messages")
@@ -150,8 +143,11 @@ class ConsoleWindow(QMainWindow):
         # Status bar
         status_bar = self.statusBar()
         self.lbl_conn = QLabel("Disconnected")
+        self.lbl_lock = QLabel("Unlocked")
+        self.lbl_lock.setStyleSheet("color: #bdc3c7;")
         self.lbl_rec = QLabel("Recording: Off")
         status_bar.addPermanentWidget(self.lbl_conn)
+        status_bar.addPermanentWidget(self.lbl_lock)
         status_bar.addPermanentWidget(self.lbl_rec)
 
         # Load Bank operator panel (dock — can be dragged to float as a separate window)
@@ -718,13 +714,16 @@ class ConsoleWindow(QMainWindow):
         self._prev_rec = rec
         self.lbl_rec.setText("Recording: On" if rec else "Recording: Off")
         self.lbl_rec.setStyleSheet("color: #2ecc71;" if rec else "color: #bdc3c7;")
+        self.lbl_lock.setText("Locked" if self._locked else "Unlocked")
+        self.lbl_lock.setStyleSheet("color: #2ecc71;" if self._locked else "color: #bdc3c7;")
         # Update primary button enable/state
         # Enabled when connected and required plugins have valid configs
         connected = self._conn_latched
         can_lock = connected and all(self._plugin_config_ok(pid) for pid in self._tiles.keys())
         self.btn_primary.setEnabled(can_lock)
-        # Export allowed only when connected and not recording
-        self.btn_export.setEnabled(connected and not rec)
+        # Unlock Test is only an escape hatch from the pre-recording locked state
+        # (after Stop, the recording loop already unlocks implicitly).
+        self.btn_unlock.setVisible(bool(self._locked) and not rec)
         # Log Statistics allowed only when connected, recording, and Statistics plugin selected
         has_stats = "Statistics" in self._tiles
         self.btn_stats.setEnabled(connected and rec and has_stats)
@@ -768,7 +767,7 @@ class ConsoleWindow(QMainWindow):
             vals = self._last_payload.get("values") if isinstance(self._last_payload, dict) else None
             units = self._last_payload.get("units") if isinstance(self._last_payload, dict) else None
             states = self._last_payload.get("states") if isinstance(self._last_payload, dict) else None
-            if "AllChannelsTable" in self._display_windows:
+            if self._display_alive("AllChannelsTable"):
                 table = self._display_windows["AllChannelsTable"].centralWidget()
                 if hasattr(table, "update_data"):
                     table.update_data(vals, units, states)
@@ -811,27 +810,27 @@ class ConsoleWindow(QMainWindow):
                     self.txt_messages.append(f"[WARN] Data combine failed: {msg.get('error','unknown')}")
             except Exception:
                 pass
-
-    def _on_export_clicked(self) -> None:
-        # Request Excel export from Core; Core will export latest run (run_dir or last_run_dir)
-        ctrl = None
-        try:
-            from src.core.ipc.bus import create_ui_control_push
-            ctrl = create_ui_control_push()
-        except Exception:
-            ctrl = None
-        if ctrl is None:
-            return
-        try:
-            msg = json.dumps({"type": "export_excel"}).encode("utf-8")
-            ctrl["control_push"].send(msg)
-            self.btn_export.setEnabled(False)
+        elif t == "export_progress":
             try:
-                self.txt_messages.append("[INFO] Export requested; running in background…")
+                stage = str(msg.get("stage", ""))
+                if stage == "started":
+                    self.txt_messages.append("[INFO] Auto Excel export started in background…")
             except Exception:
                 pass
-        except Exception:
-            pass
+        elif t == "export_done":
+            ok = bool(msg.get("ok", False))
+            try:
+                if ok:
+                    files = msg.get("files") or []
+                    if isinstance(files, list) and files:
+                        names = ", ".join(Path(str(f)).name for f in files)
+                        self.txt_messages.append(f"[INFO] Excel export complete: {names}")
+                    else:
+                        self.txt_messages.append("[INFO] Excel export complete.")
+                else:
+                    self.txt_messages.append(f"[WARN] Excel export failed: {msg.get('error','unknown')}")
+            except Exception:
+                pass
 
     def _on_stats_clicked(self) -> None:
         # Request manual stats snapshot from Core
@@ -915,6 +914,74 @@ class ConsoleWindow(QMainWindow):
             except Exception:
                 pass
 
+    def _on_unlock_clicked(self) -> None:
+        # Pre-recording escape hatch: back out of a locked test (e.g., a mistake
+        # in the EngineTest metadata) without having to start and stop a recording.
+        try:
+            from PySide6.QtWidgets import QMessageBox
+        except Exception:
+            QMessageBox = None  # type: ignore
+        if not self._locked:
+            return
+        if QMessageBox is not None:
+            resp = QMessageBox.question(
+                self,
+                "Unlock Test",
+                "Unlock this test and discard the locked metadata?\n\n"
+                "You will need to re-enter Engine/Test info before the next lock.",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if resp != QMessageBox.Yes:
+                return
+        try:
+            from src.core.ipc.bus import create_ui_control_push
+            ctrl = create_ui_control_push()
+        except Exception:
+            ctrl = None
+        if ctrl is not None:
+            try:
+                msg = json.dumps({"type": "unlock_test"}).encode("utf-8")
+                ctrl["control_push"].send(msg)
+            except Exception:
+                pass
+        self._locked = False
+        try:
+            self.btn_primary.setText("Lock Test")
+            self.btn_unlock.setVisible(False)
+            self.txt_messages.append("[INFO] Test unlocked. Update metadata, then Lock Test again.")
+        except Exception:
+            pass
+
+    def _on_restore_displays_clicked(self) -> None:
+        restored: List[str] = []
+        brought_front: List[str] = []
+        for name in self._load_selected_displays():
+            key = self._resolve_display_key(name)
+            if key is None:
+                continue
+            if self._display_alive(key):
+                try:
+                    win = self._display_windows[key]
+                    win.raise_()
+                    win.activateWindow()
+                    brought_front.append(key)
+                except Exception:
+                    pass
+            else:
+                if self._create_display(key):
+                    restored.append(key)
+        try:
+            if restored:
+                names = ", ".join(restored)
+                self.txt_messages.append(f"[INFO] Restored display(s): {names}")
+            elif brought_front:
+                self.txt_messages.append("[INFO] All displays already open — brought to front.")
+            else:
+                self.txt_messages.append("[INFO] No selected displays to restore.")
+        except Exception:
+            pass
+
     # Helpers
     def _plugin_config_ok(self, plugin_id: str) -> bool:
         cfg_map = {
@@ -968,5 +1035,47 @@ class ConsoleWindow(QMainWindow):
         except Exception:
             sel = []
         return sel
+
+    # --- Display factory / lifecycle helpers ---
+
+    _DISPLAY_REGISTRY: Dict[str, str] = {
+        "allchannels": "AllChannelsTable",
+        # future: "plot": "PlotDisplay", etc.
+    }
+
+    @staticmethod
+    def _resolve_display_key(config_name: str) -> Optional[str]:
+        """Map a selected_displays config string to its canonical key."""
+        lower = config_name.strip().lower()
+        for prefix, key in ConsoleWindow._DISPLAY_REGISTRY.items():
+            if lower.startswith(prefix):
+                return key
+        return None
+
+    def _display_alive(self, key: str) -> bool:
+        win = self._display_windows.get(key)
+        if win is None:
+            return False
+        try:
+            return win.isVisible()
+        except RuntimeError:
+            return False
+
+    def _create_display(self, key: str) -> bool:
+        """Create a display window by canonical key. Returns True if created."""
+        if key == "AllChannelsTable":
+            try:
+                from .channels_table import ChannelsTable
+                win = _QMainWindow(self)
+                win.setWindowTitle("All Channels Table")
+                table = ChannelsTable(win)
+                win.setCentralWidget(table)
+                win.resize(800, 600)
+                win.show()
+                self._display_windows[key] = win
+                return True
+            except Exception:
+                return False
+        return False
 
 

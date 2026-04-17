@@ -102,7 +102,7 @@ Deliver a Windows desktop app that streams, visualizes, and records engine test 
 #### UI
 - Console window with plugin tiles, status indicators, telemetry table
 - Launch configuration dialog (plugin selection, data root, test cell, data mode, import configs)
-- Start/Stop Recording toggle; Export Workbook control
+- Start/Stop Recording; Lock / Unlock Test workflow; status bar (Connected, Locked/Unlocked, Recording); Parquet merge followed by automatic Excel export into each run's `data/` folder (no manual export button)
 - Plugin enable/disable (all except Channel_Manager and EngineTest)
 - Lock dialog for EngineTest metadata
 - Right-click Configure wired for: NI_DAQ, CCP, CAN, Modbus, LoadBank, Calculated_Channels, Channel_Manager, Statistics, Vaisala, Cycle
@@ -125,6 +125,14 @@ Deliver a Windows desktop app that streams, visualizes, and records engine test 
 ---
 
 ### Queued
+
+#### High-speed NI subset acquisition (future investigation)
+LabVIEW-era tooling historically ran a **parallel high-speed DAQ** beside the main recorder for a few channels (for example pressure pulses above ~500 Hz, accelerometers above ~1 kHz). In this Python app the same need is better met as a **dedicated path**, not by forcing the full `NI_DAQ` channel list and the global Channel Manager tick to those rates.
+
+- **Direction**: optional **separate plugin** (or clearly isolated submodule) that configures a **minimal allowlist** of NI physical channels, runs a **dedicated DAQmx task** at a user-selected high sample rate (module- and chassis-dependent), and writes **sidecar storage** under the same run (e.g. `runs/<id>/data/high_speed/` as Parquet chunks or compact binary + schema metadata), while the existing `NI_DAQ` plugin continues to serve the wide slow list at 1–100 Hz core tick.
+- **UI / workflow**: same Lock → Record → Stop session; optional **arm window** or record-tied lifecycle; main telemetry table shows **decimated** or **last-value** views for those channels so the UI does not ingest multi-kHz streams.
+- **Sync**: shared run start timestamp and documented alignment rules between slow grid and fast streams in post-processing (and optionally in Metadata sheet).
+- **When to split out**: if process isolation, jitter guarantees, or NI guidance require it, the fast reader can become a **separate process** while reusing config patterns and run folder layout from this repo.
 
 #### Hardening
 - NI DAQ: shared timebase/start trigger, oversample/decimate pipeline, NI DAQ channel picker UI

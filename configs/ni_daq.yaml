@@ -60,8 +60,10 @@ channels:
     alias: AGENTMod5_ai1
     enabled: false
     scaling:
-      unit: V
-      type: none
+      type: linear
+      gain: 30.0
+      offset: 0.0
+      unit: psi
   - phys: AGENTMod5/ai2
     alias: AGENTMod5_ai2
     enabled: false
@@ -90,14 +92,10 @@ channels:
     alias: qPR_CmpIn1
     enabled: true
     scaling:
-      type: table
-      unit: kPa
-      points:
-      - - 0.0
-        - 0.0
-      - - 10.0
-        - 100.0
-      extrapolate: true
+      type: linear
+      gain: 10.0
+      offset: 0.0
+      unit: psi
   - phys: AGENTMod1a/ai3
     alias: AGENTMod1_ai3
     enabled: false
@@ -114,10 +112,34 @@ channels:
     alias: qPR_Ccs
     enabled: true
     scaling:
-      type: linear
-      gain: 5.0
-      offset: 0.5
-      unit: kPa
+      type: table
+      unit: GPM
+      points:
+      - - 0.0
+        - 0.0
+      - - 0.5
+        - 1.1
+      - - 1.0
+        - 2.4
+      - - 1.5
+        - 3.7
+      - - 2.0
+        - 5.0
+      - - 3.0
+        - 7.6
+      - - 4.0
+        - 10.1
+      - - 5.0
+        - 12.6
+      - - 6.0
+        - 15.0
+      - - 7.5
+        - 18.7
+      - - 9.0
+        - 22.3
+      - - 10.0
+        - 24.8
+      extrapolate: false
   - phys: AGENTMod2test/ai2
     alias: AGENTMod2_ai2
     enabled: false
@@ -134,8 +156,20 @@ channels:
     alias: qPR_Amb
     enabled: true
     scaling:
-      unit: V
-      type: none
+      type: table
+      unit: PSI
+      points:
+      - - 0.0
+        - 0.0
+      - - 2.5
+        - 50.0
+      - - 5.0
+        - 100.0
+      - - 7.5
+        - 150.0
+      - - 10.0
+        - 200.0
+      extrapolate: false
   - phys: MATRIXMod3/ai1
     alias: MATRIXMod3_ai1_V
     enabled: false

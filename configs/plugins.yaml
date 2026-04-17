@@ -1,7 +1,16 @@
 selected_plugins:
-- EngineTest
-- Channel_Manager
+- Statistics
 - NI_DAQ
+- Calculated_Channels
+- EngineTest
+- Cycle
+- CCP
+- Omega
+- CAN
+- LoadBank
+- Modbus
+- Channel_Manager
+- Vaisala
 selected_displays:
 - "AllChannelsTable (grouped by type) \u2014 auto-categorized via alias prefix into\
   \ side-by-side panels with FlowLayout reflow"

@@ -125,6 +125,17 @@ def end_recording(orch: Orchestrator) -> None:
                     orch.bus.publish_status(msg)
                 except Exception:
                     pass
+                # Auto-kickoff Excel export once the Parquet merge finished cleanly.
+                # Any failure is surfaced via the export_done status message; we do
+                # not block the orchestrator or bubble exceptions back to merge.
+                if ok:
+                    try:
+                        kickoff_export(orch)
+                    except Exception as ex:
+                        try:
+                            print(f"[WARN] Auto Excel export failed to start: {ex}")
+                        except Exception:
+                            pass
 
             try:
                 pw.merge_async(_on_progress, _on_done)
@@ -155,11 +166,23 @@ def kickoff_export(orch: Orchestrator) -> None:
         return
     orch._export_in_progress = True
 
-    def _worker() -> None:
+    def _publish(payload: Dict[str, Any]) -> None:
         try:
+            import json
+            orch.bus.publish_status(json.dumps(payload).encode("utf-8"))
+        except Exception:
+            pass
+
+    def _worker() -> None:
+        outputs: list = []
+        ok = False
+        err: str | None = None
+        try:
+            _publish({"type": "export_progress", "run": str(run_dir), "stage": "started"})
             import importlib
             mod = importlib.import_module("src.tools.export_excel")
-            outputs = mod.export_excel(run_dir)
+            outputs = mod.export_excel(run_dir, output_dir=(run_dir / "data"))
+            ok = True
             try:
                 print("[INFO] Excel export completed:")
                 for p in outputs:
@@ -167,12 +190,20 @@ def kickoff_export(orch: Orchestrator) -> None:
             except Exception:
                 pass
         except Exception as e:
+            err = str(e)
             try:
                 print(f"[WARN] Excel export failed: {e}")
             except Exception:
                 pass
         finally:
             orch._export_in_progress = False
+            _publish({
+                "type": "export_done",
+                "run": str(run_dir),
+                "ok": bool(ok),
+                "error": err,
+                "files": [str(p) for p in outputs] if outputs else [],
+            })
 
     try:
         import threading

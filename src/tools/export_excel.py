@@ -242,7 +242,12 @@ def read_jsonl(path: Path) -> Optional[object]:
         return None
 
 
-def export_excel(run_dir: Path, engine: str = "openpyxl", rows_per_file: int = EXCEL_MAX_ROWS - 1) -> List[Path]:
+def export_excel(
+    run_dir: Path,
+    engine: str = "openpyxl",
+    rows_per_file: int = EXCEL_MAX_ROWS - 1,
+    output_dir: Optional[Path] = None,
+) -> List[Path]:
     try:
         import pandas as pd  # type: ignore
     except Exception as e:
@@ -257,8 +262,10 @@ def export_excel(run_dir: Path, engine: str = "openpyxl", rows_per_file: int = E
         raise FileNotFoundError(f"No Parquet files found under {data_dir}")
 
     run_meta = load_run_metadata(run_dir)
-    exports_dir = run_dir / "exports"
-    exports_dir.mkdir(parents=True, exist_ok=True)
+    # Default destination is the data folder so the workbook lives beside the
+    # combined Parquet (Data_<run>.xlsx next to Data_<run>.parquet).
+    target_dir = Path(output_dir).resolve() if output_dir is not None else (run_dir / "data").resolve()
+    target_dir.mkdir(parents=True, exist_ok=True)
 
     created: List[Path] = []
 
@@ -275,7 +282,7 @@ def export_excel(run_dir: Path, engine: str = "openpyxl", rows_per_file: int = E
             # Build Excel base name: Data_<run_folder_name> to match Parquet coalesced stem
             out_stem = f"Data_{run_dir.name}"
             out_name = f"{out_stem}.xlsx" if part == 1 and total_rows <= rows_per_file else f"{out_stem}.{part}.xlsx"
-            out_path = exports_dir / out_name
+            out_path = target_dir / out_name
             with pd.ExcelWriter(out_path, engine=engine) as writer:
                 if frames_list:
                     df = pd.concat(frames_list, ignore_index=True)
@@ -328,6 +335,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--run", type=str, default=None, help="Path to a specific run folder (e.g., runs/081325_140121)")
     parser.add_argument("--engine", type=str, default="openpyxl", choices=["openpyxl", "xlsxwriter"], help="Excel writer engine")
     parser.add_argument("--rows-per-file", type=int, default=EXCEL_MAX_ROWS - 1, help="Max data rows per workbook before splitting")
+    parser.add_argument("--output-dir", type=str, default=None, help="Destination folder for workbooks (default: <run>/data)")
     args = parser.parse_args(argv)
 
     project_root = Path(__file__).resolve().parents[2]
@@ -337,8 +345,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("[ERROR] Run folder not found.")
         return 2
 
+    out_dir = Path(args.output_dir).resolve() if args.output_dir else None
     try:
-        outputs = export_excel(run_dir, engine=args.engine, rows_per_file=args.rows_per_file)
+        outputs = export_excel(run_dir, engine=args.engine, rows_per_file=args.rows_per_file, output_dir=out_dir)
     except Exception as e:
         print(f"[ERROR] Export failed: {e}")
         return 1

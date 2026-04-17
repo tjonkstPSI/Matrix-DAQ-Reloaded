@@ -1,0 +1,143 @@
+{
+  "version": "1.0.0",
+  "source": "local",
+  "scales": [
+    {
+      "name": "0-10V -> 0-100 PSI",
+      "type": "linear",
+      "gain": 10.0,
+      "offset": 0.0,
+      "unit": "PSI",
+      "description": "Generic 0-10V pressure transducer, 0-100 PSI output"
+    },
+    {
+      "name": "0-10V -> 0-200 PSI",
+      "type": "linear",
+      "gain": 20.0,
+      "offset": 0.0,
+      "unit": "PSI",
+      "description": "Generic 0-10V pressure transducer, 0-200 PSI output"
+    },
+    {
+      "name": "0-10V -> 0-500 PSI",
+      "type": "linear",
+      "gain": 50.0,
+      "offset": 0.0,
+      "unit": "PSI",
+      "description": "Generic 0-10V pressure transducer, 0-500 PSI output"
+    },
+    {
+      "name": "0-5V -> 0-100 kPa",
+      "type": "linear",
+      "gain": 20.0,
+      "offset": 0.0,
+      "unit": "kPa",
+      "description": "Generic 0-5V pressure transducer, 0-100 kPa output"
+    },
+    {
+      "name": "0-10V -> 0-1000 RPM",
+      "type": "linear",
+      "gain": 100.0,
+      "offset": 0.0,
+      "unit": "RPM",
+      "description": "0-10V tach output scaled to 0-1000 RPM"
+    },
+    {
+      "name": "4-20mA -> 0-100% (via 250ohm shunt)",
+      "type": "linear",
+      "gain": 6.25,
+      "offset": -6.25,
+      "unit": "%",
+      "description": "4-20 mA current loop across 250 ohm shunt resistor, 0-100%"
+    },
+    {
+      "name": "0-10V -> 0-100%",
+      "type": "linear",
+      "gain": 10.0,
+      "offset": 0.0,
+      "unit": "%",
+      "description": "Generic 0-10V to 0-100% scaling"
+    },
+    {
+      "name": "0-10V -> 0-50 GPM",
+      "type": "linear",
+      "gain": 5.0,
+      "offset": 0.0,
+      "unit": "GPM",
+      "description": "0-10V analog flow transmitter, 0-50 GPM output"
+    },
+    {
+      "name": "Druck 100psi",
+      "type": "linear",
+      "gain": 10.0,
+      "offset": 0.0,
+      "unit": "psi",
+      "description": "Druck 0-10V pressure transducer, 100 psi range"
+    },
+    {
+      "name": "Druck 300psi",
+      "type": "linear",
+      "gain": 30.0,
+      "offset": 0.0,
+      "unit": "psi",
+      "description": "Druck 0-10V pressure transducer, 300 psi range"
+    },
+    {
+      "name": "Druck 1000psi",
+      "type": "linear",
+      "gain": 100.0,
+      "offset": 0.0,
+      "unit": "psi",
+      "description": "Druck 0-10V pressure transducer, 1000 psi range"
+    },
+    {
+      "name": "Pressure Transducer PT-200 (0-10V)",
+      "type": "table",
+      "unit": "PSI",
+      "points": [
+        [0.0, 0.0],
+        [2.5, 50.0],
+        [5.0, 100.0],
+        [7.5, 150.0],
+        [10.0, 200.0]
+      ],
+      "extrapolate": false,
+      "description": "PT-200 5-point linearization, 0-200 PSI"
+    },
+    {
+      "name": "Fuel Flow Sensor (0-5V)",
+      "type": "table",
+      "unit": "GPH",
+      "points": [
+        [0.0, 0.0],
+        [1.0, 5.0],
+        [2.5, 15.0],
+        [4.0, 30.0],
+        [5.0, 40.0]
+      ],
+      "extrapolate": false,
+      "description": "Generic 0-5V fuel flow sensor, non-linear curve 0-40 GPH"
+    },
+    {
+      "name": "Omega FTB-1400 Turbine (12pt)",
+      "type": "table",
+      "unit": "GPM",
+      "points": [
+        [0.0, 0.0],
+        [0.5, 1.1],
+        [1.0, 2.4],
+        [1.5, 3.7],
+        [2.0, 5.0],
+        [3.0, 7.6],
+        [4.0, 10.1],
+        [5.0, 12.6],
+        [6.0, 15.0],
+        [7.5, 18.7],
+        [9.0, 22.3],
+        [10.0, 24.8]
+      ],
+      "extrapolate": false,
+      "description": "Omega FTB-1400 turbine flow meter, 12-point factory calibration"
+    }
+  ]
+}

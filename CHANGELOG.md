@@ -6,6 +6,38 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased] - 03/09/2026
 
+### Restore Displays button — 04/17/2026
+#### Added
+- **Restore Displays** button in the console Controls box. Clicking it re-reads `selected_displays` from `plugins.yaml`, checks which display windows are still alive (`isVisible()` / C++ object check), recreates any that were closed, and brings already-open windows to front. Messages pane confirms what was restored or that everything was already open.
+- Display creation refactored into `_create_display(key)` factory method and `_DISPLAY_REGISTRY` lookup so future display types (plots, etc.) are added in one place.
+- `_display_alive(key)` helper guards against `RuntimeError` from deleted Qt C++ objects when a display is closed between telemetry ticks.
+#### Changed
+- `_refresh_status()` telemetry push into display windows now uses `_display_alive()` instead of raw dict membership, preventing rare `RuntimeError` if a window is destroyed mid-tick.
+
+### Auto Excel export, Lock status indicator, and Unlock Test — 03/09/2026
+#### Added
+- **Auto Excel export** after recording: when Stop Recording triggers the background Parquet merge, a successful merge now kicks off the Excel export automatically. Workbook is written to `<run>/data/` so it sits beside `Data_<run>.parquet` instead of living in a separate `exports/` folder. New IPC status messages `export_progress` (stage=started) and `export_done` (ok, error, files) surface completion and any failures to the console Messages box.
+- **Status bar lock indicator** in the console: third label inserted between Connected/Disconnected and Recording so the bar now reads `Connected | Unlocked | Recording: Off`. Uses the same green/grey pattern as Recording (green = Locked, grey = Unlocked). Follows the existing auto-reset tied to `_prev_rec` so it flips back after Stop.
+- **Unlock Test button** in the console Controls box, visible only in the locked-and-not-recording state. Opens a QMessageBox confirmation ("Unlock this test and discard the locked metadata? You will need to re-enter Engine/Test info before the next lock.") and, on accept, sends the existing `unlock_test` control message, clears the local lock flag, and resets the primary button back to "Lock Test" so the operator can correct EngineTest metadata without having to start and stop a throwaway recording.
+- `--output-dir` flag on `py -m src.tools.export_excel` so super-users can still redirect workbooks to a custom folder; the default (both CLI and orchestrator-triggered) is `<run>/data/`.
+#### Changed
+- `src/tools/export_excel.py` `export_excel()` signature gains `output_dir: Optional[Path] = None`. Default destination is `<run>/data/` (previously `<run>/exports/`). The workbook stem is unchanged (`Data_<run>.xlsx`), so it now sits next to `Data_<run>.parquet`.
+- `src/core/recording.py` `_on_done` callback chains `kickoff_export(orch)` on successful merge; worker now publishes `export_progress`/`export_done` status messages over the status bus and calls `mod.export_excel(run_dir, output_dir=run_dir / "data")`.
+- `src/ui/widgets/console.py` `_handle_status_msg` gains branches for `export_progress` and `export_done` to display start/completion lines in Messages.
+- `docs/flows.md` WF-LOCK_START_STOP and `docs/ai_context.yaml` console controls updated to reflect the new flow (auto export, status bar, Unlock Test).
+#### Removed
+- **Export Workbook button** removed from the console Controls box along with its `_on_export_clicked` handler and the `btn_export.setEnabled(...)` gate in `_refresh_status`. The Excel-export IPC message type (`export_excel`) is still honoured by the orchestrator for backward-compatibility with the CLI tool, but no longer has a UI entry point.
+
+### Scale library JSON database — 03/09/2026
+#### Added
+- `configs/scale_library.json` — JSON scale database mirroring `configs/standard_channels.json` schema (`version`, `source`, `scales`). Each entry has `name` (selection key, old-tool style like "Druck 100psi"), `type` (`linear`/`table`), `unit`, optional `description`; linear entries carry `gain`/`offset`, table entries carry `points` (array of `[raw, scaled]` pairs) and `extrapolate`. Seeded with all 10 entries from the legacy YAML plus three Druck named scales (100/300/1000 psi) and a 12-point Omega FTB-1400 turbine flow meter for testing.
+- `src/ui/widgets/scale_library.py` — shared `load_scale_library()` loader. Single server-swap point: when a future web-based super-user tool hosts the scale database, only this function needs to change (e.g., HTTP GET with local JSON cache fallback). Validates entries (non-empty name, `type` in {`linear`, `table`}) on load.
+#### Changed
+- `src/ui/widgets/nidaq_scaling_editor.py` `_import_from_library()` now calls `load_scale_library()` instead of reading YAML directly.
+- `_LibraryPickerDialog` redesigned: added `QLineEdit` search box (case-insensitive match against name/description/unit), `Qt.UserRole` storage on each `QListWidgetItem` so filtering doesn't corrupt selection, hover tooltips showing formula (linear) or point count (table), and a filtered-count label. Read-only from the app per design — add/edit/delete happens in the separate web tool.
+#### Deprecated
+- `configs/scale_library.yaml` — no longer loaded by the app. Left in place for one release to avoid surprising external scripts; follows the same pattern as the earlier `configs/alias_library.yaml` deprecation.
+
 ### NI DAQ hardware migration system — 03/09/2026
 #### Added
 - **Hardware migration dialog** (`src/ui/widgets/nidaq_migration_dialog.py`): when NI DAQ hardware changes (chassis swap, card moved to a different slot), a module-level migration dialog auto-suggests mappings by `product_type` so the user can transfer aliases, scaling, and sensor config to new physical channels without starting from scratch.

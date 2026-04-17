@@ -31,6 +31,8 @@ try:
 except Exception:
 	raise
 
+from .scale_library import load_scale_library
+
 
 class ScalingEditorDialog(QDialog):
 
@@ -45,9 +47,7 @@ class ScalingEditorDialog(QDialog):
 		super().__init__(parent)
 		self._channel_alias = channel_alias
 		self._telemetry_getter = telemetry_getter
-		self._library_path = library_path or (
-			Path(__file__).resolve().parents[3] / "configs" / "scale_library.yaml"
-		)
+		self._library_path = library_path
 		self.result_scaling: dict = {}
 		self.setWindowTitle(f"Channel Scaling - {channel_alias}")
 		self.resize(600, 550)
@@ -330,15 +330,7 @@ class ScalingEditorDialog(QDialog):
 	# ── Library import ───────────────────────────────────────────────
 
 	def _import_from_library(self) -> None:
-		try:
-			import yaml  # type: ignore
-			with open(self._library_path, "r", encoding="utf-8") as f:
-				lib = yaml.safe_load(f)
-		except Exception as e:
-			QMessageBox.warning(self, "Library Error", f"Could not load scale library:\n{e}")
-			return
-
-		scales = lib.get("scales", []) if isinstance(lib, dict) else []
+		scales = load_scale_library(self._library_path)
 		if not scales:
 			QMessageBox.information(self, "Library", "No scales found in library.")
 			return
@@ -410,26 +402,78 @@ class _LibraryPickerDialog(QDialog):
 	def __init__(self, scales: List[dict], parent=None) -> None:
 		super().__init__(parent)
 		self.setWindowTitle("Import Scale from Library")
-		self.resize(400, 350)
+		self.resize(420, 420)
 		self.selected: dict | None = None
 		self._scales = scales
 
 		layout = QVBoxLayout(self)
+
+		self._search = QLineEdit()
+		self._search.setPlaceholderText("Search scales...")
+		self._search.setClearButtonEnabled(True)
+		layout.addWidget(self._search)
+
 		self._list = QListWidget()
-		for s in scales:
-			self._list.addItem(s.get("name", "Unnamed"))
 		layout.addWidget(self._list)
+
+		self._count_lbl = QLabel()
+		layout.addWidget(self._count_lbl)
 
 		bbox = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
 		layout.addWidget(bbox)
+
 		bbox.accepted.connect(self._on_accept)
 		bbox.rejected.connect(self.reject)
 		self._list.doubleClicked.connect(self._on_accept)
+		self._search.textChanged.connect(self._on_search)
+
+		self._populate(self._scales)
+
+	def _populate(self, scales: List[dict]) -> None:
+		self._list.clear()
+		for s in scales:
+			item = QListWidgetItem(s.get("name", "Unnamed"))
+			item.setData(Qt.UserRole, s)
+			tip = self._format_tooltip(s)
+			if tip:
+				item.setToolTip(tip)
+			self._list.addItem(item)
+		self._count_lbl.setText(f"{len(scales)} of {len(self._scales)} scales")
+
+	def _format_tooltip(self, s: dict) -> str:
+		lines: List[str] = []
+		desc = str(s.get("description", "")).strip()
+		if desc:
+			lines.append(desc)
+		stype = str(s.get("type", "")).lower()
+		unit = str(s.get("unit", ""))
+		if stype == "linear":
+			g = s.get("gain", 1.0)
+			o = s.get("offset", 0.0)
+			sign = "+" if o >= 0 else "-"
+			lines.append(f"Linear: scaled = raw \u00d7 {g} {sign} {abs(o)} {unit}")
+		elif stype == "table":
+			pts = s.get("points", [])
+			lines.append(f"Table: {len(pts)} points, unit={unit}")
+		return "\n".join(lines)
+
+	def _on_search(self, text: str) -> None:
+		q = text.strip().lower()
+		if not q:
+			filtered = self._scales
+		else:
+			filtered = [
+				s for s in self._scales
+				if q in str(s.get("name", "")).lower()
+				or q in str(s.get("description", "")).lower()
+				or q in str(s.get("unit", "")).lower()
+			]
+		self._populate(filtered)
 
 	def _on_accept(self) -> None:
-		row = self._list.currentRow()
-		if row >= 0:
-			self.selected = self._scales[row]
+		item = self._list.currentItem()
+		if item is not None:
+			self.selected = item.data(Qt.UserRole)
 		self.accept()
 
 
