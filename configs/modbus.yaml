@@ -12,10 +12,10 @@ writes: []
 reads:
 - alias: xFQ_Gen
   fc: 4
-  address: 1019
-  length: 2
+  address: 1018
+  length: 1
   data_type_input: signed
-  type: int32
+  type: int16
   byte_order: big
   word_order: AB
   scaling:
@@ -27,10 +27,10 @@ reads:
   server: ComApp
 - alias: xVL_Gen12
   fc: 4
-  address: 1024
-  length: 2
+  address: 1023
+  length: 1
   data_type_input: unsigned
-  type: uint32
+  type: uint16
   byte_order: big
   word_order: AB
   scaling:
@@ -42,10 +42,10 @@ reads:
   server: ComApp
 - alias: xVL_Gen23
   fc: 3
-  address: 1025
-  length: 2
+  address: 1024
+  length: 1
   data_type_input: unsigned
-  type: uint32
+  type: uint16
   byte_order: big
   word_order: AB
   scaling:
@@ -57,10 +57,10 @@ reads:
   server: ComApp
 - alias: xVL_Gen31
   fc: 3
-  address: 1026
-  length: 2
+  address: 1025
+  length: 1
   data_type_input: unsigned
-  type: uint32
+  type: uint16
   byte_order: big
   word_order: AB
   scaling:
@@ -72,10 +72,10 @@ reads:
   server: ComApp
 - alias: xCT_Gen1
   fc: 3
-  address: 1027
-  length: 2
+  address: 1026
+  length: 1
   data_type_input: unsigned
-  type: uint32
+  type: uint16
   byte_order: big
   word_order: AB
   scaling:
@@ -87,10 +87,10 @@ reads:
   server: ComApp
 - alias: xCT_Gen2
   fc: 3
-  address: 1028
-  length: 2
+  address: 1027
+  length: 1
   data_type_input: unsigned
-  type: uint32
+  type: uint16
   byte_order: big
   word_order: AB
   scaling:
@@ -102,10 +102,10 @@ reads:
   server: ComApp
 - alias: xCT_Gen3
   fc: 3
-  address: 1029
-  length: 2
+  address: 1028
+  length: 1
   data_type_input: unsigned
-  type: uint32
+  type: uint16
   byte_order: big
   word_order: AB
   scaling:
@@ -117,10 +117,10 @@ reads:
   server: ComApp
 - alias: xPO_PwnAvg
   fc: 3
-  address: 1007
-  length: 2
+  address: 1006
+  length: 1
   data_type_input: signed
-  type: int32
+  type: int16
   byte_order: big
   word_order: AB
   scaling:
@@ -132,10 +132,10 @@ reads:
   server: ComApp
 - alias: xPO_GenAvg
   fc: 3
-  address: 1002
-  length: 2
+  address: 1001
+  length: 1
   data_type_input: signed
-  type: int32
+  type: int16
   byte_order: big
   word_order: AB
   scaling:
@@ -147,10 +147,10 @@ reads:
   server: ComApp
 - alias: xPF_PwmAvg
   fc: 3
-  address: 1015
-  length: 2
+  address: 1014
+  length: 1
   data_type_input: signed
-  type: int32
+  type: int16
   byte_order: big
   word_order: AB
   scaling:
@@ -162,10 +162,10 @@ reads:
   server: ComApp
 - alias: xV_Bat
   fc: 3
-  address: 1052
-  length: 2
+  address: 1051
+  length: 1
   data_type_input: unsigned
-  type: uint32
+  type: uint16
   byte_order: big
   word_order: AB
   scaling:
@@ -177,10 +177,10 @@ reads:
   server: ComApp
 - alias: xLoad_S_kVA
   fc: 3
-  address: 1011
-  length: 2
+  address: 1010
+  length: 1
   data_type_input: unsigned
-  type: uint32
+  type: uint16
   byte_order: big
   word_order: AB
   scaling:
@@ -192,10 +192,10 @@ reads:
   server: ComApp
 - alias: xLOad_P_kVA
   fc: 3
-  address: 1002
-  length: 2
+  address: 1001
+  length: 1
   data_type_input: unsigned
-  type: uint32
+  type: uint16
   byte_order: big
   word_order: AB
   scaling:
@@ -228,10 +228,10 @@ devices:
   reads:
   - alias: xFQ_Gen
     fc: 4
-    address: 1019
-    length: 2
+    address: 1018
+    length: 1
     data_type_input: signed
-    type: int32
+    type: int16
     byte_order: big
     word_order: AB
     scaling:
@@ -242,10 +242,10 @@ devices:
     enabled: true
   - alias: xVL_Gen12
     fc: 4
-    address: 1024
-    length: 2
+    address: 1023
+    length: 1
     data_type_input: unsigned
-    type: uint32
+    type: uint16
     byte_order: big
     word_order: AB
     scaling:
@@ -256,10 +256,10 @@ devices:
     enabled: true
   - alias: xVL_Gen23
     fc: 3
-    address: 1025
-    length: 2
+    address: 1024
+    length: 1
     data_type_input: unsigned
-    type: uint32
+    type: uint16
     byte_order: big
     word_order: AB
     scaling:
@@ -270,10 +270,10 @@ devices:
     enabled: true
   - alias: xVL_Gen31
     fc: 3
-    address: 1026
-    length: 2
+    address: 1025
+    length: 1
     data_type_input: unsigned
-    type: uint32
+    type: uint16
     byte_order: big
     word_order: AB
     scaling:
@@ -284,10 +284,10 @@ devices:
     enabled: true
   - alias: xCT_Gen1
     fc: 3
-    address: 1027
-    length: 2
+    address: 1026
+    length: 1
     data_type_input: unsigned
-    type: uint32
+    type: uint16
     byte_order: big
     word_order: AB
     scaling:
@@ -298,10 +298,10 @@ devices:
     enabled: true
   - alias: xCT_Gen2
     fc: 3
-    address: 1028
-    length: 2
+    address: 1027
+    length: 1
     data_type_input: unsigned
-    type: uint32
+    type: uint16
     byte_order: big
     word_order: AB
     scaling:
@@ -312,10 +312,10 @@ devices:
     enabled: true
   - alias: xCT_Gen3
     fc: 3
-    address: 1029
-    length: 2
+    address: 1028
+    length: 1
     data_type_input: unsigned
-    type: uint32
+    type: uint16
     byte_order: big
     word_order: AB
     scaling:
@@ -326,10 +326,10 @@ devices:
     enabled: true
   - alias: xPO_PwnAvg
     fc: 3
-    address: 1007
-    length: 2
+    address: 1006
+    length: 1
     data_type_input: signed
-    type: int32
+    type: int16
     byte_order: big
     word_order: AB
     scaling:
@@ -340,10 +340,10 @@ devices:
     enabled: true
   - alias: xPO_GenAvg
     fc: 3
-    address: 1002
-    length: 2
+    address: 1001
+    length: 1
     data_type_input: signed
-    type: int32
+    type: int16
     byte_order: big
     word_order: AB
     scaling:
@@ -354,10 +354,10 @@ devices:
     enabled: true
   - alias: xPF_PwmAvg
     fc: 3
-    address: 1015
-    length: 2
+    address: 1014
+    length: 1
     data_type_input: signed
-    type: int32
+    type: int16
     byte_order: big
     word_order: AB
     scaling:
@@ -368,10 +368,10 @@ devices:
     enabled: true
   - alias: xV_Bat
     fc: 3
-    address: 1052
-    length: 2
+    address: 1051
+    length: 1
     data_type_input: unsigned
-    type: uint32
+    type: uint16
     byte_order: big
     word_order: AB
     scaling:
@@ -382,10 +382,10 @@ devices:
     enabled: true
   - alias: xLoad_S_kVA
     fc: 3
-    address: 1011
-    length: 2
+    address: 1010
+    length: 1
     data_type_input: unsigned
-    type: uint32
+    type: uint16
     byte_order: big
     word_order: AB
     scaling:
@@ -396,10 +396,10 @@ devices:
     enabled: true
   - alias: xLOad_P_kVA
     fc: 3
-    address: 1002
-    length: 2
+    address: 1001
+    length: 1
     data_type_input: unsigned
-    type: uint32
+    type: uint16
     byte_order: big
     word_order: AB
     scaling:

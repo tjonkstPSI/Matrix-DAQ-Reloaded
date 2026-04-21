@@ -38,6 +38,18 @@ Configure and communicate with one or two CCP ECUs over NI-XNET/CAN using A2L-ba
   - env var fallback (`CCP_ACCESS_KEY`, plus compatibility fallbacks)
 - DLL-based seed/key path is not used in current runtime.
 
+### A2L Parsing and Value Decode
+- `parse_a2l()` in `_ccp_a2l.py` performs two passes over the A2L file:
+  1. **Pass 1**: extracts COMPU_METHOD blocks — parses unit string and COEFFS (6 coefficients: a, b, c, d, e, f) from `RAT_FUNC` methods; recognizes `IDENTICAL` as identity conversion.
+  2. **Pass 2**: extracts MEASUREMENT and CHARACTERISTIC blocks — links each to its COMPU_METHOD via the reference name, capturing address, data_type, physical limits, and COEFFS.
+- Limits parsing correctly skips the first numeric line (Resolution/Accuracy) and captures the second (actual physical limits), including negative lower bounds.
+- `A2LChannel` dataclass stores: `name`, `address`, `data_type`, `limits`, `unit`, `coeffs`.
+- `decode_value()` converts raw CCP payload bytes to physical values in three stages:
+  1. **Type decode**: raw bytes → numeric internal value (signed/unsigned int via `int.from_bytes`, IEEE float via `struct.unpack`). Supports UBYTE, SBYTE, UWORD, SWORD, ULONG, SLONG, FLOAT32_IEEE, FLOAT64_IEEE.
+  2. **COEFFS conversion**: applies inverted RAT_FUNC formula (`PHYS = (f*INT - c) / b` for the common linear case; full quadratic solver for rare edge cases). Used when COEFFS are available and non-identity.
+  3. **Legacy fallback**: limits-based linear scaling when no COEFFS available (backward compatibility).
+- `_apply_rat_func_inv()` handles all three RAT_FUNC variants: pure linear (a=d=e=0), linear-rational (a=d=0), and full quadratic.
+
 ### Variable Discovery, Selection, and Naming
 - CCP Configure dialog loads A2L channels and metadata (address/type/size/limits/unit).
 - Operator selects channels by checkbox with prefix/wildcard filter.
@@ -129,5 +141,6 @@ Additional diagnostics channels:
 ### Notes
 - Current scope is read-only measurement polling.
 - Write/calibration flows are intentionally not implemented in this plugin version.
+- COMPU_METHOD types `TAB_VERB`, `TAB_INTP`, `TAB_NOINTP`, and `FORM` are not currently parsed; channels using these methods will have `coeffs=None` and fall back to limits-based scaling or raw values. In practice, verb/table methods apply to enum/status channels where raw integer values are meaningful.
 
 

@@ -393,6 +393,7 @@ class CCPConfigDialog(QDialog):
         cur_type: str | None = None
         cur_compu_ref: str | None = None
         cur_limits: tuple[float, float] | None = None
+        numeric_line_index = 0
         for raw in text_lines:
             line = raw.strip()
             if line.startswith("/begin MEASUREMENT") or line.startswith("/begin CHARACTERISTIC"):
@@ -402,6 +403,7 @@ class CCPConfigDialog(QDialog):
                 cur_type = None
                 cur_compu_ref = None
                 cur_limits = None
+                numeric_line_index = 0
                 in_block = True
                 continue
             if line.startswith("/end MEASUREMENT") or line.startswith("/end CHARACTERISTIC"):
@@ -418,7 +420,7 @@ class CCPConfigDialog(QDialog):
                         "FLOAT64_IEEE": 8,
                     }
                     size = int(size_map.get(dtype, 4))
-                    size = max(1, min(5, size))
+                    size = max(1, min(8, size))
                     out[cur_name] = {
                         "name": cur_name,
                         "address": cur_addr,
@@ -448,12 +450,16 @@ class CCPConfigDialog(QDialog):
                 if len(parts) >= 2:
                     cur_addr = self._parse_address(parts[1])
                 continue
-            if line and line[0].isdigit():
+            if line and (line[0].isdigit() or line[0] == '-'):
                 parts = line.split()
                 if len(parts) >= 2:
                     try:
-                        cur_limits = (float(parts[0]), float(parts[1]))
-                    except Exception:
+                        a_val = float(parts[0])
+                        b_val = float(parts[1])
+                        numeric_line_index += 1
+                        if numeric_line_index >= 2:
+                            cur_limits = (a_val, b_val)
+                    except (ValueError, TypeError):
                         pass
         return out
 

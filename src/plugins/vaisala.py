@@ -20,6 +20,8 @@ except Exception:
     except Exception:
         ModbusTcpClient = None  # type: ignore
 
+from ._modbus_compat import uid_kwargs
+
 REGISTER_MAP: List[Dict[str, Any]] = [
     {"id": "RH",   "description": "Relative Humidity",       "address": 0,  "unit": "%",    "sim_center": 45.0,  "sim_amp": 3.0},
     {"id": "T",    "description": "Temperature",             "address": 2,  "unit": "C",    "sim_center": 23.0,  "sim_amp": 0.5},
@@ -39,26 +41,40 @@ REGISTER_MAP: List[Dict[str, Any]] = [
 _REG_BY_ID: Dict[str, Dict[str, Any]] = {r["id"]: r for r in REGISTER_MAP}
 
 
-_PRESSURE_TEMP_REG = 771
-_FILTER_STD_REG = 1281
-_FILTER_EXT_REG = 1282
+_PRESSURE_TEMP_REG = 770   # manual 0771 → PDU 770
+_FILTER_STD_REG = 1280     # manual 1281 → PDU 1280
+_FILTER_EXT_REG = 1281     # manual 1282 → PDU 1281
 
 
-def _decode_float32(regs: list, offset: int) -> float:
-    """Decode a Big-Endian float32 from two consecutive 16-bit registers."""
+def _decode_float32(regs: list, offset: int, word_order: str = "little") -> float:
+    """Decode an IEEE 754 float32 from two consecutive 16-bit registers.
+
+    word_order='little' (Vaisala default): LSW at lower address → swap words.
+    word_order='big': MSW at lower address → no swap.
+    """
     if offset + 1 >= len(regs):
         return float("nan")
     w0 = int(regs[offset]) & 0xFFFF
     w1 = int(regs[offset + 1]) & 0xFFFF
-    raw = struct.pack(">HH", w0, w1)
+    if word_order == "little":
+        raw = struct.pack(">HH", w1, w0)
+    else:
+        raw = struct.pack(">HH", w0, w1)
     return float(struct.unpack(">f", raw)[0])
 
 
-def _encode_float32(value: float) -> tuple:
-    """Encode a float into two Big-Endian 16-bit register values (w0, w1)."""
+def _encode_float32(value: float, word_order: str = "little") -> tuple:
+    """Encode a float into two 16-bit register values.
+
+    word_order='little' (Vaisala default): returns (LSW, MSW) so LSW lands at
+    the lower register address.
+    word_order='big': returns (MSW, LSW).
+    """
     raw = struct.pack(">f", float(value))
-    w0, w1 = struct.unpack(">HH", raw)
-    return (w0, w1)
+    msw, lsw = struct.unpack(">HH", raw)
+    if word_order == "little":
+        return (lsw, msw)
+    return (msw, lsw)
 
 
 class VaisalaPlugin(BasePlugin):
@@ -84,6 +100,7 @@ class VaisalaPlugin(BasePlugin):
         self._pressure_dyn_offset: float = 0.0
         self._filtering_mode: str = "none"
         self._conn_ok: bool = False
+        self._word_order: str = "little"
         # Telemetry feed from orchestrator (for dynamic pressure)
         self._telemetry_lock = threading.Lock()
         self._latest_telemetry: Dict[str, Any] = {}
@@ -123,6 +140,8 @@ class VaisalaPlugin(BasePlugin):
             self._unit_map[alias] = reg["unit"]
 
         conn = self.config.get("connection") or {}
+        wo = str(conn.get("word_order", "little")).strip().lower()
+        self._word_order = wo if wo in ("little", "big") else "little"
         try:
             hz = float(conn.get("poll_rate_hz", 1.0))
         except Exception:
@@ -296,12 +315,9 @@ class VaisalaPlugin(BasePlugin):
 
         if pressure_hpa is not None:
             pressure_hpa = max(0.0, min(9999.0, pressure_hpa))
-            w0, w1 = _encode_float32(pressure_hpa)
+            w0, w1 = _encode_float32(pressure_hpa, self._word_order)
             try:
-                try:
-                    client.write_registers(address=_PRESSURE_TEMP_REG, values=[w0, w1], slave=unit_id)
-                except TypeError:
-                    client.write_registers(address=_PRESSURE_TEMP_REG, values=[w0, w1], unit=unit_id)
+                client.write_registers(address=_PRESSURE_TEMP_REG, values=[w0, w1], **uid_kwargs(unit_id))
             except Exception as exc:
                 print(f"[Vaisala] Pressure write error: {exc}")
 
@@ -309,12 +325,8 @@ class VaisalaPlugin(BasePlugin):
         std_val = 1 if self._filtering_mode == "std" else 0
         ext_val = 1 if self._filtering_mode == "ext" else 0
         try:
-            try:
-                client.write_register(address=_FILTER_STD_REG, value=std_val, slave=unit_id)
-                client.write_register(address=_FILTER_EXT_REG, value=ext_val, slave=unit_id)
-            except TypeError:
-                client.write_register(address=_FILTER_STD_REG, value=std_val, unit=unit_id)
-                client.write_register(address=_FILTER_EXT_REG, value=ext_val, unit=unit_id)
+            client.write_register(address=_FILTER_STD_REG, value=std_val, **uid_kwargs(unit_id))
+            client.write_register(address=_FILTER_EXT_REG, value=ext_val, **uid_kwargs(unit_id))
         except Exception as exc:
             print(f"[Vaisala] Filtering write error: {exc}")
 
@@ -328,20 +340,14 @@ class VaisalaPlugin(BasePlugin):
         regs_b: list = []
 
         if need_block_a:
-            try:
-                rr = client.read_holding_registers(address=0, count=32, slave=unit_id)
-            except TypeError:
-                rr = client.read_holding_registers(address=0, count=32, unit=unit_id)
+            rr = client.read_holding_registers(address=0, count=32, **uid_kwargs(unit_id))
             if not hasattr(rr, "registers") or rr.isError():
                 print("[Vaisala] Block A read error")
             else:
                 regs_a = list(rr.registers)
 
         if need_block_b:
-            try:
-                rr = client.read_holding_registers(address=64, count=2, slave=unit_id)
-            except TypeError:
-                rr = client.read_holding_registers(address=64, count=2, unit=unit_id)
+            rr = client.read_holding_registers(address=64, count=2, **uid_kwargs(unit_id))
             if not hasattr(rr, "registers") or rr.isError():
                 print("[Vaisala] Block B read error")
             else:
@@ -351,9 +357,9 @@ class VaisalaPlugin(BasePlugin):
             addr = ch["address"]
             alias = ch["alias"]
             if addr < 32 and regs_a:
-                value = _decode_float32(regs_a, addr)
+                value = _decode_float32(regs_a, addr, self._word_order)
             elif addr >= 64 and regs_b:
-                value = _decode_float32(regs_b, addr - 64)
+                value = _decode_float32(regs_b, addr - 64, self._word_order)
             else:
                 value = float("nan")
             vals[alias] = value

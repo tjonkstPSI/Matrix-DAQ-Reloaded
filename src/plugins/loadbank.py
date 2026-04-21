@@ -22,6 +22,8 @@ except Exception:
     except Exception:  # pragma: no cover - handled by validate()
         ModbusTcpClient = None  # type: ignore
 
+from ._modbus_compat import uid_kwargs
+
 
 class LoadBankPlugin(BasePlugin):
     id = "LoadBank"
@@ -504,14 +506,7 @@ class LoadBankPlugin(BasePlugin):
         return float(regs[0])
 
     def _client_read(self, fn, address: int, count: int, unit_id: int):
-        # pymodbus API compatibility across versions.
-        try:
-            return fn(address, count=count, slave=unit_id)
-        except TypeError:
-            try:
-                return fn(address, count=count, unit=unit_id)
-            except TypeError:
-                return fn(address, count=count, device_id=unit_id)
+        return fn(address, count=count, **uid_kwargs(unit_id))
 
     def _write_setpoint(self, unit_id: int, value: float) -> bool:
         c = self._client
@@ -535,13 +530,7 @@ class LoadBankPlugin(BasePlugin):
         clamped = max(lo, min(hi, float(value)))
         raw = int(round(clamped * m + b))
         try:
-            try:
-                wr = c.write_register(address=address, value=raw, slave=unit_id)
-            except TypeError:
-                try:
-                    wr = c.write_register(address=address, value=raw, unit=unit_id)
-                except TypeError:
-                    wr = c.write_register(address=address, value=raw, device_id=unit_id)
+            wr = c.write_register(address=address, value=raw, **uid_kwargs(unit_id))
             if self._is_error_response(wr):
                 return False
             self._setpoint_val = clamped
@@ -573,13 +562,7 @@ class LoadBankPlugin(BasePlugin):
         if word_order == "BA":
             regs = [regs[1], regs[0]]
         try:
-            try:
-                wr = c.write_registers(address=address, values=regs, slave=unit_id)
-            except TypeError:
-                try:
-                    wr = c.write_registers(address=address, values=regs, unit=unit_id)
-                except TypeError:
-                    wr = c.write_registers(address=address, values=regs, device_id=unit_id)
+            wr = c.write_registers(address=address, values=regs, **uid_kwargs(unit_id))
             if self._is_error_response(wr):
                 return False
             self._setpoint_val = float(target)
@@ -625,13 +608,7 @@ class LoadBankPlugin(BasePlugin):
         self._last_step_remainder_kw = float(rem)
 
         try:
-            try:
-                wr = c.write_coils(address=address, values=vec, slave=unit_id)
-            except TypeError:
-                try:
-                    wr = c.write_coils(address=address, values=vec, unit=unit_id)
-                except TypeError:
-                    wr = c.write_coils(address=address, values=vec, device_id=unit_id)
+            wr = c.write_coils(address=address, values=vec, **uid_kwargs(unit_id))
             if self._is_error_response(wr):
                 return False
             self._setpoint_val = float(target - rem)
@@ -658,13 +635,7 @@ class LoadBankPlugin(BasePlugin):
         if not values:
             values = [True]
         try:
-            try:
-                wr = c.write_coils(address=address, values=values, slave=unit_id)
-            except TypeError:
-                try:
-                    wr = c.write_coils(address=address, values=values, unit=unit_id)
-                except TypeError:
-                    wr = c.write_coils(address=address, values=values, device_id=unit_id)
+            wr = c.write_coils(address=address, values=values, **uid_kwargs(unit_id))
             if self._is_error_response(wr):
                 return False
             self._control_dirty_a = False
@@ -681,13 +652,7 @@ class LoadBankPlugin(BasePlugin):
         hb = (self._map.get("commands", {}) or {}).get("heartbeat", {}) or {}
         address = self._address_zero_based(hb.get("address", 0))
         try:
-            try:
-                wr = c.write_coil(address=address, value=bool(state), slave=unit_id)
-            except TypeError:
-                try:
-                    wr = c.write_coil(address=address, value=bool(state), unit=unit_id)
-                except TypeError:
-                    wr = c.write_coil(address=address, value=bool(state), device_id=unit_id)
+            wr = c.write_coil(address=address, value=bool(state), **uid_kwargs(unit_id))
             return not self._is_error_response(wr)
         except Exception:
             self._connected = False

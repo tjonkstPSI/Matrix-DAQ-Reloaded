@@ -1,4 +1,4 @@
-# Author: T. Onkst | Date: 04202026
+# Author: T. Onkst | Date: 04212026
 name: "Engine Test Data Recorder"
 purpose: "Stream, visualize, and record engine test data from NI cDAQ, CAN/CCP, and Modbus devices; export to Excel."
 
@@ -32,7 +32,7 @@ code_layout:
       primary: "src/plugins/ccp.py"
       helpers:
         - path: "src/plugins/_ccp_a2l.py"
-          role: "A2L parse, measurement metadata, value decode helpers"
+          role: "A2L parse (two-pass: COMPU_METHOD COEFFS extraction + MEASUREMENT/CHARACTERISTIC blocks), A2LChannel dataclass with coeffs field, decode_value() with three-stage pipeline (type decode via int.from_bytes/struct.unpack → RAT_FUNC COEFFS inversion via _apply_rat_func_inv → legacy limits fallback). Supports all ASAM types: UBYTE, SBYTE, UWORD, SWORD, ULONG, SLONG, FLOAT32_IEEE, FLOAT64_IEEE."
         - path: "src/plugins/_ccp_protocol.py"
           role: "CCP over CAN session, seed/key, SHORT_UP polling, protocol state"
     channel_manager:
@@ -41,6 +41,9 @@ code_layout:
     engine_test:
       primary: "src/plugins/engine_test.py"
       notes: "First-class plugin (replaces orchestrator stub); run metadata hooks."
+    modbus_compat:
+      path: "src/plugins/_modbus_compat.py"
+      role: "Pymodbus version compatibility shim. Detects installed pymodbus version at import and provides uid_kwargs(unit_id) returning the correct parameter dict (unit= for <3.3, slave= for 3.3-3.9, device_id= for 3.10+). Used by modbus.py, vaisala.py, omega.py, and loadbank.py."
   shared_ui:
     standard_channels:
       path: "src/ui/widgets/standard_channels.py"
@@ -106,7 +109,7 @@ plugins:
   - id: "CAN"
     description: "Multi-bus CAN plugin with tabbed per-bus configuration. YAML schema uses buses[*] with per-bus channel, baudrate, bustype, dbc_path, and signals; legacy single-bus config (session + top-level signals + dbc_path) auto-migrates to buses[0]. Runtime opens one python-can bus per entry, loads one DBC per bus, and drains frames from all buses in the snapshot loop. CAN configure dialog (can_config.py) uses QTabWidget with Add Bus / Remove Bus buttons; each tab has channel, baudrate, DBC path, signal filter, and signal table with checkbox/message/signal/unit/alias columns. Double-click Alias column opens shared AliasPickerDialog (standard channels from JSON + custom). Alias validation on save enforces standard naming convention and global uniqueness across all buses. Blank aliases on checked signals are blocked on save. Real-mode DBC decode with J1939 PGN-aware fallback matching and runtime diagnostics channels (frames_rx/decode_hits/last_decode_age_s). Sim/real mode is controlled globally via the launch dialog Offline Mode checkbox, not per-plugin."
   - id: "CCP"
-    description: "CCP over CAN (read-only; modular: ccp.py + _ccp_a2l, _ccp_protocol): import A2L, configure bus/session, algorithmic access-key unlock, select measurements (use A2L names) with optional global naming prefix. Supports multi-device placeholder configuration for up to two ECMs using devices[*] with Primary/Secondary role mapping to station_address 0x0/0x1. Runtime is decoupled from core tick via latest-value snapshot buffering and exposes freshness telemetry. SHORT_UP poll timeout honors configured io_timeout_s (no hard cap); occasional poll fails under bus contention are normal and handled by sample-and-hold."
+    description: "CCP over CAN (read-only; modular: ccp.py + _ccp_a2l, _ccp_protocol): import A2L, configure bus/session, algorithmic access-key unlock, select measurements (use A2L names) with optional global naming prefix. A2L parser extracts COMPU_METHOD COEFFS (RAT_FUNC conversion coefficients) for proper raw-to-physical conversion; decode_value() handles all ASAM types including FLOAT32_IEEE via struct.unpack, signed SLONG/SBYTE, and ULONG with COEFFS-based scaling. Supports multi-device placeholder configuration for up to two ECMs using devices[*] with Primary/Secondary role mapping to station_address 0x0/0x1. Runtime is decoupled from core tick via latest-value snapshot buffering and exposes freshness telemetry. SHORT_UP poll timeout honors configured io_timeout_s (no hard cap); occasional poll fails under bus contention are normal and handled by sample-and-hold."
   - id: "Calculated_Channels"
     description: "Calculated channels evaluated using safe expressions. Supports user-defined simple symbols mapped to full source aliases to simplify expressions; evaluated in listed order; outputs recorded under full aliases. Runtime now computes in a background snapshot loop and serves latest values to core tick."
   - id: "Cycle"

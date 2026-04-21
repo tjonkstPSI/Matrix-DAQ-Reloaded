@@ -6,6 +6,7 @@ connection:
   unit_id: 1
   timeout_ms: 1000
   poll_rate_hz: 1
+  word_order: little    # little (HMT330 factory default) | big (word-swapped)
 model:
   selected: HMT330
 channels:

@@ -18,6 +18,8 @@ except Exception:
     except Exception:
         ModbusTcpClient = None  # type: ignore
 
+from ._modbus_compat import uid_kwargs
+
 CHANNEL_MAP: List[Dict[str, Any]] = [
     {"id": "temp",     "alias": "xTP_Amb",  "address": 8,  "unit": "C",   "sim_center": 22.0, "sim_amp": 2.0},
     {"id": "baro",     "alias": "xPR_Amb",  "address": 10, "unit": "kPa", "sim_center": 101.0, "sim_amp": 0.5},
@@ -208,10 +210,7 @@ class OmegaPlugin(BasePlugin):
 
     def _read_channels(self, client: Any) -> Dict[str, Any]:
         """Bulk read all 3 channels in a single Modbus transaction."""
-        try:
-            rr = client.read_holding_registers(address=_BASE_ADDR, count=_REG_COUNT)
-        except TypeError:
-            rr = client.read_holding_registers(address=_BASE_ADDR, count=_REG_COUNT, unit=1)
+        rr = client.read_holding_registers(address=_BASE_ADDR, count=_REG_COUNT, **uid_kwargs(1))
         if not hasattr(rr, "registers") or rr.isError():
             return {}
 

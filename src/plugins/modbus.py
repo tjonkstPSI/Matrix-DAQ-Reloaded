@@ -19,6 +19,8 @@ except ImportError:
     except ImportError:
         ModbusTcpClient = None  # type: ignore
 
+from ._modbus_compat import uid_kwargs
+
 
 def _decode_registers(
     regs: List[int],
@@ -310,9 +312,9 @@ class ModbusPlugin(BasePlugin):
             return float("nan")
 
         if fc == 4:
-            resp = client.read_input_registers(address=address, count=length, slave=sc.unit_id)
+            resp = client.read_input_registers(address=address, count=length, **uid_kwargs(sc.unit_id))
         else:
-            resp = client.read_holding_registers(address=address, count=length, slave=sc.unit_id)
+            resp = client.read_holding_registers(address=address, count=length, **uid_kwargs(sc.unit_id))
 
         if resp is None or getattr(resp, "isError", lambda: True)():
             raise RuntimeError(f"Modbus read error at address {address} (fc={fc})")

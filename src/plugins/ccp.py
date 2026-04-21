@@ -516,7 +516,7 @@ class CCPPlugin(BasePlugin):
                 item_dtype = str(item.get("data_type") or "").strip().upper() or None
                 dtype = item_dtype or (ch.data_type if ch is not None else None)
                 size = int(item.get("size") or dtype_size(dtype))
-                size = max(1, min(5, size))
+                size = max(1, min(8, size))
                 item_limits = item.get("limits", None)
                 limits = None
                 if isinstance(item_limits, (list, tuple)) and len(item_limits) == 2:
@@ -526,6 +526,7 @@ class CCPPlugin(BasePlugin):
                         limits = None
                 if limits is None and ch is not None:
                     limits = ch.limits
+                coeffs = ch.coeffs if ch is not None else None
                 entries.append(
                     {
                         "name": name,
@@ -535,6 +536,7 @@ class CCPPlugin(BasePlugin):
                         "size": size,
                         "dtype": dtype,
                         "limits": limits,
+                        "coeffs": coeffs,
                         "poll_endian": poll_endian,
                         "mta_addr_endian": mta_addr_endian,
                     }
@@ -707,6 +709,7 @@ class CCPPlugin(BasePlugin):
                     raw=payload,
                     byteorder=str(entry.get("poll_endian") or "big"),
                     limits=entry.get("limits"),
+                    coeffs=entry.get("coeffs"),
                 )
         self._diag["last_error"] = f"short_up_timeout:{entry.get('name','?')}"
         return None

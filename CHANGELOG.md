@@ -6,6 +6,30 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased] - 03/09/2026
 
+### Onsite testing: CCP A2L decode rewrite, pymodbus compat, Vaisala/Modbus data fixes — 04/21/2026
+#### Added
+- **CCP A2L COMPU_METHOD COEFFS parsing**: `parse_a2l()` now extracts the 6 COEFFS (a, b, c, d, e, f) from every `RAT_FUNC` COMPU_METHOD block and `IDENTICAL` methods. COEFFS are stored in a new `coeffs` field on the `A2LChannel` dataclass and linked to each MEASUREMENT via the compu_method reference. The A2L file tested contains 130+ unique COEFFS patterns; only ~25% are identity — the rest require active conversion.
+- **`_apply_rat_func_inv()` function**: inverts the ASAM RAT_FUNC formula `INT = (a*PHYS² + b*PHYS + c) / (d*PHYS² + e*PHYS + f)` to compute physical from raw. Handles the common linear case `PHYS = (f*INT - c) / b`, the linear-rational case, and the full quadratic case with discriminant-based root selection.
+- **Pymodbus version compatibility shim** (`src/plugins/_modbus_compat.py`): detects installed `pymodbus` version at import time and provides `uid_kwargs(unit_id)` returning the correct parameter name (`unit=` for <3.3, `slave=` for 3.3–3.9, `device_id=` for 3.10+). All four Modbus-using plugins (Modbus, Vaisala, Omega, LoadBank) updated to use this shim.
+- **Vaisala configurable word order**: `vaisala.yaml` gains `connection.word_order` (default `little`). `_decode_float32()` and `_encode_float32()` accept a `word_order` parameter and swap register words accordingly for correct IEEE 754 float interpretation.
+- **NI DAQ extended health diagnostics**: orchestrator telemetry filter (`_strip_debug_keys`) now allows `NI_DAQ/consec_failures`, `NI_DAQ/last_good_read_age_s`, `NI_DAQ/task_fast_alive`, and `NI_DAQ/last_error` to pass through when `health.expose_status_channels: true` is set. DO source picker excludes all `NI_DAQ/` diagnostic keys.
+#### Fixed
+- **CCP `decode_value()` rewrite**: complete overhaul of the raw-to-physical conversion pipeline:
+  - **ULONG/SLONG**: previously returned raw integer with no conversion (ULONG) or decoded as unsigned (SLONG). Now properly handles signed decoding and applies COMPU_METHOD COEFFS. Fixes `HM_RAMr_seconds` (was 892601, now 247.9 hours) and `I_Gov2_acc` (was 134M raw, now 50%).
+  - **FLOAT32_IEEE / FLOAT64_IEEE**: previously interpreted raw bytes as integer. Now uses `struct.unpack` for correct IEEE 754 float decoding.
+  - **SBYTE**: previously decoded as unsigned. Now correctly signed.
+  - **SWORD/UWORD with zero limits**: previously returned 0.0 always (multiplied by 0). Now uses COEFFS when available, or improved limits fallback with non-zero lower bound support.
+- **A2L limits parsing**: fixed two bugs: (1) lines starting with `-` (negative lower bounds like `-460 563.98`) were rejected by `isdigit()` check; (2) the Resolution/Accuracy line `0 0` was incorrectly captured as limits instead of the actual limits line. Now uses a `numeric_line_index` counter to skip the first numeric pair and capture the second.
+- **Vaisala write register addresses**: corrected 1-based PDU addresses to 0-based — `_PRESSURE_TEMP_REG` 771→770, `_FILTER_STD_REG` 1281→1280, `_FILTER_EXT_REG` 1282→1281.
+- **Modbus ComApp register configuration**: mass-corrected `configs/modbus.yaml` — all `length: 2` entries changed to `length: 1` (tool used "length" to mean bytes, not registers), `uint32`→`uint16` and `int32`→`int16` type corrections, all `address` values decremented by 1 (1-based to 0-based Modbus PDU addressing).
+- **CCP config UI A2L parser**: mirrored the same limits parsing and size cap fixes from `_ccp_a2l.py` into the UI's `_parse_a2l_channels()` method in `ccp_config.py`.
+#### Changed
+- `A2LChannel` dataclass extended with `coeffs: Optional[Tuple[float, ...]]` field (6-tuple for RAT_FUNC COEFFS).
+- `decode_value()` signature extended with optional `coeffs` parameter; conversion priority is COEFFS → legacy limits fallback.
+- CCP plugin passes `coeffs` from A2L parse through entry dicts to `decode_value()`.
+- CCP entry size cap increased from 5 to 8 bytes (supports FLOAT64_IEEE).
+- LoadBank Modbus calls simplified from multi-try `slave`/`unit`/`device_id` blocks to single `**uid_kwargs()` calls.
+
 ### iOT internal channels, shutdown types, and onsite hardening — 04/20/2026
 #### Added
 - **iOT shutdown-type differentiation**: per-channel `shutdown_type` (hard/soft) field in the alarm system. `AlarmEngine.evaluate()` now returns `any_soft_shutdown`, `any_hard_shutdown`, and `engine_running` in its summary dict alongside the existing `any_warning`/`any_shutdown`/`any_shutdown_request` flags.

@@ -52,9 +52,15 @@ channels:
     enabled: true
 ```
 
+### Float Encoding and Word Order
+- Float32 registers are decoded/encoded using configurable word order (`connection.word_order` in YAML, default `little`).
+- Little-endian (Vaisala default): low word first, high word second.
+- Big-endian: high word first, low word second.
+- `_decode_float32()` and `_encode_float32()` accept a `word_order` parameter and swap register words accordingly before IEEE 754 interpretation.
+
 ### Parameter Writes
-- **Pressure compensation**: fixed hPa value or dynamic from any telemetry channel (with gain/offset) written to temporary register 771-772 every poll cycle.
-- **Filtering mode**: None/Standard/Extended written to flag registers 1281/1282 every poll cycle.
+- **Pressure compensation**: fixed hPa value or dynamic from any telemetry channel (with gain/offset) written to temporary register 770-771 (0-based PDU addresses) every poll cycle.
+- **Filtering mode**: None/Standard/Extended written to flag registers 1280/1281 (0-based PDU addresses) every poll cycle.
 - Orchestrator feeds merged telemetry via `update_telemetry(vals)` for dynamic pressure source resolution.
 
 ### UI Flow
@@ -74,7 +80,8 @@ channels:
 ### Runtime
 - Threaded poll loop with configurable poll rate and auto-reconnect on connection loss.
 - Sim mode generates sine-wave values per channel with independent phase/amplitude.
-- Real mode reads float32 from holding registers, writes pressure/filtering parameters, and handles connection errors with sample-and-hold.
+- Real mode reads float32 from holding registers (using configurable word order), writes pressure/filtering parameters, and handles connection errors with sample-and-hold.
+- Uses `_modbus_compat.uid_kwargs()` for pymodbus version-independent Modbus calls (handles `unit=`, `slave=`, and `device_id=` parameter changes across pymodbus 3.0–3.10+).
 
 ### Error Conditions
 - Connection failure/timeouts → `conn_ok=False`; red status on console; auto-reconnect on next poll.

@@ -470,6 +470,7 @@ class NiDAQPlugin(BasePlugin):
             vals["NI_DAQ/health_ok"] = 1 if bool(self._health.get("health_ok", True)) else 0
             vals["NI_DAQ/consec_failures"] = int(self._health.get("consec_failures", 0))
             vals["NI_DAQ/last_good_read_age_s"] = float(self._health.get("last_good_read_age_s", 0.0))
+            vals["NI_DAQ/last_error"] = str(self._health.get("last_error") or "")
             fast_alive = 1 if (self._fast_tasks and any(ft.get("task") is not None for ft in self._fast_tasks)) else 0
             vals["NI_DAQ/task_fast_alive"] = fast_alive
         except Exception:

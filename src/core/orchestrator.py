@@ -31,12 +31,27 @@ from .recording import begin_recording, end_recording, kickoff_export, build_par
 
 _DEBUG_PREFIXES = ("CAN/", "CCP/", "Core/", "EngineTest/", "NI_DAQ/")
 _HEALTH_SUFFIXES = ("/health_ok", "/conn_ok")
+# NI_DAQ/* is normally stripped as debug; keep operator diagnostics when exposed by the plugin.
+_NI_DAQ_TELEMETRY_KEYS = frozenset(
+    {
+        "NI_DAQ/health_ok",
+        "NI_DAQ/consec_failures",
+        "NI_DAQ/last_good_read_age_s",
+        "NI_DAQ/task_fast_alive",
+        "NI_DAQ/last_error",
+    }
+)
 
 
 def _strip_debug_keys(d: dict) -> dict:
     return {
-        k: v for k, v in d.items()
-        if not k.startswith(_DEBUG_PREFIXES) or k.endswith(_HEALTH_SUFFIXES)
+        k: v
+        for k, v in d.items()
+        if (
+            not k.startswith(_DEBUG_PREFIXES)
+            or k.endswith(_HEALTH_SUFFIXES)
+            or k in _NI_DAQ_TELEMETRY_KEYS
+        )
     }
 
 

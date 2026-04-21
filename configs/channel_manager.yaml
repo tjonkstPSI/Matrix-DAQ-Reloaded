@@ -1,5 +1,5 @@
 enabled: true
-recording_rate_hz: 1.0
+recording_rate_hz: 10.0
 storage:
   chunk_duration_s: 1.0
   segment_time_limit_s: 14400.0

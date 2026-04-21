@@ -100,6 +100,14 @@ Compatibility keys may also be present:
 - Data channels: all enabled read aliases
 - Health channel: `Modbus/conn_ok` (bool as 1.0/0.0) — True when at least one server connection is active. Console tile uses this for Green/Red/Disconnected status.
 
+### Pymodbus Compatibility
+- All Modbus read/write calls use `_modbus_compat.uid_kwargs()` for version-independent unit/slave/device_id parameter handling (pymodbus 3.0–3.10+).
+
+### Configuration Notes
+- Register `address` values in YAML use 0-based Modbus PDU addressing (not 1-based as some legacy tools display).
+- `length` refers to the number of 16-bit registers to read (not bytes). A single uint16/int16 value uses `length: 1`; a float32 uses `length: 2`.
+- `type` should match the actual register width: `uint16`/`int16` for single-register values, `float32` for two-register IEEE 754 floats.
+
 ### Deferred / Next Work
 - Implement RS485/RTU transport
 - Implement true write path + safeguards + audit logs

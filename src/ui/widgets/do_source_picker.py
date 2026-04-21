@@ -52,8 +52,11 @@ class DOSourcePickerDialog(QDialog):
                 vals = telemetry_getter()
                 if isinstance(vals, dict):
                     for k in vals:
-                        if not k.endswith("/health_ok") and not k.endswith("/conn_ok"):
-                            keys.add(str(k))
+                        ks = str(k)
+                        if ks.startswith("NI_DAQ/"):
+                            continue
+                        if not ks.endswith("/health_ok") and not ks.endswith("/conn_ok"):
+                            keys.add(ks)
             except Exception:
                 pass
         if extra_aliases:
