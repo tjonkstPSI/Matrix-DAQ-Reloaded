@@ -279,6 +279,8 @@ class ChannelsTable(QWidget):
 
         buckets: Dict[str, List[str]] = {cat: [] for cat in CATEGORY_ORDER}
         for alias in sorted(keys):
+            if alias.endswith("/health_ok") or alias.endswith("/conn_ok"):
+                continue
             cat = _categorize_channel(alias)
             if cat not in buckets:
                 cat = "Other"

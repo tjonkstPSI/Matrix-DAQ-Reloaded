@@ -1,13 +1,13 @@
 enabled: true
-mode: sim
+mode: real
 connection:
-  host: 192.168.1.100
+  host: 192.168.76.61
   port: 502
-  unit_id: 241
+  unit_id: 1
   timeout_ms: 1000
   poll_rate_hz: 1
 model:
-  selected: Indigo510
+  selected: HMT330
 channels:
 - id: RH
   alias: vHM_Amb
@@ -22,11 +22,11 @@ channels:
   alias: ''
   enabled: false
 - id: a
-  alias: ''
-  enabled: false
+  alias: vHM_AmbAbs
+  enabled: true
 - id: x
-  alias: ''
-  enabled: false
+  alias: vOT_Mix
+  enabled: true
 - id: Tw
   alias: vTP_AmbWet
   enabled: true

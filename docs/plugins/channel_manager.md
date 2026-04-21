@@ -38,16 +38,25 @@ Configure core logging cadence and segmentation settings, and manage two-tier pe
 - Per-limit debounce is supported for each of:
   - warning low/high
   - alarm low/high
+- **Shutdown type** (per channel): `hard` (default) or `soft`. Determines which internal shutdown boolean is raised when the channel enters SHUT state. Hard = emergency immediate estop relay. Soft = future graceful load-reduction + cooldown sequence (relay mapping available now; sequence logic is a future feature).
 - Backward compatibility:
   - legacy flat keys (`high_warning`, `high_shutdown`, `enter_delay_s`, `clear_delay_s`, etc.) are still interpreted by alarm runtime.
+  - `shutdown_type` defaults to `hard` when absent from YAML.
 
 ### Aggregation Outputs
 - `alarm_summary.any_warning`
 - `alarm_summary.any_shutdown`
 - `alarm_summary.any_shutdown_request` (action-driven)
-- Channel outputs for operator visibility:
-  - `iOT_Warning`
-  - `iOT_Alarm`
+- `alarm_summary.any_soft_shutdown` (True when any SHUT-state channel has `shutdown_type: soft`)
+- `alarm_summary.any_hard_shutdown` (True when any SHUT-state channel has `shutdown_type: hard`)
+- `alarm_summary.engine_running` (True when engine speed alias exceeds RPM threshold)
+- Internal boolean channels published to telemetry each tick:
+  - `iOT_Warning` — any channel in WARN state
+  - `iOT_Alarm` — any channel in SHUT state
+  - `iOT_AlmSftSdn` — any soft-shutdown channel in SHUT state
+  - `iOT_AlmEmgSdn` — any hard/emergency-shutdown channel in SHUT state
+  - `iDG_EngRunStp` — engine running (RPM > threshold)
+- These internal channels are available to DO condition evaluation, enabling relay-driven shutdown circuits and engine run indicators.
 
 ### Configuration (YAML - current canonical shape)
 File: `configs/channel_manager.yaml`
@@ -82,6 +91,7 @@ channels:
       high_enter_delay_s: 0.2
       high_clear_delay_s: 1.0
       action: visible_alert_shutdown
+      shutdown_type: hard       # hard (default) | soft
     enabling_condition: always_enabled
     enable_threshold: 0.0
 ```
@@ -103,7 +113,8 @@ channels:
   1) Set sample rate and storage segmentation settings.
   2) Select engine speed alias + RPM threshold for engine condition modes.
   3) Add active channels, remove extra rows, and edit alarm table.
-  4) Save (writes YAML + reloads Channel Manager runtime behavior).
+  4) Set per-channel **Shutdown Type** (Hard/Soft dropdown) to control which internal boolean is raised on SHUT.
+  5) Save (writes YAML + reloads Channel Manager runtime behavior).
 
 ### Outputs & Metadata
 - Recording cadence and storage segmentation settings are captured in run metadata snapshot.

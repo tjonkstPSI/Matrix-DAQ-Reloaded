@@ -1,4 +1,4 @@
-# Author: T. Onkst | Date: 03092026
+# Author: T. Onkst | Date: 04202026
 name: "Engine Test Data Recorder"
 purpose: "Stream, visualize, and record engine test data from NI cDAQ, CAN/CCP, and Modbus devices; export to Excel."
 
@@ -23,7 +23,7 @@ code_layout:
         - path: "src/plugins/_nidaq_simulation.py"
           role: "Simulation timestep for configured channels; applies scaling/temp unit conversion"
         - path: "src/plugins/_nidaq_tasks.py"
-          role: "DAQmx task construction, per-device fast-AI task management; butterworth-mode fast reader (IIR filter + scaling per sample, no deques) and legacy deque-mode reader"
+          role: "DAQmx task construction, chassis-grouped AI task management (one task per CompactDAQ chassis via _chassis_from_device regex); butterworth-mode fast reader (IIR filter + scaling per sample, no deques) and legacy deque-mode reader"
         - path: "src/plugins/_nidaq_acquisition.py"
           role: "Acquisition worker, snapshot buffer, real-mode read/drain path; butterworth path copies pre-computed values from fast reader; cached temp_unit_map; applies scaling/temp unit conversion"
         - path: "src/plugins/_nidaq_scaling.py"
@@ -47,7 +47,10 @@ code_layout:
       role: "Shared loader for standard channel list (configs/standard_channels.json), ALIAS_PATTERN regex, and validate_alias(). Single point of change when migrating to server-hosted channel list."
     alias_picker:
       path: "src/ui/widgets/nidaq_alias_picker.py"
-      role: "Shared AliasPickerDialog used by NI DAQ, CAN, and Vaisala config dialogs. Two tabs: Standard Channels (searchable table from JSON) and Custom (regex-validated free entry)."
+      role: "Shared AliasPickerDialog used by NI DAQ, CAN, Vaisala, Omega, and Modbus config dialogs. Two tabs: Standard Channels (searchable table from JSON) and Custom (regex-validated free entry)."
+    scale_library:
+      path: "src/ui/widgets/scale_library.py"
+      role: "Shared load_scale_library() loader for configs/scale_library.json. Single server-swap point for future web-based management tool."
 
 stakeholders:
   - "Test Engineers"
@@ -95,13 +98,13 @@ hardware:
 
 plugins:
   - id: "NI_DAQ"
-    description: "NI cDAQ acquisition (modular: ni_daq.py + _nidaq_discovery, _nidaq_simulation, _nidaq_tasks, _nidaq_acquisition, _nidaq_scaling): discovery helper generates structured YAML (categorized by module family); sim emits configured channels; real path supports AI voltage with configurable oversample (default 10×R) and IIR Butterworth decimation filter (cutoff=R/2, 4th-order SOS) or legacy averaging; AI temperature at R; DI on-demand; per-device fast AI tasks with adaptive timeouts and warm-up. Tick rate aligned to core tick from channel_manager.yaml recording_rate_hz (ni_daq.yaml recording_rate_hz deprecated to 'auto'). Butterworth mode eliminates deques: fast reader thread applies filter+scaling per sample, writes pre-computed values to shared dict under brief lock; snapshot worker copies dict only. Channel scaling applied at plugin level (none/linear/table for voltage; C/F/K unit conversion for temp) via shared _nidaq_scaling helpers; table scaling supports optional extrapolation beyond table range; points pre-sorted at config load. Constrained alias system enforces naming convention regex; aliases selected via shared AliasPickerDialog (loads standard channels from configs/standard_channels.json + custom entry with live validation). Premade scales loaded from configs/scale_library.json via shared load_scale_library() helper (server-swap point; read-only from app, managed via separate web tool); searchable picker inside ScalingEditorDialog supports name/description/unit search with formula tooltips. Config dialog double-click opens ScalingEditorDialog (voltage) or TempUnitPickerDialog (temp) with live telemetry preview and scale library import. Disabled channels display blank alias/unit on load. Runtime publishes latest-value snapshots decoupled from core tick. ZMQ PUB/SUB HWM bounded to 10. Hardware migration system: ni_daq.yaml persists device_map (name → product_type); when hardware inventory diverges from config, compute_hardware_diff() classifies old devices by capability (AI voltage / AI thermocouple-RTD / Digital / AO, inferred from channel categories) and channel count; HardwareMigrationDialog (nidaq_migration_dialog.py) offers only compatible new modules (chassis excluded; type-safe; channel count ≥ old); auto-suggests mappings by matching product_type or AI sub-type (TC/RTD pattern: 9210/11/12/13/14/16/17/19/26/35/36/37); apply_migration() rewrites phys strings preserving aliases/scaling/sensor config, falls back to regenerate-defaults prompt when no mappable modules exist."
+    description: "NI cDAQ acquisition (modular: ni_daq.py + _nidaq_discovery, _nidaq_simulation, _nidaq_tasks, _nidaq_acquisition, _nidaq_scaling): discovery helper generates structured YAML (categorized by module family); sim emits configured channels; real path supports AI voltage with configurable oversample (default 10×R) and IIR Butterworth decimation filter (cutoff=R/2, 4th-order SOS) or legacy averaging; AI temperature at R; DI on-demand; chassis-grouped AI tasks (one DAQmx task per CompactDAQ chassis using _chassis_from_device regex, resolving -200022 resource conflicts). Tick rate aligned to core tick from channel_manager.yaml recording_rate_hz (ni_daq.yaml recording_rate_hz deprecated to 'auto'). Butterworth mode eliminates deques: fast reader thread applies filter+scaling per sample, writes pre-computed values to shared dict under brief lock; snapshot worker copies dict only. Channel scaling applied at plugin level (none/linear/table for voltage; C/F/K unit conversion for temp) via shared _nidaq_scaling helpers; table scaling supports optional extrapolation beyond table range; points pre-sorted at config load. Constrained alias system enforces naming convention regex; aliases selected via shared AliasPickerDialog (loads standard channels from configs/standard_channels.json + custom entry with live validation). Premade scales loaded from configs/scale_library.json via shared load_scale_library() helper (server-swap point; read-only from app, managed via separate web tool); searchable picker inside ScalingEditorDialog supports name/description/unit search with formula tooltips. Config dialog double-click opens ScalingEditorDialog (voltage) or TempUnitPickerDialog (temp) with live telemetry preview and scale library import. Disabled channels display blank alias/unit on load. Duplicate alias validation only checks enabled channels. Runtime publishes latest-value snapshots decoupled from core tick. ZMQ PUB/SUB HWM bounded to 10. Hardware migration system: ni_daq.yaml persists device_map (name → product_type); when hardware inventory diverges from config, compute_hardware_diff() classifies old devices by capability and channel count; HardwareMigrationDialog offers only compatible new modules (chassis excluded; type-safe; channel count ≥ old); auto-suggests mappings by matching product_type or AI sub-type; apply_migration() rewrites phys strings preserving config, falls back to regenerate-defaults. DO condition-based output control: each DO has a condition dict (source=own alias, operator including TRUE/FALSE, threshold); orchestrator evaluates all DO conditions every tick using _evaluate_do_conditions(vals) including internal alarm booleans (iOT_AlmSftSdn etc.). Config dialog DO table has Source Channel column (double-click opens DOSourcePickerDialog) and Condition column (double-click opens DOConditionEditorDialog with operator picker, threshold, live value, Force HIGH/LOW/Release buttons)."
     engineering_notes:
       - "Fast-AI robustness: increase device input buffer and adaptively drain based on backlog to avoid -200279 on network cDAQ + NI‑9239"
       - "Future option: move fast‑AI reads to a lightweight acquisition thread per device; continuously drain task buffer into a per-device queue; Core tick consumes latest samples and decimates to n (most recent 10×R) for publication"
       - "Future (queued): optional separate high-speed NI plugin — minimal channel allowlist, dedicated DAQmx task at 500 Hz–1 kHz+ (module-dependent), sidecar files per run under data/high_speed/; main NI_DAQ + channel_manager tick stay slow; see docs/ROADMAP.md Queued section"
   - id: "CAN"
-    description: "Import DBC/XML, discover/select CAN signals with aliases; configure buses and acquire via NI-XNET. Includes CAN configure dialog with QTableWidget-based signal list (checkbox, Message, Signal, Unit, Alias columns); double-click Alias column opens shared AliasPickerDialog (standard channels from JSON + custom). Blank aliases on checked signals are blocked on save. Duplicate-alias validation only checks enabled signals; config dialog blocks save with a descriptive warning when checked signals produce duplicate aliases. Real-mode DBC decode, J1939 PGN-aware fallback matching, and runtime diagnostics channels (frames_rx/decode_hits/last_decode_age_s). Sim/real mode is controlled globally via the launch dialog Offline Mode checkbox, not per-plugin."
+    description: "Multi-bus CAN plugin with tabbed per-bus configuration. YAML schema uses buses[*] with per-bus channel, baudrate, bustype, dbc_path, and signals; legacy single-bus config (session + top-level signals + dbc_path) auto-migrates to buses[0]. Runtime opens one python-can bus per entry, loads one DBC per bus, and drains frames from all buses in the snapshot loop. CAN configure dialog (can_config.py) uses QTabWidget with Add Bus / Remove Bus buttons; each tab has channel, baudrate, DBC path, signal filter, and signal table with checkbox/message/signal/unit/alias columns. Double-click Alias column opens shared AliasPickerDialog (standard channels from JSON + custom). Alias validation on save enforces standard naming convention and global uniqueness across all buses. Blank aliases on checked signals are blocked on save. Real-mode DBC decode with J1939 PGN-aware fallback matching and runtime diagnostics channels (frames_rx/decode_hits/last_decode_age_s). Sim/real mode is controlled globally via the launch dialog Offline Mode checkbox, not per-plugin."
   - id: "CCP"
     description: "CCP over CAN (read-only; modular: ccp.py + _ccp_a2l, _ccp_protocol): import A2L, configure bus/session, algorithmic access-key unlock, select measurements (use A2L names) with optional global naming prefix. Supports multi-device placeholder configuration for up to two ECMs using devices[*] with Primary/Secondary role mapping to station_address 0x0/0x1. Runtime is decoupled from core tick via latest-value snapshot buffering and exposes freshness telemetry. SHORT_UP poll timeout honors configured io_timeout_s (no hard cap); occasional poll fails under bus contention are normal and handled by sample-and-hold."
   - id: "Calculated_Channels"
@@ -111,7 +114,7 @@ plugins:
   - id: "LoadBank"
     description: "Load bank control via Modbus TCP: model dropdown, IP config, connection test, auto-connect/keep-alive; setpoint/accept; status reads; units derived from model map (kW typical)"
   - id: "Modbus"
-    description: "Custom Modbus channel framework with TCP/RS485 configuration UI, per-channel mapping table, and test value display. Supports multi-device tabbed config persisted in devices[*] with runtime fallback compatibility to legacy flattened reads."
+    description: "Custom Modbus channel framework with TCP/RS485 configuration UI, per-channel mapping table, and test value display. Supports multi-device tabbed config persisted in devices[*] with runtime fallback compatibility to legacy flattened reads. Real mode uses full Modbus TCP transport (_ServerConnection class with ModbusTcpClient, _decode_registers for float/int conversion with byte/word order, multi-server polling with scaling). Sim mode generates phase-shifted sine waveforms. Publishes Modbus/conn_ok health channel for console status. Double-click Alias column opens shared AliasPickerDialog; alias validation on save. Global sim/real mode controlled by launch dialog Offline Mode, not per-plugin."
   - id: "Statistics"
     description: "Secondary logger of stats (mean, stdev, min, max) with rolling/fixed windows and optional triggers. Runtime processing is decoupled from core tick through queued updates and background processing. Config UI (right-click configure) covers window settings, metrics selection, auto-trigger, and per-channel overrides."
   - id: "Vaisala"
@@ -121,7 +124,7 @@ plugins:
   - id: "EngineTest"
     description: "Collects run metadata (lock-test fields); implemented in src/plugins/engine_test.py (no longer an orchestrator stub)."
   - id: "Channel_Manager"
-    description: "Configure core recording cadence and segmentation policy, plus two-tier per-channel warning/alarm behavior with enabling conditions, per-limit latching, and action selection; implemented in src/plugins/channel_manager.py (no longer an orchestrator stub)."
+    description: "Configure core recording cadence and segmentation policy, plus two-tier per-channel warning/alarm behavior with enabling conditions, per-limit latching, action selection, and per-channel shutdown_type (hard/soft). AlarmEngine returns any_soft_shutdown/any_hard_shutdown/engine_running in summary. Orchestrator publishes internal booleans each tick: iOT_Warning, iOT_Alarm, iOT_AlmSftSdn, iOT_AlmEmgSdn, iDG_EngRunStp — available to DO condition evaluation for relay-driven shutdown circuits. UI has Shutdown Type column (Hard/Soft dropdown). Implemented in src/plugins/channel_manager.py."
 
 workflows:
   - id: "WF-SESSION"
@@ -164,7 +167,7 @@ inputs:
 outputs:
   - id: "OUT-DATA"
     type: "Parquet time-series + YAML metadata"
-    schema: "Recording grid at R; plugin values sampled from each plugin's latest snapshot at tick time (sample-and-hold); includes Time_Relative_s (s) and aggregate alarm channels iOT_Warning/iOT_Alarm; statistics outputs separate. Debug channels (CAN/, CCP/, Core/, EngineTest/, NI_DAQ/ prefixes) are stripped at publish boundary via _strip_debug_keys() and excluded from telemetry and Parquet recording."
+    schema: "Recording grid at R; plugin values sampled from each plugin's latest snapshot at tick time (sample-and-hold); includes Time_Relative_s (s) and internal boolean channels (iOT_Warning, iOT_Alarm, iOT_AlmSftSdn, iOT_AlmEmgSdn, iDG_EngRunStp); statistics outputs separate. Debug channels (CAN/, CCP/, Core/, EngineTest/, NI_DAQ/ prefixes) are stripped at publish boundary via _strip_debug_keys() but */health_ok and */conn_ok are preserved for console health display."
   - id: "OUT-EXCEL"
     type: "Excel export"
     schema: "Per-Parquet workbook(s) with sheets: Metadata (includes units matrix), Data (autosize, 2-decimal display), AlarmEvents, StatsSnapshots; split a single file into .1, .2 if exceeding Excel row limit"
@@ -362,6 +365,7 @@ filenaming:
   alarms:
     units: "Derived from post-scaling units per channel"
     types: ["warn_high", "warn_low", "shut_high", "shut_low"]
+    shutdown_type: "Per-channel hard (default) or soft; determines which internal boolean is raised (iOT_AlmEmgSdn vs iOT_AlmSftSdn)"
     debounce:
       enter_delay_s: "<per-limit configurable; time non-OK must persist to enter WARN/SHUT>"
       clear_delay_s: "<per-limit configurable; time OK must persist to clear back to OK>"
@@ -374,6 +378,12 @@ filenaming:
         - "UI_indicator_red"
         - "log_event"
         - "optional_shutdown_request_when_action_is_visible_alert_shutdown"
+    internal_booleans:
+      - "iOT_Warning: any channel in WARN state"
+      - "iOT_Alarm: any channel in SHUT state"
+      - "iOT_AlmSftSdn: any soft-shutdown channel in SHUT state"
+      - "iOT_AlmEmgSdn: any hard/emergency-shutdown channel in SHUT state"
+      - "iDG_EngRunStp: engine running (RPM > threshold)"
     logging:
       format: "jsonl"
       file_name: "alarm_events.jsonl"
@@ -476,8 +486,8 @@ ui:
         Saving: ["Stopping", "Exporting"]
   plugin_tiles:
     right_click_menu: ["Configure", "Show Error", "Reset Error"]
-    configure_wired: ["NI_DAQ", "CCP", "CAN", "Modbus", "LoadBank", "Calculated_Channels", "Channel_Manager", "Statistics", "Vaisala", "Cycle"]
-    health_colors: { green: "OK/valid", red: "Error/invalid", grey: "Disconnected" }
+    configure_wired: ["NI_DAQ", "CCP", "CAN", "Modbus", "LoadBank", "Calculated_Channels", "Channel_Manager", "Statistics", "Vaisala", "Omega", "Cycle"]
+    health_colors: { green: "OK/valid (health_ok=True or conn_ok=True)", red: "Error (health_ok=False) or Disconnected (conn_ok=False)", grey: "No health data, falls back to config validity" }
   controls:
     primary: ["Lock Test", "Start Recording", "Stop Recording", "Unlock Test (pre-recording escape hatch)", "Log Statistics (manual)"]
     primary_button: "Stateful: Lock Test → Start Recording → Stop Recording"

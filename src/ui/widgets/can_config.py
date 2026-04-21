@@ -1,9 +1,11 @@
+# Author: T. Onkst | Date: 04202026
+
 from __future__ import annotations
 
 import json
 from fnmatch import fnmatch
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 try:
     from PySide6.QtCore import Qt
@@ -23,44 +25,44 @@ try:
         QTableWidgetItem,
         QHeaderView,
         QAbstractItemView,
+        QTabWidget,
+        QWidget,
     )
 except Exception:
     raise
 
 from .nidaq_alias_picker import AliasPickerDialog
+from .standard_channels import validate_alias
 
 
-class CANConfigDialog(QDialog):
-    def __init__(self, parent=None) -> None:
+class _BusTab(QWidget):
+    """One tab per CAN bus — channel, baudrate, DBC, and signal table."""
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Configure CAN")
-        self.resize(900, 720)
-        self._cfg_path = Path(__file__).resolve().parents[3] / "configs" / "can.yaml"
-        self._cfg: Dict[str, Any] = {}
         self._dbc_signals: List[Dict[str, Any]] = []
-        self._init_ui()
-        self._load()
-
-    def _init_ui(self) -> None:
         root = QVBoxLayout(self)
-        form = QFormLayout()
 
+        form = QFormLayout()
+        self.txt_name = QLineEdit(self)
+        self.txt_name.setPlaceholderText("CAN Bus 1")
         self.txt_channel = QLineEdit(self)
         self.txt_channel.setPlaceholderText("CAN channel, e.g. CAN1")
         self.cmb_baudrate = QComboBox(self)
         self.cmb_baudrate.addItems(["125000", "250000", "500000", "1000000"])
-        form.addRow("CAN channel", self.txt_channel)
+        form.addRow("Bus Name", self.txt_name)
+        form.addRow("CAN Channel", self.txt_channel)
         form.addRow("Baudrate", self.cmb_baudrate)
         root.addLayout(form)
 
-        root.addWidget(QLabel("DBC path"))
+        root.addWidget(QLabel("DBC Path"))
         self.txt_dbc_path = QLineEdit(self)
         root.addWidget(self.txt_dbc_path)
         row = QHBoxLayout()
         btn_browse = QPushButton("Browse DBC...", self)
         btn_browse.clicked.connect(self._browse_dbc)  # type: ignore
         btn_load = QPushButton("Load Signals from DBC", self)
-        btn_load.clicked.connect(self._reload_signals_from_dbc)  # type: ignore
+        btn_load.clicked.connect(lambda: self._reload_signals_from_dbc())  # type: ignore
         row.addWidget(btn_browse)
         row.addWidget(btn_load)
         row.addStretch(1)
@@ -83,49 +85,54 @@ class CANConfigDialog(QDialog):
         self.tbl_signals.verticalHeader().setVisible(False)
         self.tbl_signals.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.tbl_signals.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.tbl_signals.setMinimumHeight(300)
+        self.tbl_signals.setMinimumHeight(250)
         self.tbl_signals.cellDoubleClicked.connect(self._on_cell_double_click)  # type: ignore
         root.addWidget(self.tbl_signals)
 
-        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=self)
-        btns.accepted.connect(self._on_accept)  # type: ignore
-        btns.rejected.connect(self.reject)  # type: ignore
-        root.addWidget(btns)
+    # ------------------------------------------------------------------
+    # Load / populate
+    # ------------------------------------------------------------------
 
-    def _read_yaml(self, path: Path) -> Dict[str, Any]:
-        try:
-            import yaml  # type: ignore
-            if not path.exists():
-                return {}
-            return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        except Exception:
-            return {}
-
-    def _load(self) -> None:
-        self._cfg = self._read_yaml(self._cfg_path)
-        session = self._cfg.get("session") or {}
-        self.txt_channel.setText(str(session.get("channel", "CAN1")))
-        baud = str(session.get("baudrate", "500000"))
+    def load_bus(self, bus_cfg: Dict[str, Any]) -> None:
+        self.txt_name.setText(str(bus_cfg.get("name", "")))
+        self.txt_channel.setText(str(bus_cfg.get("channel", "CAN1")))
+        baud = str(bus_cfg.get("baudrate", "500000"))
         idx = self.cmb_baudrate.findText(baud)
         self.cmb_baudrate.setCurrentIndex(idx if idx >= 0 else 2)
-        self.txt_dbc_path.setText(str(self._cfg.get("dbc_path", "")))
+        self.txt_dbc_path.setText(str(bus_cfg.get("dbc_path", "")))
 
         saved_map: Dict[tuple, str] = {}
-        for it in (self._cfg.get("signals") or []):
-            if not isinstance(it, dict) or not it.get("signal"):
+        for sig in bus_cfg.get("signals", []) or []:
+            if not isinstance(sig, dict):
                 continue
-            key = (str(it.get("message", "")), str(it.get("signal", "")))
-            saved_map[key] = str(it.get("alias", ""))
+            key = (str(sig.get("message", "")), str(sig.get("signal", "")))
+            saved_map[key] = str(sig.get("alias", ""))
         self._reload_signals_from_dbc(saved_map=saved_map)
+
+    def to_bus_dict(self) -> Dict[str, Any]:
+        return {
+            "name": self.txt_name.text().strip() or "CAN Bus",
+            "channel": self.txt_channel.text().strip(),
+            "baudrate": int(self.cmb_baudrate.currentText().strip() or "500000"),
+            "bustype": "nixnet",
+            "dbc_path": self.txt_dbc_path.text().strip(),
+            "signals": self._checked_signals(),
+        }
+
+    # ------------------------------------------------------------------
+    # DBC
+    # ------------------------------------------------------------------
 
     def _browse_dbc(self) -> None:
         start = self.txt_dbc_path.text().strip() or str(Path.cwd())
-        path, _ = QFileDialog.getOpenFileName(self, "Select DBC file", start, "DBC files (*.dbc);;All files (*.*)")
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select DBC file", start, "DBC files (*.dbc);;All files (*.*)",
+        )
         if path:
             self.txt_dbc_path.setText(path)
             self._reload_signals_from_dbc()
 
-    def _reload_signals_from_dbc(self, saved_map: Dict[tuple, str] | None = None) -> None:
+    def _reload_signals_from_dbc(self, saved_map: Optional[Dict[tuple, str]] = None) -> None:
         if saved_map is None:
             saved_map = self._current_signal_map()
         self.tbl_signals.setRowCount(0)
@@ -143,13 +150,11 @@ class CANConfigDialog(QDialog):
             sigs: List[Dict[str, Any]] = []
             for msg in db.messages:
                 for sig in msg.signals:
-                    sigs.append(
-                        {
-                            "message": str(msg.name),
-                            "signal": str(sig.name),
-                            "unit": str(sig.unit or ""),
-                        }
-                    )
+                    sigs.append({
+                        "message": str(msg.name),
+                        "signal": str(sig.name),
+                        "unit": str(sig.unit or ""),
+                    })
             self._dbc_signals = sorted(sigs, key=lambda x: (x["message"], x["signal"]))
         except Exception as e:
             QMessageBox.warning(self, "DBC parse error", f"Failed to parse DBC: {e}")
@@ -187,8 +192,11 @@ class CANConfigDialog(QDialog):
 
         self._apply_signal_filter()
 
+    # ------------------------------------------------------------------
+    # Signal helpers
+    # ------------------------------------------------------------------
+
     def _current_signal_map(self) -> Dict[tuple, str]:
-        """Build a (message, signal) -> alias map from current table state."""
         out: Dict[tuple, str] = {}
         for r in range(self.tbl_signals.rowCount()):
             chk = self.tbl_signals.item(r, 0)
@@ -202,20 +210,6 @@ class CANConfigDialog(QDialog):
                      if self.tbl_signals.item(r, 4) else "")
             if sig:
                 out[(msg, sig)] = alias
-        return out
-
-    def _checked_signal_keys(self) -> list:
-        out: list = []
-        for r in range(self.tbl_signals.rowCount()):
-            chk = self.tbl_signals.item(r, 0)
-            if chk is None or chk.checkState() != Qt.Checked:
-                continue
-            msg = (self.tbl_signals.item(r, 1).text().strip()
-                   if self.tbl_signals.item(r, 1) else "")
-            sig = (self.tbl_signals.item(r, 2).text().strip()
-                   if self.tbl_signals.item(r, 2) else "")
-            if sig:
-                out.append((msg, sig))
         return out
 
     def _checked_signals(self) -> List[Dict[str, Any]]:
@@ -234,15 +228,13 @@ class CANConfigDialog(QDialog):
                      if self.tbl_signals.item(r, 4) else "")
             if not msg or not sig:
                 continue
-            out.append(
-                {
-                    "alias": alias,
-                    "message": msg,
-                    "signal": sig,
-                    "unit": unit,
-                    "enabled": True,
-                }
-            )
+            out.append({
+                "alias": alias,
+                "message": msg,
+                "signal": sig,
+                "unit": unit,
+                "enabled": True,
+            })
         return out
 
     def _apply_signal_filter(self) -> None:
@@ -266,57 +258,174 @@ class CANConfigDialog(QDialog):
             return
         current = (self.tbl_signals.item(row, 4).text().strip()
                    if self.tbl_signals.item(row, 4) else "")
-        dlg = AliasPickerDialog(parent=self, current_alias=current)
-        if dlg.exec() == QDialog.Accepted and dlg.selected_alias:
-            self.tbl_signals.setItem(row, 4, QTableWidgetItem(dlg.selected_alias))
+        try:
+            dlg = AliasPickerDialog(parent=self, current_alias=current)
+            if dlg.exec() == QDialog.Accepted and dlg.selected_alias:
+                self.tbl_signals.setItem(row, 4, QTableWidgetItem(dlg.selected_alias))
+        except Exception as exc:
+            QMessageBox.warning(self, "Alias Picker", f"Could not open alias picker: {exc}")
+
+
+# ======================================================================
+# Main CAN config dialog
+# ======================================================================
+
+class CANConfigDialog(QDialog):
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Configure CAN")
+        self.resize(950, 780)
+        self._cfg_path = Path(__file__).resolve().parents[3] / "configs" / "can.yaml"
+        self._cfg: Dict[str, Any] = {}
+        self._init_ui()
+        self._load()
+
+    def _init_ui(self) -> None:
+        root = QVBoxLayout(self)
+
+        bus_bar = QHBoxLayout()
+        self.btn_add_bus = QPushButton("Add Bus", self)
+        self.btn_add_bus.clicked.connect(self._add_bus)  # type: ignore
+        self.btn_remove_bus = QPushButton("Remove Bus", self)
+        self.btn_remove_bus.clicked.connect(self._remove_bus)  # type: ignore
+        bus_bar.addWidget(self.btn_add_bus)
+        bus_bar.addWidget(self.btn_remove_bus)
+        bus_bar.addStretch(1)
+        root.addLayout(bus_bar)
+
+        self.tab_widget = QTabWidget(self)
+        root.addWidget(self.tab_widget)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=self)
+        btns.accepted.connect(self._on_accept)  # type: ignore
+        btns.rejected.connect(self.reject)  # type: ignore
+        root.addWidget(btns)
+
+    # ------------------------------------------------------------------
+    # Read / write YAML
+    # ------------------------------------------------------------------
+
+    def _read_yaml(self, path: Path) -> Dict[str, Any]:
+        try:
+            import yaml  # type: ignore
+            if not path.exists():
+                return {}
+            return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        except Exception:
+            return {}
+
+    def _load(self) -> None:
+        self._cfg = self._read_yaml(self._cfg_path)
+        buses = self._cfg.get("buses", [])
+        if isinstance(buses, list) and buses:
+            for bus_cfg in buses:
+                if isinstance(bus_cfg, dict):
+                    self._create_bus_tab(bus_cfg)
+        elif self._cfg.get("session") or self._cfg.get("signals"):
+            legacy = self._legacy_to_bus(self._cfg)
+            self._create_bus_tab(legacy)
+        else:
+            self._create_bus_tab({"name": "CAN Bus 1", "channel": "CAN1", "baudrate": 250000})
+        self._update_remove_btn()
+
+    def _legacy_to_bus(self, cfg: Dict[str, Any]) -> Dict[str, Any]:
+        sess = cfg.get("session") or {}
+        return {
+            "name": "CAN Bus 1",
+            "channel": str(sess.get("channel", "CAN1")),
+            "baudrate": int(sess.get("baudrate", 500000)),
+            "bustype": str(sess.get("bustype", "nixnet")),
+            "dbc_path": str(cfg.get("dbc_path", "")),
+            "signals": cfg.get("signals", []) or [],
+        }
+
+    # ------------------------------------------------------------------
+    # Tab management
+    # ------------------------------------------------------------------
+
+    def _create_bus_tab(self, bus_cfg: Dict[str, Any]) -> _BusTab:
+        tab = _BusTab(self)
+        tab.load_bus(bus_cfg)
+        name = str(bus_cfg.get("name", "")).strip() or f"CAN Bus {self.tab_widget.count() + 1}"
+        tab.txt_name.textChanged.connect(self._sync_tab_titles)  # type: ignore
+        self.tab_widget.addTab(tab, name)
+        return tab
+
+    def _add_bus(self) -> None:
+        idx = self.tab_widget.count() + 1
+        bus_cfg = {"name": f"CAN Bus {idx}", "channel": f"CAN{idx}", "baudrate": 250000}
+        tab = self._create_bus_tab(bus_cfg)
+        self.tab_widget.setCurrentWidget(tab)
+        self._update_remove_btn()
+
+    def _remove_bus(self) -> None:
+        if self.tab_widget.count() <= 1:
+            return
+        idx = self.tab_widget.currentIndex()
+        self.tab_widget.removeTab(idx)
+        self._update_remove_btn()
+
+    def _update_remove_btn(self) -> None:
+        self.btn_remove_bus.setEnabled(self.tab_widget.count() > 1)
+
+    def _sync_tab_titles(self) -> None:
+        for i in range(self.tab_widget.count()):
+            tab = self.tab_widget.widget(i)
+            if isinstance(tab, _BusTab):
+                name = tab.txt_name.text().strip() or f"CAN Bus {i + 1}"
+                self.tab_widget.setTabText(i, name)
+
+    # ------------------------------------------------------------------
+    # Save
+    # ------------------------------------------------------------------
 
     def _on_accept(self) -> None:
-        channel = self.txt_channel.text().strip()
-        if not channel:
-            QMessageBox.warning(self, "Missing channel", "CAN channel is required.")
-            return
-        dbc_path = self.txt_dbc_path.text().strip()
-        signals = self._checked_signals()
-        if not signals:
-            QMessageBox.warning(self, "Missing signals", "Select at least one signal from DBC.")
-            return
+        buses: List[Dict[str, Any]] = []
+        all_aliases: List[str] = []
+        for i in range(self.tab_widget.count()):
+            tab = self.tab_widget.widget(i)
+            if not isinstance(tab, _BusTab):
+                continue
+            bus = tab.to_bus_dict()
+            if not bus.get("channel"):
+                QMessageBox.warning(self, "Missing channel", f"Bus tab '{bus.get('name')}': CAN channel is required.")
+                return
+            sigs = bus.get("signals", [])
+            blank = [s for s in sigs if not s.get("alias")]
+            if blank:
+                names = [f"  {s['message']}.{s['signal']}" for s in blank[:10]]
+                QMessageBox.warning(
+                    self, "Missing Aliases",
+                    f"Bus '{bus.get('name')}': these checked signals have no alias:\n\n" + "\n".join(names),
+                )
+                return
+            bad = [s["alias"] for s in sigs if s.get("alias") and not validate_alias(s["alias"])]
+            if bad:
+                QMessageBox.warning(
+                    self, "Invalid Alias",
+                    f"Bus '{bus.get('name')}': invalid aliases:\n{', '.join(bad)}",
+                )
+                return
+            for s in sigs:
+                all_aliases.append(s.get("alias", ""))
+            buses.append(bus)
 
-        blank = [s for s in signals if not s.get("alias")]
-        if blank:
-            names = [f"  {s['message']}.{s['signal']}" for s in blank[:10]]
-            QMessageBox.warning(
-                self, "Missing Aliases",
-                "The following checked signals have no alias assigned. "
-                "Double-click the Alias column to set one:\n\n" + "\n".join(names),
-            )
-            return
+        seen: Dict[str, str] = {}
+        for a in all_aliases:
+            if a in seen:
+                QMessageBox.warning(
+                    self, "Duplicate Alias",
+                    f"Alias '{a}' is used on multiple buses. Aliases must be globally unique.",
+                )
+                return
+            seen[a] = a
 
-        alias_counts: Dict[str, list] = {}
-        for s in signals:
-            a = s.get("alias", "")
-            alias_counts.setdefault(a, []).append(s.get("message", ""))
-        dupes = {a: msgs for a, msgs in alias_counts.items() if len(msgs) > 1}
-        if dupes:
-            lines = [f"  {a}  (messages: {', '.join(msgs)})" for a, msgs in dupes.items()]
-            QMessageBox.warning(
-                self, "Duplicate Aliases",
-                "The following aliases are used by multiple checked signals. "
-                "Deselect one of each pair to continue:\n\n" + "\n".join(lines),
-            )
-            return
-
-        doc: Dict[str, Any] = dict(self._cfg)
-        doc["enabled"] = bool(doc.get("enabled", True))
-        doc["recording_rate_hz"] = int(doc.get("recording_rate_hz", 10))
-        doc["session"] = {
-            "channel": channel,
-            "baudrate": int(self.cmb_baudrate.currentText().strip() or "500000"),
-            "bustype": "nixnet",
+        doc: Dict[str, Any] = {
+            "enabled": bool(self._cfg.get("enabled", True)),
+            "mode": str(self._cfg.get("mode", "real")),
+            "recording_rate_hz": int(self._cfg.get("recording_rate_hz", 10)),
+            "buses": buses,
         }
-        doc["dbc_path"] = dbc_path
-        doc["signals"] = signals
-        doc["buses"] = doc.get("buses", [])
-        doc["databases"] = doc.get("databases", [])
 
         try:
             import yaml  # type: ignore

@@ -7,10 +7,22 @@ import threading
 from collections import defaultdict, deque
 from typing import Dict, Any, List, TYPE_CHECKING
 
+import re
+
 from ._nidaq_scaling import IIRFilter, apply_scaling
 
 if TYPE_CHECKING:
     from .ni_daq import NiDAQPlugin
+
+
+def _chassis_from_device(device: str) -> str:
+    """Extract chassis name from a module device name.
+
+    'AGENTMod2' -> 'AGENT', 'MATRIXMod6' -> 'MATRIX'.
+    Standalone devices (no 'ModN' suffix) return as-is.
+    """
+    m = re.match(r'^(.+?)Mod\d+$', device)
+    return m.group(1) if m else device
 
 
 def create_tasks_real(p: NiDAQPlugin) -> None:
@@ -34,16 +46,18 @@ def _create_fast_ai_tasks(p: NiDAQPlugin, Task: Any, AcquisitionType: Any, fast_
     enabled_ai = [ch for ch in p._ai_voltage if bool(ch.get("enabled", True))]
     if not enabled_ai:
         return
+    # Group by chassis so all modules in one cDAQ chassis share a single AI task
     groups: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     for ch in enabled_ai:
         phys = str(ch.get("phys", ""))
         if not phys:
             continue
-        device = phys.split("/", 1)[0]
-        groups[device].append(ch)
+        module = phys.split("/", 1)[0]
+        chassis = _chassis_from_device(module)
+        groups[chassis].append(ch)
     p._fast_tasks = []
     p._fast_rate = fast_rate
-    for device, chans in groups.items():
+    for chassis, chans in groups.items():
         t = None
         try:
             t = Task()
@@ -62,7 +76,7 @@ def _create_fast_ai_tasks(p: NiDAQPlugin, Task: Any, AcquisitionType: Any, fast_
                     local_aliases.append(alias)
                     alias_to_cfg[alias] = ch
                     try:
-                        print(f"[NIDAQ] AI_V add: device={device} phys={phys} alias={alias} vmin={vmin} vmax={vmax}")
+                        print(f"[NIDAQ] AI_V add: chassis={chassis} phys={phys} alias={alias} vmin={vmin} vmax={vmax}")
                     except Exception:
                         pass
                 except Exception:
@@ -79,27 +93,27 @@ def _create_fast_ai_tasks(p: NiDAQPlugin, Task: Any, AcquisitionType: Any, fast_
                         buf_sz = int(max(1, 10 * int(fast_rate)))
                     except Exception:
                         buf_sz = int(max(1, 2 * int(fast_rate)))
-                    print(f"[NIDAQ] AI_V timing: device={device} rate={fast_rate} samps_per_chan={int(max(1, 2 * int(fast_rate)))} buf={buf_sz}")
+                    print(f"[NIDAQ] AI_V timing: chassis={chassis} rate={fast_rate} chans={len(local_aliases)} samps_per_chan={int(max(1, 2 * int(fast_rate)))} buf={buf_sz}")
                 except Exception as e:
                     try:
-                        print(f"[NIDAQ] AI_V timing error: device={device} {e}")
+                        print(f"[NIDAQ] AI_V timing error: chassis={chassis} {e}")
                     except Exception:
                         pass
                     raise
                 try:
                     t.start()
-                    print(f"[NIDAQ] AI_V task started: device={device}")
+                    print(f"[NIDAQ] AI_V task started: chassis={chassis} channels={len(local_aliases)}")
                 except Exception as e:
                     try:
-                        print(f"[NIDAQ] AI_V start error: device={device} {e}")
+                        print(f"[NIDAQ] AI_V start error: chassis={chassis} {e}")
                     except Exception:
                         pass
                     raise
-                p._fast_tasks.append({"task": t, "device": device, "aliases": local_aliases, "alias_to_cfg": alias_to_cfg})
+                p._fast_tasks.append({"task": t, "device": chassis, "aliases": local_aliases, "alias_to_cfg": alias_to_cfg})
                 try:
-                    p._fast_diag_counts[device] = 0
-                    p._fast_err_counts[device] = 0
-                    p._fast_last_read_ts[device] = time.time()
+                    p._fast_diag_counts[chassis] = 0
+                    p._fast_err_counts[chassis] = 0
+                    p._fast_last_read_ts[chassis] = time.time()
                 except Exception:
                     pass
                 t = None
@@ -137,8 +151,9 @@ def _create_temp_tasks(p: NiDAQPlugin, Task: Any) -> None:
         phys = str(ch.get("phys", ""))
         if not phys:
             continue
-        device = phys.split("/", 1)[0]
-        groups_t[device].append(ch)
+        module = phys.split("/", 1)[0]
+        chassis = _chassis_from_device(module)
+        groups_t[chassis].append(ch)
     p._temp_tasks = []
     for device, chans in groups_t.items():
         t = None
@@ -254,8 +269,9 @@ def _create_di_tasks(p: NiDAQPlugin, Task: Any) -> None:
         phys = str(ch.get("phys", ""))
         if not phys:
             continue
-        device = phys.split("/", 1)[0]
-        groups_di[device].append(ch)
+        module = phys.split("/", 1)[0]
+        chassis = _chassis_from_device(module)
+        groups_di[chassis].append(ch)
     p._di_tasks = []
     for device, chans in groups_di.items():
         t = None
@@ -300,8 +316,9 @@ def _create_do_tasks(p: NiDAQPlugin, Task: Any) -> None:
         phys = str(ch.get("phys", ""))
         if not phys:
             continue
-        device = phys.split("/", 1)[0]
-        groups_do[device].append(ch)
+        module = phys.split("/", 1)[0]
+        chassis = _chassis_from_device(module)
+        groups_do[chassis].append(ch)
     p._do_tasks = []
     for device, chans in groups_do.items():
         t = None
@@ -342,8 +359,9 @@ def _create_ao_tasks(p: NiDAQPlugin, Task: Any) -> None:
         phys = str(ch.get("phys", ""))
         if not phys:
             continue
-        device = phys.split("/", 1)[0]
-        groups_ao[device].append(ch)
+        module = phys.split("/", 1)[0]
+        chassis = _chassis_from_device(module)
+        groups_ao[chassis].append(ch)
     p._ao_tasks = []
     for device, chans in groups_ao.items():
         t = None

@@ -1,5 +1,5 @@
 enabled: true
-mode: sim
+mode: real
 recording_rate_hz: 10
 electrical:
   voltage: 480

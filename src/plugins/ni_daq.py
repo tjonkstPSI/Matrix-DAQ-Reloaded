@@ -87,6 +87,7 @@ class NiDAQPlugin(BasePlugin):
         self._threaded_fast_ai: bool = False
         self._fast_reader_threads: List[Dict[str, Any]] = []
         self._watchdog_cfg: Dict[str, Any] = {}
+        self._do_condition_list: List[Dict[str, Any]] = []
         self._fast_diag_counts: Dict[str, int] = {}
         self._fast_err_counts: Dict[str, int] = {}
         self._fast_last_read_ts: Dict[str, float] = {}
@@ -170,6 +171,8 @@ class NiDAQPlugin(BasePlugin):
         all_aliases: List[str] = []
         for section in (self._ai_voltage, self._ai_temp, self._di, self._do, self._ao):
             for ch in section:
+                if not ch.get("enabled", False):
+                    continue
                 alias = ch.get("alias")
                 if alias:
                     all_aliases.append(str(alias))
@@ -360,6 +363,7 @@ class NiDAQPlugin(BasePlugin):
         self._di = []
         self._do = []
         self._ao = []
+        self._do_condition_list = []
         chs = self.config.get("channels", [])
         if isinstance(chs, list):
             self._ai_voltage = [c for c in chs if isinstance(c, dict)]
@@ -373,7 +377,39 @@ class NiDAQPlugin(BasePlugin):
             self._di = _list("di")
             self._do = _list("do")
             self._ao = _list("ao")
+            for do_ch in self._do:
+                if not do_ch.get("enabled", False):
+                    continue
+                alias = str(do_ch.get("alias", "")).strip()
+                cond = do_ch.get("condition")
+                if not alias or not isinstance(cond, dict):
+                    continue
+                operator = str(cond.get("operator", "")).strip()
+                if operator in ("TRUE", "FALSE"):
+                    self._do_condition_list.append({
+                        "alias": alias,
+                        "source": "",
+                        "operator": operator,
+                        "threshold": 0.0,
+                    })
+                    continue
+                source = str(cond.get("source", "")).strip()
+                try:
+                    threshold = float(cond.get("threshold", 0.0))
+                except (TypeError, ValueError):
+                    continue
+                if source and operator in (">", ">=", "<", "<=", "==", "!="):
+                    self._do_condition_list.append({
+                        "alias": alias,
+                        "source": source,
+                        "operator": operator,
+                        "threshold": threshold,
+                    })
             return
+
+    def do_conditions(self) -> List[Dict[str, Any]]:
+        """Return parsed DO conditions for orchestrator evaluation."""
+        return list(self._do_condition_list)
 
     # --- Public command APIs ---
 

@@ -39,6 +39,11 @@ _ACTION_OPTIONS = [
     "Visible Alert + Shutdown",
 ]
 
+_SHUTDOWN_TYPE_OPTIONS = [
+    "Hard",
+    "Soft",
+]
+
 _COLS = [
     "Channel",
     "Warn Low",
@@ -51,6 +56,7 @@ _COLS = [
     "Alarm High",
     "Alarm High X / Y",
     "Alarm Action",
+    "Shutdown Type",
     "Enabling Cond",
     "Enable Thres",
 ]
@@ -212,6 +218,8 @@ class ChannelManagerConfigDialog(QDialog):
         )
         warn_action = str(warn.get("action", "visible_alert")).strip().lower()
         alarm_action = str(alarm.get("action", "visible_alert_shutdown")).strip().lower()
+        raw_stype = str(alarm.get("shutdown_type", item.get("shutdown_type", "hard")) or "hard").strip().lower()
+        stype_display = "Soft" if raw_stype == "soft" else "Hard"
         return {
             "Channel": str(item.get("alias", "")),
             "Warn Low": str(warn_low if warn_low is not None else ""),
@@ -224,6 +232,7 @@ class ChannelManagerConfigDialog(QDialog):
             "Alarm High": str(alarm_high if alarm_high is not None else ""),
             "Alarm High X / Y": alarm_high_pair,
             "Alarm Action": "Visible Alert + Shutdown" if alarm_action == "visible_alert_shutdown" else "Visible Alert",
+            "Shutdown Type": stype_display,
             "Enabling Cond": str(item.get("enabling_condition", "always_enabled")),
             "Enable Thres": str(item.get("enable_threshold", 0)),
         }
@@ -250,11 +259,15 @@ class ChannelManagerConfigDialog(QDialog):
         alarm_act.addItems(_ACTION_OPTIONS)
         alarm_act.setCurrentText(values.get("Alarm Action", _ACTION_OPTIONS[1]))
         self.table.setCellWidget(r, 10, alarm_act)
+        stype = QComboBox(self.table)
+        stype.addItems(_SHUTDOWN_TYPE_OPTIONS)
+        stype.setCurrentText(values.get("Shutdown Type", _SHUTDOWN_TYPE_OPTIONS[0]))
+        self.table.setCellWidget(r, 11, stype)
         cond = QComboBox(self.table)
         cond.addItems(_COND_OPTIONS)
         cond.setCurrentText(self._cond_display(values.get("Enabling Cond", "always_enabled")))
-        self.table.setCellWidget(r, 11, cond)
-        self.table.setItem(r, 12, QTableWidgetItem(values.get("Enable Thres", "0")))
+        self.table.setCellWidget(r, 12, cond)
+        self.table.setItem(r, 13, QTableWidgetItem(values.get("Enable Thres", "0")))
 
     def _cond_display(self, key: str) -> str:
         k = str(key).strip().lower()
@@ -303,6 +316,7 @@ class ChannelManagerConfigDialog(QDialog):
                     "Alarm High": "",
                     "Alarm High X / Y": "0 / 0",
                     "Alarm Action": "Visible Alert + Shutdown",
+                    "Shutdown Type": "Hard",
                     "Enabling Cond": "always_enabled",
                     "Enable Thres": "0",
                 }
@@ -429,9 +443,12 @@ class ChannelManagerConfigDialog(QDialog):
             sh_en, sh_cl = self._parse_delay_pair(self.table.item(r, 9).text() if self.table.item(r, 9) else "")
             alarm_action_widget = self.table.cellWidget(r, 10)
             alarm_action_text = alarm_action_widget.currentText() if isinstance(alarm_action_widget, QComboBox) else _ACTION_OPTIONS[1]
-            cond_widget = self.table.cellWidget(r, 11)
+            stype_widget = self.table.cellWidget(r, 11)
+            stype_text = stype_widget.currentText() if isinstance(stype_widget, QComboBox) else _SHUTDOWN_TYPE_OPTIONS[0]
+            shutdown_type = "soft" if stype_text.strip().lower() == "soft" else "hard"
+            cond_widget = self.table.cellWidget(r, 12)
             cond_key = self._cond_key(cond_widget.currentText() if isinstance(cond_widget, QComboBox) else _COND_OPTIONS[0])
-            thr = self._float_or_none(self.table.item(r, 12).text() if self.table.item(r, 12) else "") or 0.0
+            thr = self._float_or_none(self.table.item(r, 13).text() if self.table.item(r, 13) else "") or 0.0
 
             channels.append(
                 {
@@ -453,6 +470,7 @@ class ChannelManagerConfigDialog(QDialog):
                         "high_enter_delay_s": sh_en,
                         "high_clear_delay_s": sh_cl,
                         "action": self._action_key(alarm_action_text),
+                        "shutdown_type": shutdown_type,
                     },
                     "enabling_condition": cond_key,
                     "enable_threshold": float(thr),

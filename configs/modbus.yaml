@@ -1,63 +1,213 @@
-enabled: false
-mode: sim
+enabled: true
+mode: real
 recording_rate_hz: 10
 servers:
 - name: ComApp
-  host: 192.168.10.1
+  host: 192.168.76.200
   port: 502
   unit_id: 1
   timeout_ms: 200
   max_retries: 3
 writes: []
 reads:
-- alias: xTP_Amb
+- alias: xFQ_Gen
   fc: 4
-  address: 30001
+  address: 1019
   length: 2
-  data_type_input: float
-  type: float32
+  data_type_input: signed
+  type: int32
   byte_order: big
   word_order: AB
   scaling:
-    m: 1.0
+    m: 0.001
     b: 0.0
-    unit: C
+    unit: Hz
   poll_hz: 10.0
   enabled: true
   server: ComApp
-- alias: xTP_Hum
+- alias: xVL_Gen12
   fc: 4
-  address: 30002
+  address: 1024
   length: 2
-  data_type_input: float
-  type: float32
-  byte_order: big
-  word_order: AB
-  scaling:
-    m: 1.0
-    b: 0.0
-    unit: '%RH'
-  poll_hz: 10.0
-  enabled: true
-  server: ComApp
-- alias: WS_AmbientTemp
-  fc: 3
-  address: 0
-  length: 1
   data_type_input: unsigned
-  type: uint16
+  type: uint32
   byte_order: big
   word_order: AB
   scaling:
     m: 1.0
     b: 0.0
-    unit: C
+    unit: V
   poll_hz: 10.0
   enabled: true
-  server: Omega Weather Station
+  server: ComApp
+- alias: xVL_Gen23
+  fc: 3
+  address: 1025
+  length: 2
+  data_type_input: unsigned
+  type: uint32
+  byte_order: big
+  word_order: AB
+  scaling:
+    m: 1.0
+    b: 0.0
+    unit: V
+  poll_hz: 10.0
+  enabled: true
+  server: ComApp
+- alias: xVL_Gen31
+  fc: 3
+  address: 1026
+  length: 2
+  data_type_input: unsigned
+  type: uint32
+  byte_order: big
+  word_order: AB
+  scaling:
+    m: 1.0
+    b: 0.0
+    unit: V
+  poll_hz: 10.0
+  enabled: true
+  server: ComApp
+- alias: xCT_Gen1
+  fc: 3
+  address: 1027
+  length: 2
+  data_type_input: unsigned
+  type: uint32
+  byte_order: big
+  word_order: AB
+  scaling:
+    m: 1.0
+    b: 0.0
+    unit: A
+  poll_hz: 10.0
+  enabled: true
+  server: ComApp
+- alias: xCT_Gen2
+  fc: 3
+  address: 1028
+  length: 2
+  data_type_input: unsigned
+  type: uint32
+  byte_order: big
+  word_order: AB
+  scaling:
+    m: 1.0
+    b: 0.0
+    unit: A
+  poll_hz: 10.0
+  enabled: true
+  server: ComApp
+- alias: xCT_Gen3
+  fc: 3
+  address: 1029
+  length: 2
+  data_type_input: unsigned
+  type: uint32
+  byte_order: big
+  word_order: AB
+  scaling:
+    m: 1.0
+    b: 0.0
+    unit: A
+  poll_hz: 10.0
+  enabled: true
+  server: ComApp
+- alias: xPO_PwnAvg
+  fc: 3
+  address: 1007
+  length: 2
+  data_type_input: signed
+  type: int32
+  byte_order: big
+  word_order: AB
+  scaling:
+    m: 1.0
+    b: 0.0
+    unit: kVar
+  poll_hz: 10.0
+  enabled: true
+  server: ComApp
+- alias: xPO_GenAvg
+  fc: 3
+  address: 1002
+  length: 2
+  data_type_input: signed
+  type: int32
+  byte_order: big
+  word_order: AB
+  scaling:
+    m: 1.0
+    b: 0.0
+    unit: kWe
+  poll_hz: 10.0
+  enabled: true
+  server: ComApp
+- alias: xPF_PwmAvg
+  fc: 3
+  address: 1015
+  length: 2
+  data_type_input: signed
+  type: int32
+  byte_order: big
+  word_order: AB
+  scaling:
+    m: 0.001
+    b: 0.0
+    unit: PF
+  poll_hz: 10.0
+  enabled: true
+  server: ComApp
+- alias: xV_Bat
+  fc: 3
+  address: 1052
+  length: 2
+  data_type_input: unsigned
+  type: uint32
+  byte_order: big
+  word_order: AB
+  scaling:
+    m: 0.1
+    b: 0.0
+    unit: V
+  poll_hz: 10.0
+  enabled: true
+  server: ComApp
+- alias: xLoad_S_kVA
+  fc: 3
+  address: 1011
+  length: 2
+  data_type_input: unsigned
+  type: uint32
+  byte_order: big
+  word_order: AB
+  scaling:
+    m: 1.0
+    b: 0.0
+    unit: kVA
+  poll_hz: 10.0
+  enabled: true
+  server: ComApp
+- alias: xLOad_P_kVA
+  fc: 3
+  address: 1002
+  length: 2
+  data_type_input: unsigned
+  type: uint32
+  byte_order: big
+  word_order: AB
+  scaling:
+    m: 1.0
+    b: 0.0
+    unit: kVA
+  poll_hz: 10.0
+  enabled: true
+  server: ComApp
 connection:
   interface_type: TCP/IP
-  ip_address: 192.168.10.1
+  ip_address: 192.168.76.200
   network_port: 502
   com_port: COM1
   unit_id: 1
@@ -68,7 +218,7 @@ devices:
 - name: ComApp
   connection:
     interface_type: TCP/IP
-    ip_address: 192.168.10.1
+    ip_address: 192.168.76.200
     network_port: 502
     com_port: COM1
     unit_id: 1
@@ -76,63 +226,186 @@ devices:
     serial_type: RTU
     word_order: big
   reads:
-  - alias: xTP_Amb
+  - alias: xFQ_Gen
     fc: 4
-    address: 30001
+    address: 1019
     length: 2
-    data_type_input: float
-    type: float32
+    data_type_input: signed
+    type: int32
     byte_order: big
     word_order: AB
     scaling:
-      m: 1.0
+      m: 0.001
       b: 0.0
-      unit: C
+      unit: Hz
     poll_hz: 10.0
     enabled: true
-  - alias: xTP_Hum
+  - alias: xVL_Gen12
     fc: 4
-    address: 30002
+    address: 1024
     length: 2
-    data_type_input: float
-    type: float32
-    byte_order: big
-    word_order: AB
-    scaling:
-      m: 1.0
-      b: 0.0
-      unit: '%RH'
-    poll_hz: 10.0
-    enabled: true
-- name: Omega Weather Station
-  connection:
-    interface_type: RS485
-    ip_address: ''
-    network_port: 502
-    com_port: COM1
-    unit_id: 1
-    baud_rate: 9600
-    serial_type: RTU
-    word_order: big
-  reads:
-  - alias: WS_AmbientTemp
-    fc: 3
-    address: 0
-    length: 1
     data_type_input: unsigned
-    type: uint16
+    type: uint32
     byte_order: big
     word_order: AB
     scaling:
       m: 1.0
       b: 0.0
-      unit: C
+      unit: V
     poll_hz: 10.0
     enabled: true
-serial_devices:
-- name: Omega Weather Station
-  port: COM1
-  unit_id: 1
-  baud_rate: 9600
-  serial_type: RTU
-  word_order: big
+  - alias: xVL_Gen23
+    fc: 3
+    address: 1025
+    length: 2
+    data_type_input: unsigned
+    type: uint32
+    byte_order: big
+    word_order: AB
+    scaling:
+      m: 1.0
+      b: 0.0
+      unit: V
+    poll_hz: 10.0
+    enabled: true
+  - alias: xVL_Gen31
+    fc: 3
+    address: 1026
+    length: 2
+    data_type_input: unsigned
+    type: uint32
+    byte_order: big
+    word_order: AB
+    scaling:
+      m: 1.0
+      b: 0.0
+      unit: V
+    poll_hz: 10.0
+    enabled: true
+  - alias: xCT_Gen1
+    fc: 3
+    address: 1027
+    length: 2
+    data_type_input: unsigned
+    type: uint32
+    byte_order: big
+    word_order: AB
+    scaling:
+      m: 1.0
+      b: 0.0
+      unit: A
+    poll_hz: 10.0
+    enabled: true
+  - alias: xCT_Gen2
+    fc: 3
+    address: 1028
+    length: 2
+    data_type_input: unsigned
+    type: uint32
+    byte_order: big
+    word_order: AB
+    scaling:
+      m: 1.0
+      b: 0.0
+      unit: A
+    poll_hz: 10.0
+    enabled: true
+  - alias: xCT_Gen3
+    fc: 3
+    address: 1029
+    length: 2
+    data_type_input: unsigned
+    type: uint32
+    byte_order: big
+    word_order: AB
+    scaling:
+      m: 1.0
+      b: 0.0
+      unit: A
+    poll_hz: 10.0
+    enabled: true
+  - alias: xPO_PwnAvg
+    fc: 3
+    address: 1007
+    length: 2
+    data_type_input: signed
+    type: int32
+    byte_order: big
+    word_order: AB
+    scaling:
+      m: 1.0
+      b: 0.0
+      unit: kVar
+    poll_hz: 10.0
+    enabled: true
+  - alias: xPO_GenAvg
+    fc: 3
+    address: 1002
+    length: 2
+    data_type_input: signed
+    type: int32
+    byte_order: big
+    word_order: AB
+    scaling:
+      m: 1.0
+      b: 0.0
+      unit: kWe
+    poll_hz: 10.0
+    enabled: true
+  - alias: xPF_PwmAvg
+    fc: 3
+    address: 1015
+    length: 2
+    data_type_input: signed
+    type: int32
+    byte_order: big
+    word_order: AB
+    scaling:
+      m: 0.001
+      b: 0.0
+      unit: PF
+    poll_hz: 10.0
+    enabled: true
+  - alias: xV_Bat
+    fc: 3
+    address: 1052
+    length: 2
+    data_type_input: unsigned
+    type: uint32
+    byte_order: big
+    word_order: AB
+    scaling:
+      m: 0.1
+      b: 0.0
+      unit: V
+    poll_hz: 10.0
+    enabled: true
+  - alias: xLoad_S_kVA
+    fc: 3
+    address: 1011
+    length: 2
+    data_type_input: unsigned
+    type: uint32
+    byte_order: big
+    word_order: AB
+    scaling:
+      m: 1.0
+      b: 0.0
+      unit: kVA
+    poll_hz: 10.0
+    enabled: true
+  - alias: xLOad_P_kVA
+    fc: 3
+    address: 1002
+    length: 2
+    data_type_input: unsigned
+    type: uint32
+    byte_order: big
+    word_order: AB
+    scaling:
+      m: 1.0
+      b: 0.0
+      unit: kVA
+    poll_hz: 10.0
+    enabled: true
+serial_devices: []

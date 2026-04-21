@@ -1,4 +1,4 @@
-mode: sim
+mode: real
 connection:
   host: 192.168.76.45
   port: 502

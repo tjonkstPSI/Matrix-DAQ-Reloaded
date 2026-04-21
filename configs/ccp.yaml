@@ -32,17 +32,6 @@ reconnect_interval_s: 2.0
 measurements:
   naming_prefix: emaster
   list: &id001
-  - name: AAT
-    unit_override: deg F
-    enabled: true
-    unit: deg F
-    address: 16784024
-    address_extension: 0
-    data_type: UWORD
-    size: 2
-    limits:
-    - 0.0
-    - 0.0
   - name: AUX_PU1_raw
     unit_override: volts
     enabled: true
@@ -54,6 +43,17 @@ measurements:
     limits:
     - 0.0
     - 5.00114468864469
+  - name: A_BM1
+    unit_override: '%'
+    enabled: true
+    unit: '%'
+    address: 16777728
+    address_extension: 0
+    data_type: SWORD
+    size: 2
+    limits:
+    - 0.0
+    - 0.0
   - name: BP
     unit_override: psia
     enabled: true
@@ -65,6 +65,39 @@ measurements:
     limits:
     - 0.0
     - 255.99609375
+  - name: CL_BM1
+    unit_override: '%'
+    enabled: true
+    unit: '%'
+    address: 16777720
+    address_extension: 0
+    data_type: SWORD
+    size: 2
+    limits:
+    - 0.0
+    - 0.0
+  - name: DBW_iFB_amps
+    unit_override: amps
+    enabled: true
+    unit: amps
+    address: 16817744
+    address_extension: 0
+    data_type: UWORD
+    size: 2
+    limits:
+    - 0.0
+    - 63.9990234375
+  - name: EGO2_volts
+    unit_override: volts
+    enabled: true
+    unit: volts
+    address: 16777592
+    address_extension: 0
+    data_type: UWORD
+    size: 2
+    limits:
+    - 0.0
+    - 15.999755859375
   - name: EGO3_raw
     unit_override: volts
     enabled: true
@@ -76,17 +109,182 @@ measurements:
     limits:
     - 0.0
     - 5.00114468864469
-  - name: MAP_est
+  - name: HM_RAM_seconds
+    unit_override: hours
+    enabled: true
+    unit: hours
+    address: 16782088
+    address_extension: 0
+    data_type: ULONG
+    size: 4
+    limits:
+    - 0.0
+    - 1193046.47083333
+  - name: HM_RAMr_seconds
+    unit_override: hours
+    enabled: true
+    unit: hours
+    address: 16790856
+    address_extension: 0
+    data_type: ULONG
+    size: 4
+    limits:
+    - 0.0
+    - 1193046.47083333
+  - name: IAT
+    unit_override: deg F
+    enabled: true
+    unit: deg F
+    address: 16777296
+    address_extension: 0
+    data_type: UWORD
+    size: 2
+    limits:
+    - 0.0
+    - 0.0
+  - name: I_Gov3_acc
+    unit_override: '%'
+    enabled: true
+    unit: '%'
+    address: 16783448
+    address_extension: 0
+    data_type: SLONG
+    size: 4
+    limits:
+    - 0.0
+    - 0.0
+  - name: KNK_retard
+    unit_override: CAD
+    enabled: true
+    unit: CAD
+    address: 16778120
+    address_extension: 0
+    data_type: UWORD
+    size: 2
+    limits:
+    - 0.0
+    - 127.998046875
+  - name: MAPressure
     unit_override: psia
     enabled: true
     unit: psia
-    address: 16777984
+    address: 16777224
     address_extension: 0
     data_type: UWORD
     size: 2
     limits:
     - 0.0
     - 255.99609375
+  - name: MAT
+    unit_override: deg F
+    enabled: true
+    unit: deg F
+    address: 16777240
+    address_extension: 0
+    data_type: UWORD
+    size: 2
+    limits:
+    - 0.0
+    - 0.0
+  - name: MFG_DPPress
+    unit_override: psia
+    enabled: true
+    unit: psia
+    address: 16848480
+    address_extension: 0
+    data_type: SWORD
+    size: 2
+    limits:
+    - 0.0
+    - 0.0
+  - name: MFG_DSPress
+    unit_override: psia
+    enabled: true
+    unit: psia
+    address: 16848472
+    address_extension: 0
+    data_type: UWORD
+    size: 2
+    limits:
+    - 0.0
+    - 148.51664578125
+  - name: MFG_FTemp
+    unit_override: deg F
+    enabled: true
+    unit: deg F
+    address: 16848448
+    address_extension: 0
+    data_type: UWORD
+    size: 2
+    limits:
+    - 0.0
+    - 0.0
+  - name: MFG_SD_mdot_cmd
+    unit_override: g/sec
+    enabled: true
+    unit: g/sec
+    address: 16848792
+    address_extension: 0
+    data_type: FLOAT32_IEEE
+    size: 4
+    limits:
+    - 0.0
+    - 0.0
+  - name: MFG_TPS_act_pct
+    unit_override: '%'
+    enabled: true
+    unit: '%'
+    address: 16848432
+    address_extension: 0
+    data_type: UWORD
+    size: 2
+    limits:
+    - 0.0
+    - 99.9984741210938
+  - name: MFG_TPS_cmd_pct
+    unit_override: '%'
+    enabled: true
+    unit: '%'
+    address: 16848440
+    address_extension: 0
+    data_type: UWORD
+    size: 2
+    limits:
+    - 0.0
+    - 99.9984741210938
+  - name: MFG_USPress
+    unit_override: psia
+    enabled: true
+    unit: psia
+    address: 16848464
+    address_extension: 0
+    data_type: UWORD
+    size: 2
+    limits:
+    - 0.0
+    - 148.51664578125
+  - name: MFG_VE_mdot_err
+    unit_override: '%'
+    enabled: true
+    unit: '%'
+    address: 16857680
+    address_extension: 0
+    data_type: SWORD
+    size: 2
+    limits:
+    - 0.0
+    - 0.0
+  - name: MFG_mdot_act
+    unit_override: g/sec
+    enabled: true
+    unit: g/sec
+    address: 16848400
+    address_extension: 0
+    data_type: ULONG
+    size: 4
+    limits:
+    - 0.0
+    - 16383.9999961853
   - name: OILP_press
     unit_override: psig
     enabled: true
@@ -109,6 +307,72 @@ measurements:
     limits:
     - 0.0
     - 0.0
+  - name: Phi_UEGO
+    unit_override: phi
+    enabled: true
+    unit: phi
+    address: 16778136
+    address_extension: 0
+    data_type: UWORD
+    size: 2
+    limits:
+    - 0.0
+    - 3.99993896484375
+  - name: TIP
+    unit_override: psia
+    enabled: true
+    unit: psia
+    address: 16778280
+    address_extension: 0
+    data_type: UWORD
+    size: 2
+    limits:
+    - 0.0
+    - 255.99609375
+  - name: TPS1_pct
+    unit_override: '%'
+    enabled: true
+    unit: '%'
+    address: 16777624
+    address_extension: 0
+    data_type: UWORD
+    size: 2
+    limits:
+    - 0.0
+    - 99.9984741210938
+  - name: TPS2_pct
+    unit_override: '%'
+    enabled: true
+    unit: '%'
+    address: 16777632
+    address_extension: 0
+    data_type: UWORD
+    size: 2
+    limits:
+    - 0.0
+    - 99.9984741210938
+  - name: TPS_cmd_pct
+    unit_override: '%'
+    enabled: true
+    unit: '%'
+    address: 16777664
+    address_extension: 0
+    data_type: UWORD
+    size: 2
+    limits:
+    - 0.0
+    - 99.9984741210938
+  - name: TPS_pct
+    unit_override: '%'
+    enabled: true
+    unit: '%'
+    address: 16777656
+    address_extension: 0
+    data_type: UWORD
+    size: 2
+    limits:
+    - 0.0
+    - 99.9984741210938
   - name: Vbat
     unit_override: volts
     enabled: true
@@ -125,6 +389,83 @@ measurements:
     enabled: true
     unit: volts
     address: 16777576
+    address_extension: 0
+    data_type: UWORD
+    size: 2
+    limits:
+    - 0.0
+    - 255.99609375
+  - name: bst_Ptarg_P
+    unit_override: psi
+    enabled: true
+    unit: psi
+    address: 16818008
+    address_extension: 0
+    data_type: UWORD
+    size: 2
+    limits:
+    - 0.0
+    - 255.99609375
+  - name: bst_WGAcmd_DC
+    unit_override: '%'
+    enabled: true
+    unit: '%'
+    address: 16786768
+    address_extension: 0
+    data_type: UWORD
+    size: 2
+    limits:
+    - 0.0
+    - 99.9984741210938
+  - name: bst_WGAcmd_V
+    unit_override: volts
+    enabled: true
+    unit: volts
+    address: 16786760
+    address_extension: 0
+    data_type: UWORD
+    size: 2
+    limits:
+    - 0.0
+    - 255.99609375
+  - name: bst_WGPa
+    unit_override: psig | psia
+    enabled: true
+    unit: psig | psia
+    address: 16818064
+    address_extension: 0
+    data_type: UWORD
+    size: 2
+    limits:
+    - 0.0
+    - 255.99609375
+  - name: bst_loadcmd
+    unit_override: '%'
+    enabled: true
+    unit: '%'
+    address: 16786656
+    address_extension: 0
+    data_type: UWORD
+    size: 2
+    limits:
+    - 0.0
+    - 99.9984741210938
+  - name: eng_load
+    unit_override: '%'
+    enabled: true
+    unit: '%'
+    address: 16777896
+    address_extension: 0
+    data_type: UWORD
+    size: 2
+    limits:
+    - 0.0
+    - 99.9984741210938
+  - name: gov_MAP_d
+    unit_override: psia
+    enabled: true
+    unit: psia
+    address: 16777920
     address_extension: 0
     data_type: UWORD
     size: 2
@@ -164,17 +505,6 @@ measurements:
     limits:
     - 0.0
     - 0.0
-  - name: mdot_f_fill_float
-    unit_override: g/sec
-    enabled: true
-    unit: g/sec
-    address: 16829472
-    address_extension: 0
-    data_type: FLOAT32_IEEE
-    size: 4
-    limits:
-    - 0.0
-    - 0.0
   - name: mdot_f_ports
     unit_override: g/sec
     enabled: true
@@ -186,6 +516,17 @@ measurements:
     limits:
     - 0.0
     - 127.998046875
+  - name: mdot_f_valve_TPSf
+    unit_override: g/sec
+    enabled: true
+    unit: g/sec
+    address: 16819856
+    address_extension: 0
+    data_type: FLOAT32_IEEE
+    size: 4
+    limits:
+    - 0.0
+    - 0.0
   - name: rECT
     unit_override: '-'
     enabled: true
@@ -230,6 +571,39 @@ measurements:
     limits:
     - 0.0
     - 65535.0
+  - name: rpmd_gain
+    unit_override: rpm
+    enabled: true
+    unit: rpm
+    address: 16781032
+    address_extension: 0
+    data_type: UWORD
+    size: 2
+    limits:
+    - 0.0
+    - 65535.0
+  - name: rpmd_gov
+    unit_override: rpm
+    enabled: true
+    unit: rpm
+    address: 16783456
+    address_extension: 0
+    data_type: UWORD
+    size: 2
+    limits:
+    - 0.0
+    - 65535.0
+  - name: run_mode
+    unit_override: ''
+    enabled: true
+    unit: ''
+    address: 16777344
+    address_extension: 0
+    data_type: UBYTE
+    size: 1
+    limits:
+    - 0.0
+    - 255.0
   - name: spk_adv
     unit_override: CAD BTDC
     enabled: true
@@ -241,6 +615,28 @@ measurements:
     limits:
     - 0.0
     - 0.0
+  - name: sync_state
+    unit_override: state
+    enabled: true
+    unit: state
+    address: 16782968
+    address_extension: 0
+    data_type: SBYTE
+    size: 1
+    limits:
+    - 0.0
+    - 0.0
+  - name: torque_Nm_gross
+    unit_override: N-m
+    enabled: true
+    unit: N-m
+    address: 16794896
+    address_extension: 0
+    data_type: UWORD
+    size: 2
+    limits:
+    - 0.0
+    - 16383.75
 writes: []
 devices:
 - name: CCP Primary

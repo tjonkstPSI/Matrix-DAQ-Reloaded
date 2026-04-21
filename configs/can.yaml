@@ -1,41 +1,40 @@
 enabled: true
 mode: real
 recording_rate_hz: 10
-buses: []
-databases: []
-signals:
-- alias: cPR_Amb
-  message: AMB_65269
-  signal: cPR_Amb
-  unit: kPa
-  enabled: true
-- alias: cSP_Eng
-  message: EEC1_61444
-  signal: cSP_Eng
-  unit: rpm
-  enabled: true
-- alias: cFL_EngFul
-  message: EI_65170
-  signal: cFL_EngFul
-  unit: kg/h
-  enabled: true
-- alias: cTP_EngClt
-  message: ET1_65262
-  signal: cTP_EngClt
-  unit: C
-  enabled: true
-- alias: cVL_Bat
-  message: VEP1_65271
-  signal: cVL_Bat
-  unit: V
-  enabled: true
-- alias: cVL_Ign
-  message: VEP1_65271
-  signal: cVL_Ign
-  unit: V
-  enabled: true
-session:
+buses:
+- name: CAN Bus 1
   channel: CAN1
   baudrate: 250000
   bustype: nixnet
-dbc_path: C:/Projects/Python/Production CAN_Modbus Recorder/Reference/J1939 Channels_wOilTemp.dbc
+  dbc_path: C:/Projects/Python/Production CAN_Modbus Recorder/Reference/J1939 Channels_wOilTemp.dbc
+  signals:
+  - alias: cPR_Amb
+    message: AMB_65269
+    signal: cPR_Amb
+    unit: kPa
+    enabled: true
+  - alias: cSP_Eng
+    message: EEC1_61444
+    signal: cSP_Eng
+    unit: rpm
+    enabled: true
+  - alias: cFL_EngFul
+    message: EI_65170
+    signal: cFL_EngFul
+    unit: kg/h
+    enabled: true
+  - alias: cTP_EngClt
+    message: ET1_65262
+    signal: cTP_EngClt
+    unit: C
+    enabled: true
+  - alias: cVL_Bat
+    message: VEP1_65271
+    signal: cVL_Bat
+    unit: V
+    enabled: true
+  - alias: cVL_Ign
+    message: VEP1_65271
+    signal: cVL_Ign
+    unit: V
+    enabled: true

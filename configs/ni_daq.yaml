@@ -1,25 +1,88 @@
 mode: real
 recording_rate_hz: auto
+decimation:
+  filter: IIR_Butterworth
+  cutoff_hz: auto
 channels:
   ai_voltage:
+  - phys: AGENTMod2/ai0
+    alias: AGENTMod2_ai0_V
+    enabled: false
+    scaling:
+      unit: V
+      type: none
+  - phys: AGENTMod2/ai1
+    alias: qPR_BthPstMstCmpIn
+    enabled: true
+    scaling:
+      type: table
+      unit: kPa gag
+      points:
+      - - 0.0
+        - -10.342
+      - - 5.0
+        - 10.342
+      extrapolate: true
+  - phys: AGENTMod2/ai2
+    alias: qPR_MstCacPre
+    enabled: true
+    scaling:
+      type: table
+      unit: kPa abs
+      points:
+      - - 0.0
+        - 0.0
+      - - 5.0
+        - 275.79
+      extrapolate: true
+  - phys: AGENTMod2/ai3
+    alias: qPR_Ccs
+    enabled: true
+    scaling:
+      type: table
+      unit: kPa gag
+      points:
+      - - 0.0
+        - -10.342
+      - - 5.0
+        - 10.342
+      extrapolate: true
   - phys: AGENTMod3/ai0
-    alias: AGENTMod3_ai0_V
-    enabled: false
+    alias: qPR_SlvCacPst
+    enabled: true
     scaling:
-      unit: V
-      type: none
+      type: table
+      unit: kPa abls
+      points:
+      - - 0.0
+        - 0.0
+      - - 5.0
+        - 275.79
+      extrapolate: true
   - phys: AGENTMod3/ai1
-    alias: AGENTMod3_ai1_V
-    enabled: false
+    alias: qPR_BthPre
+    enabled: true
     scaling:
-      unit: V
-      type: none
+      type: table
+      unit: kPa gag
+      points:
+      - - 0.0
+        - -10.342
+      - - 5.0
+        - 10.342
+      extrapolate: true
   - phys: AGENTMod3/ai2
-    alias: AGENTMod3_ai2
-    enabled: false
+    alias: qPR_BthPst
+    enabled: true
     scaling:
-      unit: V
-      type: none
+      type: table
+      unit: kPa gag
+      points:
+      - - 0.0
+        - -10.342
+      - - 5.0
+        - 10.342
+      extrapolate: true
   - phys: AGENTMod3/ai3
     alias: AGENTMod3_ai3
     enabled: false
@@ -27,17 +90,29 @@ channels:
       unit: V
       type: none
   - phys: AGENTMod4/ai0
-    alias: AGENTMod4_ai0
-    enabled: false
+    alias: qPR_SlvTrbPre
+    enabled: true
     scaling:
-      unit: V
-      type: none
+      type: table
+      unit: kPa abs
+      points:
+      - - 0.0
+        - 0.0
+      - - 5.0
+        - 344.738
+      extrapolate: true
   - phys: AGENTMod4/ai1
-    alias: AGENTMod4_ai1
-    enabled: false
+    alias: qPR_MstTrbPre
+    enabled: true
     scaling:
-      unit: V
-      type: none
+      type: table
+      unit: kPa abs
+      points:
+      - - 0.0
+        - 0.0
+      - - 5.0
+        - 344.738
+      extrapolate: true
   - phys: AGENTMod4/ai2
     alias: AGENTMod4_ai2
     enabled: false
@@ -45,14 +120,20 @@ channels:
       unit: V
       type: none
   - phys: AGENTMod4/ai3
-    alias: AGENTMod4_ai3
-    enabled: false
+    alias: qPR_SlvCacPre
+    enabled: true
     scaling:
-      unit: V
-      type: none
+      type: table
+      unit: kPa abs
+      points:
+      - - 0.0
+        - 0.0
+      - - 5.0
+        - 275.79
+      extrapolate: true
   - phys: AGENTMod5/ai0
-    alias: AGENTMod5_ai0
-    enabled: false
+    alias: eLOUVER_Feedback
+    enabled: true
     scaling:
       unit: V
       type: none
@@ -60,10 +141,8 @@ channels:
     alias: AGENTMod5_ai1
     enabled: false
     scaling:
-      type: linear
-      gain: 30.0
-      offset: 0.0
-      unit: psi
+      type: none
+      unit: V
   - phys: AGENTMod5/ai2
     alias: AGENTMod5_ai2
     enabled: false
@@ -76,100 +155,18 @@ channels:
     scaling:
       unit: V
       type: none
-  - phys: AGENTMod1a/ai0
-    alias: AGENTMod1_ai0_V
-    enabled: false
-    scaling:
-      unit: V
-      type: none
-  - phys: AGENTMod1a/ai1
-    alias: AGENTMod1_ai1_V
-    enabled: false
-    scaling:
-      unit: V
-      type: none
-  - phys: AGENTMod1a/ai2
-    alias: qPR_CmpIn1
-    enabled: true
-    scaling:
-      type: linear
-      gain: 10.0
-      offset: 0.0
-      unit: psi
-  - phys: AGENTMod1a/ai3
-    alias: AGENTMod1_ai3
-    enabled: false
-    scaling:
-      unit: V
-      type: none
-  - phys: AGENTMod2test/ai0
-    alias: AGENTMod2_ai0_V
-    enabled: false
-    scaling:
-      unit: V
-      type: none
-  - phys: AGENTMod2test/ai1
-    alias: qPR_Ccs
-    enabled: true
-    scaling:
-      type: table
-      unit: GPM
-      points:
-      - - 0.0
-        - 0.0
-      - - 0.5
-        - 1.1
-      - - 1.0
-        - 2.4
-      - - 1.5
-        - 3.7
-      - - 2.0
-        - 5.0
-      - - 3.0
-        - 7.6
-      - - 4.0
-        - 10.1
-      - - 5.0
-        - 12.6
-      - - 6.0
-        - 15.0
-      - - 7.5
-        - 18.7
-      - - 9.0
-        - 22.3
-      - - 10.0
-        - 24.8
-      extrapolate: false
-  - phys: AGENTMod2test/ai2
-    alias: AGENTMod2_ai2
-    enabled: false
-    scaling:
-      unit: V
-      type: none
-  - phys: AGENTMod2test/ai3
-    alias: AGENTMod2_ai3
-    enabled: false
-    scaling:
-      unit: V
-      type: none
   - phys: MATRIXMod3/ai0
     alias: qPR_Amb
     enabled: true
     scaling:
       type: table
-      unit: PSI
+      unit: kPa abs
       points:
       - - 0.0
-        - 0.0
-      - - 2.5
         - 50.0
       - - 5.0
-        - 100.0
-      - - 7.5
-        - 150.0
-      - - 10.0
-        - 200.0
-      extrapolate: false
+        - 110.0
+      extrapolate: true
   - phys: MATRIXMod3/ai1
     alias: MATRIXMod3_ai1_V
     enabled: false
@@ -189,33 +186,195 @@ channels:
       unit: V
       type: none
   - phys: MATRIXMod4/ai0
-    alias: qFL_Coolant
-    enabled: false
+    alias: qFL_Bby
+    enabled: true
     scaling:
-      unit: V
-      type: none
+      type: table
+      unit: ACFM
+      points:
+      - - 0.133
+        - 0.7
+      - - 0.362
+        - 1.93
+      - - 0.702
+        - 3.86
+      - - 1.069
+        - 5.79
+      - - 1.432
+        - 7.71
+      - - 1.793
+        - 9.64
+      - - 2.149
+        - 11.57
+      - - 2.518
+        - 13.5
+      - - 2.892
+        - 15.43
+      - - 3.24
+        - 17.36
+      - - 3.579
+        - 19.29
+      - - 3.917
+        - 21.21
+      - - 4.255
+        - 23.14
+      - - 4.592
+        - 25.07
+      - - 4.93
+        - 27.0
+      extrapolate: true
   - phys: MATRIXMod4/ai1
-    alias: MATRIXMod4_ai1
-    enabled: false
+    alias: qPR_MstCatDta
+    enabled: true
     scaling:
-      unit: V
-      type: none
+      type: table
+      unit: kPa gag
+      points:
+      - - 0.0
+        - 0.0
+      - - 5.0
+        - 34.474
+      extrapolate: true
   - phys: MATRIXMod4/ai2
-    alias: MATRIXMod4_ai2
-    enabled: false
+    alias: qPR_SlvCatDta
+    enabled: true
     scaling:
-      unit: V
-      type: none
+      type: table
+      unit: kPa gag
+      points:
+      - - 0.0
+        - 0.0
+      - - 5.0
+        - 34.474
+      extrapolate: true
   - phys: MATRIXMod4/ai3
-    alias: MATRIXMod4_ai3
+    alias: qSP_EngBth
     enabled: false
     scaling:
-      unit: V
-      type: none
+      type: table
+      unit: RPM
+      points:
+      - - 0.0
+        - 0.0
+      - - 10.0
+        - 15000.0
+      extrapolate: true
   ai_temp:
+  - phys: AGENTMod1/ai0
+    alias: AGENTMod1_ai0
+    enabled: false
+    unit: C
+    sensor:
+      type: TC
+      subtype: K
+  - phys: AGENTMod1/ai1
+    alias: AGENTMod1_ai1
+    enabled: false
+    unit: C
+    sensor:
+      type: TC
+      subtype: K
+  - phys: AGENTMod1/ai2
+    alias: AGENTMod1_ai2
+    enabled: false
+    unit: C
+    sensor:
+      type: TC
+      subtype: K
+  - phys: AGENTMod1/ai3
+    alias: AGENTMod1_ai3
+    enabled: false
+    unit: C
+    sensor:
+      type: TC
+      subtype: K
+  - phys: AGENTMod1/ai4
+    alias: AGENTMod1_ai4
+    enabled: false
+    unit: C
+    sensor:
+      type: TC
+      subtype: K
+  - phys: AGENTMod1/ai5
+    alias: AGENTMod1_ai5
+    enabled: false
+    unit: C
+    sensor:
+      type: TC
+      subtype: K
+  - phys: AGENTMod1/ai6
+    alias: AGENTMod1_ai6
+    enabled: false
+    unit: C
+    sensor:
+      type: TC
+      subtype: K
+  - phys: AGENTMod1/ai7
+    alias: AGENTMod1_ai7
+    enabled: false
+    unit: C
+    sensor:
+      type: TC
+      subtype: K
+  - phys: AGENTMod1/ai8
+    alias: AGENTMod1_ai8
+    enabled: false
+    unit: C
+    sensor:
+      type: TC
+      subtype: K
+  - phys: AGENTMod1/ai9
+    alias: AGENTMod1_ai9
+    enabled: false
+    unit: C
+    sensor:
+      type: TC
+      subtype: K
+  - phys: AGENTMod1/ai10
+    alias: AGENTMod1_ai10
+    enabled: false
+    unit: C
+    sensor:
+      type: TC
+      subtype: K
+  - phys: AGENTMod1/ai11
+    alias: AGENTMod1_ai11
+    enabled: false
+    unit: C
+    sensor:
+      type: TC
+      subtype: K
+  - phys: AGENTMod1/ai12
+    alias: AGENTMod1_ai12
+    enabled: false
+    unit: C
+    sensor:
+      type: TC
+      subtype: K
+  - phys: AGENTMod1/ai13
+    alias: AGENTMod1_ai13
+    enabled: false
+    unit: C
+    sensor:
+      type: TC
+      subtype: K
+  - phys: AGENTMod1/ai14
+    alias: AGENTMod1_ai14
+    enabled: false
+    unit: C
+    sensor:
+      type: TC
+      subtype: K
+  - phys: AGENTMod1/ai15
+    alias: AGENTMod1_ai15
+    enabled: false
+    unit: C
+    sensor:
+      type: TC
+      subtype: K
   - phys: AGENTMod7/ai0
     alias: qTP_Amb
-    enabled: true
+    enabled: false
     unit: C
     sensor:
       type: RTD
@@ -249,48 +408,12 @@ channels:
       subtype: PT100
       wires: 3
       excitation_current_a: 0.001
-  - phys: AGENTMod7/ai4
-    alias: AGENTMod7_ai4
-    enabled: false
-    unit: C
-    sensor:
-      type: RTD
-      subtype: PT100
-      wires: 3
-      excitation_current_a: 0.001
-  - phys: AGENTMod7/ai5
-    alias: AGENTMod7_ai5
-    enabled: false
-    unit: C
-    sensor:
-      type: RTD
-      subtype: PT100
-      wires: 3
-      excitation_current_a: 0.001
-  - phys: AGENTMod7/ai6
-    alias: AGENTMod7_ai6
-    enabled: false
-    unit: C
-    sensor:
-      type: RTD
-      subtype: PT100
-      wires: 3
-      excitation_current_a: 0.001
-  - phys: AGENTMod7/ai7
-    alias: AGENTMod7_ai7
-    enabled: false
-    unit: C
-    sensor:
-      type: RTD
-      subtype: PT100
-      wires: 3
-      excitation_current_a: 0.001
   - phys: AGENTMod8/ai0
     alias: AGENTMod8_ai0
     enabled: false
     unit: C
     sensor:
-      type: RTD
+      type: TC
       subtype: PT100
       wires: 3
       excitation_current_a: 0.001
@@ -299,7 +422,7 @@ channels:
     enabled: false
     unit: C
     sensor:
-      type: RTD
+      type: TC
       subtype: PT100
       wires: 3
       excitation_current_a: 0.001
@@ -308,7 +431,7 @@ channels:
     enabled: false
     unit: C
     sensor:
-      type: RTD
+      type: TC
       subtype: PT100
       wires: 3
       excitation_current_a: 0.001
@@ -317,13 +440,209 @@ channels:
     enabled: false
     unit: C
     sensor:
-      type: RTD
+      type: TC
       subtype: PT100
       wires: 3
       excitation_current_a: 0.001
-  - phys: MATRIXMod2/ai0
-    alias: MATRIXMod2_ai0
+  - phys: AGENTMod8/ai4
+    alias: AGENTMod8_ai4
     enabled: false
+    unit: C
+    sensor:
+      type: TC
+      subtype: K
+  - phys: AGENTMod8/ai5
+    alias: AGENTMod8_ai5
+    enabled: false
+    unit: C
+    sensor:
+      type: TC
+      subtype: K
+  - phys: AGENTMod8/ai6
+    alias: AGENTMod8_ai6
+    enabled: false
+    unit: C
+    sensor:
+      type: TC
+      subtype: K
+  - phys: AGENTMod8/ai7
+    alias: AGENTMod8_ai7
+    enabled: false
+    unit: C
+    sensor:
+      type: TC
+      subtype: K
+  - phys: AGENTMod8/ai8
+    alias: AGENTMod8_ai8
+    enabled: false
+    unit: C
+    sensor:
+      type: TC
+      subtype: K
+  - phys: AGENTMod8/ai9
+    alias: AGENTMod8_ai9
+    enabled: false
+    unit: C
+    sensor:
+      type: TC
+      subtype: K
+  - phys: AGENTMod8/ai10
+    alias: AGENTMod8_ai10
+    enabled: false
+    unit: C
+    sensor:
+      type: TC
+      subtype: K
+  - phys: AGENTMod8/ai11
+    alias: AGENTMod8_ai11
+    enabled: false
+    unit: C
+    sensor:
+      type: TC
+      subtype: K
+  - phys: AGENTMod8/ai12
+    alias: AGENTMod8_ai12
+    enabled: false
+    unit: C
+    sensor:
+      type: TC
+      subtype: K
+  - phys: AGENTMod8/ai13
+    alias: AGENTMod8_ai13
+    enabled: false
+    unit: C
+    sensor:
+      type: TC
+      subtype: K
+  - phys: AGENTMod8/ai14
+    alias: AGENTMod8_ai14
+    enabled: false
+    unit: C
+    sensor:
+      type: TC
+      subtype: K
+  - phys: AGENTMod8/ai15
+    alias: AGENTMod8_ai15
+    enabled: false
+    unit: C
+    sensor:
+      type: TC
+      subtype: K
+  - phys: MATRIXMod1/ai0
+    alias: qTP_MstTrbPre
+    enabled: true
+    unit: C
+    sensor:
+      type: TC
+      subtype: K
+  - phys: MATRIXMod1/ai1
+    alias: qTP_SlvTrbPre
+    enabled: true
+    unit: C
+    sensor:
+      type: TC
+      subtype: K
+  - phys: MATRIXMod1/ai2
+    alias: qTP_MstTrbPst
+    enabled: true
+    unit: C
+    sensor:
+      type: TC
+      subtype: K
+  - phys: MATRIXMod1/ai3
+    alias: qTP_SlvTrbPst
+    enabled: true
+    unit: C
+    sensor:
+      type: TC
+      subtype: K
+  - phys: MATRIXMod1/ai4
+    alias: MATRIXMod1_ai4
+    enabled: false
+    unit: C
+    sensor:
+      type: TC
+      subtype: K
+  - phys: MATRIXMod1/ai5
+    alias: MATRIXMod1_ai5
+    enabled: false
+    unit: C
+    sensor:
+      type: TC
+      subtype: K
+  - phys: MATRIXMod1/ai6
+    alias: qTP_BthPre
+    enabled: true
+    unit: C
+    sensor:
+      type: TC
+      subtype: K
+  - phys: MATRIXMod1/ai7
+    alias: qTP_BthPst
+    enabled: true
+    unit: C
+    sensor:
+      type: TC
+      subtype: K
+  - phys: MATRIXMod1/ai8
+    alias: qTP_BthOil
+    enabled: true
+    unit: C
+    sensor:
+      type: TC
+      subtype: K
+  - phys: MATRIXMod1/ai9
+    alias: qTP_BthMst
+    enabled: true
+    unit: C
+    sensor:
+      type: TC
+      subtype: K
+  - phys: MATRIXMod1/ai10
+    alias: qTP_BthSlv
+    enabled: true
+    unit: C
+    sensor:
+      type: TC
+      subtype: K
+  - phys: MATRIXMod1/ai11
+    alias: qTP_MstCmpPst
+    enabled: true
+    unit: C
+    sensor:
+      type: TC
+      subtype: K
+  - phys: MATRIXMod1/ai12
+    alias: qTP_SlvCmpPst
+    enabled: true
+    unit: C
+    sensor:
+      type: TC
+      subtype: K
+  - phys: MATRIXMod1/ai13
+    alias: qTP_Oil
+    enabled: true
+    unit: C
+    sensor:
+      type: TC
+      subtype: K
+  - phys: MATRIXMod1/ai14
+    alias: qTP_MstCacPre
+    enabled: true
+    unit: C
+    sensor:
+      type: TC
+      subtype: K
+  - phys: MATRIXMod1/ai15
+    alias: qTP_SlvCacPre
+    enabled: true
+    unit: C
+    sensor:
+      type: TC
+      subtype: K
+  - phys: MATRIXMod2/ai0
+    alias: qTP_SlvCacPst
+    enabled: true
     unit: C
     sensor:
       type: TC
@@ -336,36 +655,36 @@ channels:
       type: TC
       subtype: K
   - phys: MATRIXMod2/ai2
-    alias: MATRIXMod2_ai2
-    enabled: false
+    alias: qTP_MstCatPre
+    enabled: true
     unit: C
     sensor:
       type: TC
       subtype: K
   - phys: MATRIXMod2/ai3
-    alias: MATRIXMod2_ai3
-    enabled: false
+    alias: qTP_MstCatPst
+    enabled: true
     unit: C
     sensor:
       type: TC
       subtype: K
   - phys: MATRIXMod2/ai4
-    alias: MATRIXMod2_ai4
-    enabled: false
+    alias: qTP_SlvCatPre
+    enabled: true
     unit: C
     sensor:
       type: TC
       subtype: K
   - phys: MATRIXMod2/ai5
-    alias: MATRIXMod2_ai5
-    enabled: false
+    alias: qTP_SlvCatPst
+    enabled: true
     unit: C
     sensor:
       type: TC
       subtype: K
   - phys: MATRIXMod2/ai6
-    alias: MATRIXMod2_ai6
-    enabled: false
+    alias: qTP_Amb
+    enabled: true
     unit: C
     sensor:
       type: TC
@@ -399,8 +718,8 @@ channels:
       type: TC
       subtype: K
   - phys: MATRIXMod2/ai11
-    alias: MATRIXMod2_ai11
-    enabled: false
+    alias: qTP_BthAmb
+    enabled: true
     unit: C
     sensor:
       type: TC
@@ -428,118 +747,6 @@ channels:
       subtype: K
   - phys: MATRIXMod2/ai15
     alias: MATRIXMod2_ai15
-    enabled: false
-    unit: C
-    sensor:
-      type: TC
-      subtype: K
-  - phys: MATRIXMod1a/ai0
-    alias: qTP_CoolantIn
-    enabled: false
-    unit: C
-    sensor:
-      type: TC
-      subtype: K
-  - phys: MATRIXMod1a/ai1
-    alias: MATRIXMod1_ai1_TC
-    enabled: false
-    unit: C
-    sensor:
-      type: TC
-      subtype: K
-  - phys: MATRIXMod1a/ai2
-    alias: MATRIXMod1_ai2
-    enabled: false
-    unit: C
-    sensor:
-      type: TC
-      subtype: K
-  - phys: MATRIXMod1a/ai3
-    alias: MATRIXMod1_ai3
-    enabled: false
-    unit: C
-    sensor:
-      type: TC
-      subtype: K
-  - phys: MATRIXMod1a/ai4
-    alias: MATRIXMod1_ai4
-    enabled: false
-    unit: C
-    sensor:
-      type: TC
-      subtype: K
-  - phys: MATRIXMod1a/ai5
-    alias: MATRIXMod1_ai5
-    enabled: false
-    unit: C
-    sensor:
-      type: TC
-      subtype: K
-  - phys: MATRIXMod1a/ai6
-    alias: MATRIXMod1_ai6
-    enabled: false
-    unit: C
-    sensor:
-      type: TC
-      subtype: K
-  - phys: MATRIXMod1a/ai7
-    alias: MATRIXMod1_ai7
-    enabled: false
-    unit: C
-    sensor:
-      type: TC
-      subtype: K
-  - phys: MATRIXMod1a/ai8
-    alias: MATRIXMod1_ai8
-    enabled: false
-    unit: C
-    sensor:
-      type: TC
-      subtype: K
-  - phys: MATRIXMod1a/ai9
-    alias: MATRIXMod1_ai9
-    enabled: false
-    unit: C
-    sensor:
-      type: TC
-      subtype: K
-  - phys: MATRIXMod1a/ai10
-    alias: MATRIXMod1_ai10
-    enabled: false
-    unit: C
-    sensor:
-      type: TC
-      subtype: K
-  - phys: MATRIXMod1a/ai11
-    alias: MATRIXMod1_ai11
-    enabled: false
-    unit: C
-    sensor:
-      type: TC
-      subtype: K
-  - phys: MATRIXMod1a/ai12
-    alias: MATRIXMod1_ai12
-    enabled: false
-    unit: C
-    sensor:
-      type: TC
-      subtype: K
-  - phys: MATRIXMod1a/ai13
-    alias: MATRIXMod1_ai13
-    enabled: false
-    unit: C
-    sensor:
-      type: TC
-      subtype: K
-  - phys: MATRIXMod1a/ai14
-    alias: MATRIXMod1_ai14
-    enabled: false
-    unit: C
-    sensor:
-      type: TC
-      subtype: K
-  - phys: MATRIXMod1a/ai15
-    alias: MATRIXMod1_ai15
     enabled: false
     unit: C
     sensor:
@@ -607,18 +814,26 @@ channels:
     enabled: false
     initial: 0
   - phys: MATRIXMod6/port0/line15
-    alias: ''
-    enabled: false
+    alias: qDG_FacEspAct
+    enabled: true
     initial: 0
   do:
   - phys: MATRIXMod6/port1/line0
-    alias: ''
-    enabled: false
+    alias: mDG_FacSsdEspAct
+    enabled: true
     initial: 0
+    condition:
+      source: mDG_FacSsdEspAct
+      operator: '>'
+      threshold: 0.5
   - phys: MATRIXMod6/port1/line1
-    alias: ''
-    enabled: false
+    alias: eLoadSetMasterState
+    enabled: true
     initial: 0
+    condition:
+      source: eLoadSetMasterState
+      operator: '>='
+      threshold: 0.5
   - phys: MATRIXMod6/port1/line2
     alias: ''
     enabled: false
@@ -656,27 +871,47 @@ channels:
     enabled: false
     initial: 0
   - phys: MATRIXMod6/port1/line11
-    alias: ''
-    enabled: false
+    alias: mDG_GenEspAct
+    enabled: true
     initial: 0
+    condition:
+      source: mDG_GenEspAct
+      operator: '>'
+      threshold: 0.5
   - phys: MATRIXMod6/port1/line12
-    alias: ''
-    enabled: false
+    alias: iDG_EngRunStp
+    enabled: true
     initial: 0
+    condition:
+      source: iDG_EngRunStp
+      operator: '>'
+      threshold: 0.5
   - phys: MATRIXMod6/port1/line13
-    alias: ''
-    enabled: false
+    alias: iOT_AlmSftSdn
+    enabled: true
     initial: 0
+    condition:
+      source: iOT_AlmSftSdn
+      operator: <=
+      threshold: 0.0
   - phys: MATRIXMod6/port1/line14
-    alias: ''
-    enabled: false
+    alias: iOT_AlmAud
+    enabled: true
     initial: 0
+    condition:
+      source: iOT_AlmAud
+      operator: '>'
+      threshold: 0.0
   - phys: MATRIXMod6/port1/line15
-    alias: ''
-    enabled: false
+    alias: iOT_AlmEmgSdn
+    enabled: true
     initial: 0
+    condition:
+      source: iOT_AlmEmgSdn
+      operator: <=
+      threshold: 0.0
   ao:
-  - phys: MATRIXMod5/ao0
+  - phys: AGENTMod6/ao0
     alias: ''
     enabled: false
     scaling:
@@ -684,7 +919,7 @@ channels:
     range_v:
       min: 0.0
       max: 10.0
-  - phys: MATRIXMod5/ao1
+  - phys: AGENTMod6/ao1
     alias: ''
     enabled: false
     scaling:
@@ -692,7 +927,7 @@ channels:
     range_v:
       min: 0.0
       max: 10.0
-  - phys: MATRIXMod5/ao2
+  - phys: AGENTMod6/ao2
     alias: ''
     enabled: false
     scaling:
@@ -700,9 +935,9 @@ channels:
     range_v:
       min: 0.0
       max: 10.0
-  - phys: MATRIXMod5/ao3
-    alias: ''
-    enabled: false
+  - phys: AGENTMod6/ao3
+    alias: eLOUVER_CommandFinal
+    enabled: true
     scaling:
       unit: ''
     range_v:
@@ -727,18 +962,18 @@ watchdog:
   timeout_ms: 1000
 device_map:
   AGENT: cDAQ-9189
+  AGENTMod1: NI 9214
+  AGENTMod2: NI 9239
   AGENTMod3: NI 9239
   AGENTMod4: NI 9239
   AGENTMod5: NI 9239
-  AGENTMod7: NI 9216
-  AGENTMod8: NI 9217
-  AGENTMod1a: NI 9215
-  AGENTMod2test: NI 9239
+  AGENTMod6: NI 9263
+  AGENTMod7: NI 9217
+  AGENTMod8: NI 9214
   cDAQ1: cDAQ-9178
   MATRIX: cDAQ-9189
+  MATRIXMod1: NI 9214
   MATRIXMod2: NI 9214
   MATRIXMod3: NI 9239
   MATRIXMod4: NI 9239
-  MATRIXMod5: NI 9263
   MATRIXMod6: NI 9375
-  MATRIXMod1a: NI 9214

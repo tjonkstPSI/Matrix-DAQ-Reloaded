@@ -1,3 +1,29 @@
 enabled: true
-channels: []
+channels:
+- alias: mOT_EngSsd
+  expr: 1.0 if (softalarm == 1 and rpm == 0) else 0.0
+  symbols:
+    rpm: cSP_Eng
+    softalarm: iOT_AlmSftSdn
+  unit: bool
+  enabled: true
+- alias: mDG_GenEspAct
+  expr: 0 if (SoftShutdown == 1 or EstopStat == 1) else 1
+  symbols:
+    EstopStat: qDG_FacEspAct
+    SoftShutdown: mOT_EngSsd
+  unit: bool
+  enabled: true
+- alias: mDG_FacSsdEspAct
+  expr: 0 if (AlmEmgSdn == 1) else 1
+  symbols:
+    AlmEmgSdn: mOT_EngSsd
+  unit: bool
+  enabled: true
+- alias: eFuelLockoffStatus
+  expr: 0 if (Estop == 0) else 1
+  symbols:
+    Estop: qDG_FacEspAct
+  unit: bool
+  enabled: true
 recording_rate_hz: 50.0

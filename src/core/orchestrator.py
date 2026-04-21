@@ -30,10 +30,14 @@ from .recording import begin_recording, end_recording, kickoff_export, build_par
 
 
 _DEBUG_PREFIXES = ("CAN/", "CCP/", "Core/", "EngineTest/", "NI_DAQ/")
+_HEALTH_SUFFIXES = ("/health_ok", "/conn_ok")
 
 
 def _strip_debug_keys(d: dict) -> dict:
-    return {k: v for k, v in d.items() if not k.startswith(_DEBUG_PREFIXES)}
+    return {
+        k: v for k, v in d.items()
+        if not k.startswith(_DEBUG_PREFIXES) or k.endswith(_HEALTH_SUFFIXES)
+    }
 
 
 @dataclass
@@ -93,6 +97,8 @@ class Orchestrator:
         self._global_sim_mode = (global_data_mode == "sim")
         if self._global_sim_mode:
             print("[INFO] Offline mode active: all plugins will run in simulation mode")
+        else:
+            print("[INFO] Online mode: all plugins will run in real/hardware mode")
         # Load configs for each plugin and run basic validation
         all_ok = True
         ALWAYS_ON = {"Channel_Manager", "EngineTest"}
@@ -100,6 +106,8 @@ class Orchestrator:
             plugin.load_config()
             if self._global_sim_mode:
                 plugin.mode = "sim"
+            else:
+                plugin.mode = "real"
             enabled = True
             try:
                 if pid not in ALWAYS_ON:
@@ -395,11 +403,18 @@ class Orchestrator:
                         except Exception:
                             pass
                         self._alarm_tick_logged = True
-                    # Publish legacy-style overall alarm booleans.
+                    # Publish internal alarm/status booleans.
                     vals["iOT_Warning"] = 1.0 if bool(summary.get("any_warning", False)) else 0.0
                     vals["iOT_Alarm"] = 1.0 if bool(summary.get("any_shutdown", False)) else 0.0
+                    vals["iOT_AlmSftSdn"] = 1.0 if summary.get("any_soft_shutdown") else 0.0
+                    vals["iOT_AlmEmgSdn"] = 1.0 if summary.get("any_hard_shutdown") else 0.0
+                    vals["iDG_EngRunStp"] = 1.0 if summary.get("engine_running") else 0.0
                     units["iOT_Warning"] = ""
                     units["iOT_Alarm"] = ""
+                    units["iOT_AlmSftSdn"] = ""
+                    units["iOT_AlmEmgSdn"] = ""
+                    units["iDG_EngRunStp"] = ""
+                    self._evaluate_do_conditions(vals)
                     pub_vals = _strip_debug_keys(vals)
                     pub_units = _strip_debug_keys(units)
                     payload = json.dumps({
@@ -579,11 +594,18 @@ class Orchestrator:
                         except Exception:
                             pass
                         self._alarm_tick_logged = True
-                    # Publish legacy-style overall alarm booleans.
+                    # Publish internal alarm/status booleans.
                     vals["iOT_Warning"] = 1.0 if bool(summary.get("any_warning", False)) else 0.0
                     vals["iOT_Alarm"] = 1.0 if bool(summary.get("any_shutdown", False)) else 0.0
+                    vals["iOT_AlmSftSdn"] = 1.0 if summary.get("any_soft_shutdown") else 0.0
+                    vals["iOT_AlmEmgSdn"] = 1.0 if summary.get("any_hard_shutdown") else 0.0
+                    vals["iDG_EngRunStp"] = 1.0 if summary.get("engine_running") else 0.0
                     units["iOT_Warning"] = ""
                     units["iOT_Alarm"] = ""
+                    units["iOT_AlmSftSdn"] = ""
+                    units["iOT_AlmEmgSdn"] = ""
+                    units["iDG_EngRunStp"] = ""
+                    self._evaluate_do_conditions(vals)
                     pub_vals = _strip_debug_keys(vals)
                     pub_units = _strip_debug_keys(units)
                     payload = json.dumps({
@@ -657,6 +679,49 @@ class Orchestrator:
             getattr(nidaq, "write_do")(alias, state)
         except Exception:
             pass
+
+    _DO_OPS = {
+        ">": float.__gt__,
+        ">=": float.__ge__,
+        "<": float.__lt__,
+        "<=": float.__le__,
+        "==": float.__eq__,
+        "!=": float.__ne__,
+    }
+
+    def _evaluate_do_conditions(self, vals: Dict[str, Any]) -> None:
+        """Drive DO outputs based on expression conditions each tick."""
+        nidaq = self.plugins.get("NI_DAQ") if self._plugin_enabled.get("NI_DAQ") else None
+        if nidaq is None:
+            return
+        try:
+            conditions = nidaq.do_conditions()
+        except Exception:
+            return
+        for cond in conditions:
+            operator = cond.get("operator", "")
+            alias = cond.get("alias", "")
+            if not alias:
+                continue
+            try:
+                if operator == "TRUE":
+                    nidaq.write_do(alias, 1)
+                    continue
+                if operator == "FALSE":
+                    nidaq.write_do(alias, 0)
+                    continue
+                source = cond.get("source", "")
+                if source not in vals:
+                    continue
+                src_val = float(vals[source])
+                threshold = float(cond["threshold"])
+                op_fn = self._DO_OPS.get(operator)
+                if op_fn is None:
+                    continue
+                state = 1 if op_fn(src_val, threshold) else 0
+                nidaq.write_do(alias, state)
+            except Exception:
+                pass
 
     def _handle_ao_write(self, msg: Dict[str, Any]) -> None:
         alias = str(msg.get("alias", ""))
@@ -781,8 +846,7 @@ class Orchestrator:
                     pass
                 try:
                     plugin.load_config()
-                    if self._global_sim_mode:
-                        plugin.mode = "sim"
+                    plugin.mode = "sim" if self._global_sim_mode else "real"
                     if pid == "NI_DAQ":
                         plugin._core_tick_rate_hz = self.settings.recording_rate_hz
                     plugin.configure()
@@ -809,8 +873,7 @@ class Orchestrator:
             pass
         try:
             plugin.load_config()
-            if self._global_sim_mode:
-                plugin.mode = "sim"
+            plugin.mode = "sim" if self._global_sim_mode else "real"
             plugin.configure()
             status = plugin.validate()
             if getattr(status, "ok", True):
@@ -871,8 +934,7 @@ class Orchestrator:
                 return
             try:
                 p.load_config()
-                if self._global_sim_mode:
-                    p.mode = "sim"
+                p.mode = "sim" if self._global_sim_mode else "real"
             except Exception as e:
                 print(f"[WARN] Reload: failed to load config for {plugin_id}: {e}")
             try:

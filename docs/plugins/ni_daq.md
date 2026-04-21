@@ -176,6 +176,40 @@ device_map:
 
 This is written automatically on every save and regeneration. It enables the migration dialog to auto-suggest exact product-type matches even after the old hardware has been disconnected (when DAQmx can no longer report its product type directly).
 
+### DO Condition-Based Output Control
+
+Each digital output channel can optionally have a `condition` that drives it HIGH or LOW automatically based on a telemetry value, evaluated by the orchestrator every tick.
+
+**YAML format** (per DO entry):
+
+```yaml
+do:
+  - phys: MATRIXMod6/port1/line0
+    alias: mDG_FuelPump
+    enabled: true
+    initial: 0
+    condition:
+      source: "mDG_FuelPump"       # always the DO's own alias
+      operator: ">"                  # >, >=, <, <=, ==, !=, TRUE, FALSE
+      threshold: 0.5
+```
+
+If `condition` is absent or empty, the DO behaves as before (manual / initial only). The `source` field is always set to the DO's own alias (which also serves as its telemetry source channel). `TRUE` and `FALSE` operators force the output unconditionally without requiring a threshold.
+
+**Orchestrator evaluation**: after all plugin values are merged into the tick's `vals` dictionary (including calculated channels, alarms, internal booleans like `iOT_AlmSftSdn`, etc.), `_evaluate_do_conditions(vals)` iterates all parsed DO conditions from the NI DAQ plugin. For each condition where the `source` alias exists in `vals`, the comparison is evaluated, and `ni_daq.write_do(alias, state)` is called immediately. This runs at the core tick rate for real-time responsiveness. If the source alias is not present (plugin disabled, channel not streaming), the condition is silently skipped.
+
+**UI**: the Digital Output table in the NI DAQ config dialog has:
+- **Source Channel** column (col 2): the alias that drives this DO. Double-click opens a dedicated `DOSourcePickerDialog` populated from live telemetry and all enabled NI DAQ aliases.
+- **Condition** column (col 3): double-click opens the `DOConditionEditorDialog` popup with:
+  - Operator dropdown (`>`, `>=`, `<`, `<=`, `==`, `!=`, `TRUE`, `FALSE`)
+  - Threshold input (disabled for TRUE/FALSE)
+  - Live value display showing the current telemetry value of the source channel
+  - "Force HIGH" / "Force LOW" buttons for manual output testing (sends `do_write` ZMQ control)
+  - "Release" button to return control to the condition
+  - Condition preview label
+  - "Clear Condition" button
+- Condition column displays as `operator threshold` (e.g., `> 0.5`); the source alias is implicit (always matches the DO's alias).
+
 ### Health and Diagnostics
 - Internal health state tracks:
   - last good read time
@@ -187,8 +221,12 @@ This is written automatically on every save and regeneration. It enables the mig
   - `NI_DAQ/last_good_read_age_s`
   - `NI_DAQ/task_fast_alive`
 
+### Chassis-Grouped Task Creation
+
+CompactDAQ chassis share a single timing engine across all modules. `_nidaq_tasks.py` groups channels by **chassis** (not individual module) when creating DAQmx tasks. A helper `_chassis_from_device(device)` extracts the chassis name using the regex `^(.+?)Mod\d+$` (e.g., `AGENTMod4` -> `AGENT`, `cDAQ1Mod3` -> `cDAQ1`). This produces one consolidated AI task per chassis, avoiding the NI-DAQmx `-200022` resource conflict that occurs when separate tasks try to use different modules on the same chassis simultaneously. The grouping applies to all task types: fast AI voltage, temperature, DI, DO, and AO.
+
 ### Notes on Robustness
-- Per-device fast AI tasks isolate failures to one device path.
+- Per-chassis AI tasks consolidate all modules within a CompactDAQ chassis into a single timing domain.
 - Adaptive timeout and buffer sizing are used in real read path to reduce backlog/timeout issues.
 - Snapshot model prevents DAQ read timing from stalling core tick cadence (sample-and-hold at publish/record tick).
 - ZMQ PUB/SUB high-water marks are bounded (HWM=10) to limit memory use on laggy subscribers.

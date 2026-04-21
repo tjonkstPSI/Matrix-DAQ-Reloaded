@@ -212,3 +212,98 @@ def test_positive_infinity_triggers_shutdown_high():
     eng = AlarmEngine(cfg)
     per, _, _ = eng.evaluate({"P": float("inf")}, 1.0)
     assert per["P"] == "SHUT"
+
+
+def test_shutdown_type_hard_default():
+    cfg = {
+        "channels": [
+            {
+                "alias": "P",
+                "warning": {"high": 80.0},
+                "alarm": {"high": 100.0},
+            }
+        ],
+    }
+    eng = AlarmEngine(cfg)
+    _, summary, _ = eng.evaluate({"P": 110.0}, 1.0)
+    assert summary["any_hard_shutdown"] is True
+    assert summary["any_soft_shutdown"] is False
+
+
+def test_shutdown_type_soft_explicit():
+    cfg = {
+        "channels": [
+            {
+                "alias": "P",
+                "warning": {"high": 80.0},
+                "alarm": {"high": 100.0, "shutdown_type": "soft"},
+            }
+        ],
+    }
+    eng = AlarmEngine(cfg)
+    _, summary, _ = eng.evaluate({"P": 110.0}, 1.0)
+    assert summary["any_soft_shutdown"] is True
+    assert summary["any_hard_shutdown"] is False
+
+
+def test_shutdown_type_mixed_channels():
+    cfg = {
+        "channels": [
+            {
+                "alias": "P",
+                "warning": {"high": 80.0},
+                "alarm": {"high": 100.0, "shutdown_type": "hard"},
+            },
+            {
+                "alias": "T",
+                "warning": {"high": 200.0},
+                "alarm": {"high": 300.0, "shutdown_type": "soft"},
+            },
+        ],
+    }
+    eng = AlarmEngine(cfg)
+    _, summary, _ = eng.evaluate({"P": 110.0, "T": 310.0}, 1.0)
+    assert summary["any_hard_shutdown"] is True
+    assert summary["any_soft_shutdown"] is True
+
+
+def test_no_shutdown_type_flags_when_ok():
+    cfg = {
+        "channels": [
+            {
+                "alias": "P",
+                "warning": {"high": 80.0},
+                "alarm": {"high": 100.0, "shutdown_type": "soft"},
+            }
+        ],
+    }
+    eng = AlarmEngine(cfg)
+    _, summary, _ = eng.evaluate({"P": 50.0}, 1.0)
+    assert summary["any_soft_shutdown"] is False
+    assert summary["any_hard_shutdown"] is False
+
+
+def test_engine_running_exposed_in_summary():
+    cfg = {
+        "engine_running": {
+            "source_alias": "RPM",
+            "rpm_threshold": 500.0,
+        },
+        "channels": [],
+    }
+    eng = AlarmEngine(cfg)
+    _, summary_off, _ = eng.evaluate({"RPM": 100.0}, 1.0)
+    assert summary_off["engine_running"] is False
+
+    _, summary_on, _ = eng.evaluate({"RPM": 600.0}, 2.0)
+    assert summary_on["engine_running"] is True
+
+
+def test_engine_running_false_when_no_alias_configured():
+    cfg = {
+        "engine_running": {},
+        "channels": [],
+    }
+    eng = AlarmEngine(cfg)
+    _, summary, _ = eng.evaluate({}, 1.0)
+    assert summary["engine_running"] is False

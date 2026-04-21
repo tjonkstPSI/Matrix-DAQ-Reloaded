@@ -63,6 +63,7 @@ class OmegaPlugin(BasePlugin):
         self._snapshot_lock = threading.Lock()
         self._snapshot_values: Dict[str, Any] = {}
         self._poll_period_s: float = 1.0
+        self._conn_ok: bool = False
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -125,16 +126,24 @@ class OmegaPlugin(BasePlugin):
     # ------------------------------------------------------------------
 
     def aliases(self) -> Set[str]:
-        return {ch["alias"] for ch in self._active_channels}
+        out = {ch["alias"] for ch in self._active_channels}
+        out.add("Omega/conn_ok")
+        return out
 
     def units(self) -> Dict[str, str]:
-        return dict(self._unit_map)
+        m = dict(self._unit_map)
+        m["Omega/conn_ok"] = ""
+        return m
 
     def simulate_step(self) -> Dict[str, Any]:
         if self.mode == "real":
             with self._snapshot_lock:
-                return dict(self._snapshot_values)
-        return self._compute_sim_values()
+                vals = dict(self._snapshot_values)
+            vals["Omega/conn_ok"] = 1.0 if self._conn_ok else 0.0
+            return vals
+        vals = self._compute_sim_values()
+        vals["Omega/conn_ok"] = 1.0
+        return vals
 
     # ------------------------------------------------------------------
     # Modbus TCP (real mode)
@@ -142,6 +151,7 @@ class OmegaPlugin(BasePlugin):
 
     def _connect(self) -> bool:
         if ModbusTcpClient is None:
+            self._conn_ok = False
             return False
         conn = self.config.get("connection") or {}
         host = str(conn.get("host", "192.168.76.45")).strip()
@@ -152,10 +162,13 @@ class OmegaPlugin(BasePlugin):
             timeout_s = 2.0
         try:
             self._client = ModbusTcpClient(host=host, port=port, timeout=timeout_s)
-            return bool(self._client.connect())
+            ok = bool(self._client.connect())
+            self._conn_ok = ok
+            return ok
         except Exception as exc:
             print(f"[Omega] Modbus connect error: {exc}")
             self._client = None
+            self._conn_ok = False
             return False
 
     def _disconnect(self) -> None:
@@ -183,10 +196,12 @@ class OmegaPlugin(BasePlugin):
                 vals = self._read_channels(c)
                 with self._snapshot_lock:
                     self._snapshot_values = vals
+                self._conn_ok = True
                 if not logged_first:
                     print(f"[Omega] First poll OK: {len(vals)} channel(s)")
                     logged_first = True
             except Exception as exc:
+                self._conn_ok = False
                 print(f"[Omega] Poll error: {exc}")
 
             self._poll_stop.wait(self._poll_period_s)

@@ -29,6 +29,8 @@ except Exception:
 
 from .nidaq_alias_picker import AliasPickerDialog, validate_alias
 from .nidaq_scaling_editor import ScalingEditorDialog, TempUnitPickerDialog
+from .do_condition_editor import DOConditionEditorDialog
+from .do_source_picker import DOSourcePickerDialog
 
 try:
 	from src.plugins._nidaq_scaling import scaling_summary
@@ -46,6 +48,7 @@ class NiDaqConfigDialog(QDialog):
 
 	AI_COLS: List[str] = ["Enabled", "Hardware", "Alias", "Unit", "Measurement", "Scaling"]
 	DIG_COLS: List[str] = ["Enabled", "Hardware", "Alias"]
+	DO_COLS: List[str] = ["Enabled", "Hardware", "Source Channel", "Condition"]
 	AO_COLS: List[str] = ["Enabled", "Hardware", "Alias", "Unit"]
 
 	def __init__(self, parent=None) -> None:
@@ -92,7 +95,7 @@ class NiDaqConfigDialog(QDialog):
 		# Tables per type
 		self.tbl_ai = self._make_table(self.AI_COLS)
 		self.tbl_di = self._make_table(self.DIG_COLS)
-		self.tbl_do = self._make_table(self.DIG_COLS)
+		self.tbl_do = self._make_table(self.DO_COLS)
 		self.tbl_ao = self._make_table(self.AO_COLS)
 		self.tabs.addTab(self._wrap(self.tbl_ai), "Analog Input")
 		self.tabs.addTab(self._wrap(self.tbl_di), "Digital Input")
@@ -284,9 +287,12 @@ class NiDaqConfigDialog(QDialog):
 			cfg = do_cfg.get(phys, {})
 			enabled = bool(cfg.get("enabled", False))
 			alias = str(cfg.get("alias", "")) if enabled else ""
+			cond = cfg.get("condition") or {}
+			cond_str = self._condition_to_str(cond) if isinstance(cond, dict) and cond else ""
 			self._set_checkbox(self.tbl_do, row, 0, enabled)
 			self.tbl_do.setItem(row, 1, QTableWidgetItem(phys)); self.tbl_do.item(row, 1).setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
 			self.tbl_do.setItem(row, 2, QTableWidgetItem(alias))
+			self.tbl_do.setItem(row, 3, QTableWidgetItem(cond_str))
 		# AO
 		self.tbl_ao.setRowCount(len(self._inventory["ao"]))
 		for row, phys in enumerate(self._inventory["ao"]):
@@ -307,7 +313,12 @@ class NiDaqConfigDialog(QDialog):
 				self._open_scaling_editor(row)
 			elif col == 3:
 				pass
-		elif table in (self.tbl_di, self.tbl_do, self.tbl_ao):
+		elif table is self.tbl_do:
+			if col == 2:
+				self._open_do_source_picker(row)
+			elif col == 3:
+				self._open_do_condition_editor(row)
+		elif table in (self.tbl_di, self.tbl_ao):
 			if col == 2:
 				self._open_alias_picker(table, row, col)
 
@@ -345,11 +356,124 @@ class NiDaqConfigDialog(QDialog):
 				scale_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
 				self.tbl_ai.setItem(row, 5, scale_item)
 
+	def _open_do_source_picker(self, row: int) -> None:
+		current = self.tbl_do.item(row, 2).text().strip() if self.tbl_do.item(row, 2) else ""
+		extra = self._gather_config_aliases()
+		dlg = DOSourcePickerDialog(
+			parent=self,
+			current_source=current,
+			telemetry_getter=self._telemetry_getter,
+			extra_aliases=extra,
+		)
+		if dlg.exec() == QDialog.Accepted and dlg.selected_source:
+			self.tbl_do.setItem(row, 2, QTableWidgetItem(dlg.selected_source))
+			cond_item = self.tbl_do.item(row, 3)
+			if cond_item:
+				cond = self._parse_condition_str(cond_item.text().strip())
+				if cond:
+					cond["source"] = dlg.selected_source
+					cond_item.setText(self._condition_to_str(cond))
+
+	def _gather_config_aliases(self) -> list[str]:
+		"""Collect enabled aliases from all channel tables (AI, DI, AO) for the source list."""
+		aliases: list[str] = []
+		for tbl, alias_col in [(self.tbl_ai, 2), (self.tbl_di, 2), (self.tbl_ao, 2)]:
+			for r in range(tbl.rowCount()):
+				chk = tbl.item(r, 0)
+				if chk and chk.checkState() == Qt.Checked:
+					item = tbl.item(r, alias_col)
+					if item and item.text().strip():
+						aliases.append(item.text().strip())
+		return aliases
+
+	def _open_do_condition_editor(self, row: int) -> None:
+		do_alias = self.tbl_do.item(row, 2).text().strip() if self.tbl_do.item(row, 2) else ""
+		cond_item = self.tbl_do.item(row, 3)
+		cond_text = cond_item.text().strip() if cond_item else ""
+		current_cond = self._parse_condition_str(cond_text) if cond_text else None
+
+		ctrl_push = None
+		try:
+			from src.core.ipc.bus import create_ui_control_push
+			sock = create_ui_control_push()
+			if sock:
+				ctrl_push = sock["control_push"]
+		except Exception:
+			pass
+
+		dlg = DOConditionEditorDialog(
+			parent=self,
+			do_alias=do_alias,
+			current_condition=current_cond,
+			telemetry_getter=self._telemetry_getter,
+			control_sender=ctrl_push,
+		)
+		if dlg.exec() == QDialog.Accepted:
+			cond = dlg.result_condition
+			if cond:
+				display = self._condition_to_str(cond)
+			else:
+				display = ""
+			if cond_item is None:
+				cond_item = QTableWidgetItem("")
+				self.tbl_do.setItem(row, 3, cond_item)
+			cond_item.setText(display)
+
 	def _set_checkbox(self, table: QTableWidget, row: int, col: int, checked: bool) -> None:
 		item = QTableWidgetItem()
 		item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
 		item.setCheckState(Qt.Checked if checked else Qt.Unchecked)
 		table.setItem(row, col, item)
+
+	_VALID_OPS = {">", ">=", "<", "<=", "==", "!=", "TRUE", "FALSE"}
+
+	@staticmethod
+	def _condition_to_str(cond: Dict[str, Any]) -> str:
+		"""Format condition dict to display string, e.g. '> 0.5'."""
+		operator = str(cond.get("operator", "")).strip()
+		if operator == "TRUE":
+			return "TRUE"
+		if operator == "FALSE":
+			return "FALSE"
+		threshold = cond.get("threshold", "")
+		if operator:
+			return f"{operator} {threshold}"
+		return ""
+
+	def _parse_condition_str(self, text: str) -> Dict[str, Any] | None:
+		"""Parse 'op number' or 'TRUE'/'FALSE' into a condition dict.
+
+		Also accepts legacy 'alias op number' format for backward compatibility.
+		"""
+		import re
+		text = text.strip()
+		if not text:
+			return None
+		if text.upper() == "TRUE":
+			return {"source": "", "operator": "TRUE", "threshold": 0.0}
+		if text.upper() == "FALSE":
+			return {"source": "", "operator": "FALSE", "threshold": 0.0}
+		m = re.match(r'^(>=|<=|!=|==|>|<)\s+(.+)$', text)
+		if m:
+			operator = m.group(1)
+			try:
+				threshold = float(m.group(2))
+			except ValueError:
+				return None
+			if operator not in self._VALID_OPS:
+				return None
+			return {"source": "", "operator": operator, "threshold": threshold}
+		m = re.match(r'^(\S+)\s+(>=|<=|!=|==|>|<)\s+(.+)$', text)
+		if m:
+			operator = m.group(2)
+			try:
+				threshold = float(m.group(3))
+			except ValueError:
+				return None
+			if operator not in self._VALID_OPS:
+				return None
+			return {"source": m.group(1), "operator": operator, "threshold": threshold}
+		return None
 
 	def _read_yaml(self, path: Path) -> Dict[str, Any]:
 		try:
@@ -465,6 +589,8 @@ class NiDaqConfigDialog(QDialog):
 					oc = old_map.get(phys)
 					if oc:
 						c.update({"alias": oc.get("alias", c.get("alias")), "enabled": oc.get("enabled", c.get("enabled"))})
+						if oc.get("condition"):
+							c["condition"] = oc["condition"]
 					res.append(c)
 				return res
 			new_ch["di"] = _merge_simple(new_ch.get("di"), old_di)
@@ -515,6 +641,22 @@ class NiDaqConfigDialog(QDialog):
 				f"The following aliases do not match the naming convention:\n{chr(10).join(invalid[:10])}{'...' if len(invalid)>10 else ''}"
 			)
 			return
+		# Validate DO condition strings
+		bad_conds: List[str] = []
+		for r in range(self.tbl_do.rowCount()):
+			cond_item = self.tbl_do.item(r, 3)
+			cond_text = (cond_item.text().strip() if cond_item else "")
+			if cond_text and self._parse_condition_str(cond_text) is None:
+				phys = self.tbl_do.item(r, 1).text().strip() if self.tbl_do.item(r, 1) else f"row {r}"
+				bad_conds.append(f"{phys}: {cond_text}")
+		if bad_conds:
+			QMessageBox.warning(
+				self, "Invalid DO Condition",
+				"The following DO condition(s) could not be parsed.\n"
+				"Format: alias > 0.5  (supported ops: > >= < <= == !=)\n\n"
+				+ "\n".join(bad_conds[:10])
+			)
+			return
 		# Build updated blocks to merge back into existing YAML (preserve unknown/top-level keys)
 		updated: Dict[str, Any] = {}
 		# Mode (preserve existing)
@@ -556,8 +698,17 @@ class NiDaqConfigDialog(QDialog):
 				chs["ai_voltage"].append(item)
 		for phys, alias, en, _, _ in di_rows:
 			chs["di"].append({"phys": phys, "alias": alias, "enabled": en, "initial": 0})
-		for phys, alias, en, _, _ in do_rows:
-			chs["do"].append({"phys": phys, "alias": alias, "enabled": en, "initial": 0})
+		for do_row_idx, (phys, alias, en, _, _) in enumerate(do_rows):
+			entry: Dict[str, Any] = {"phys": phys, "alias": alias, "enabled": en, "initial": 0}
+			cond_item = self.tbl_do.item(do_row_idx, 3)
+			cond_text = cond_item.text().strip() if cond_item else ""
+			if cond_text:
+				parsed = self._parse_condition_str(cond_text)
+				if parsed:
+					if parsed.get("operator") not in ("TRUE", "FALSE"):
+						parsed["source"] = alias
+					entry["condition"] = parsed
+			chs["do"].append(entry)
 		for phys, alias, en, unit, _ in ao_rows:
 			chs["ao"].append({"phys": phys, "alias": alias, "enabled": en, "scaling": {"unit": unit}, "range_v": {"min": 0.0, "max": 10.0}})
 		updated["channels"] = chs

@@ -1,4 +1,4 @@
-<!-- Author: T. Onkst | Date: 03092026 -->
+<!-- Author: T. Onkst | Date: 04202026 -->
 
 ## Omega Weather Station Plugin Specification
 
@@ -41,7 +41,12 @@ Blank or missing alias entries fall back to the defaults in the `CHANNEL_MAP` co
 - **Channels table**: columns ID / Unit / Alias. The Alias cell is editable; double-clicking opens the shared `AliasPickerDialog` (standard channels from JSON + custom entry with regex validation).
 - Blank aliases on save trigger a warning. Poll rate and timeout remain in YAML for super-users.
 
+### Outputs
+- Data channels: all three channel aliases
+- Health channel: `Omega/conn_ok` (bool as 1.0/0.0) — True when Modbus connection is active. Console tile uses this for Green/Red/Disconnected status.
+
 ### Runtime
 - Threaded poll loop reads all three registers in one `read_holding_registers(0, 6)` call, decodes float32 big-endian, applies NaN sentinel handling, and publishes to the orchestrator on each tick via cached latest values.
 - Automatic reconnect on socket/Modbus errors.
 - Sim mode generates sine-wave values per channel (independent phase and amplitude per measurement).
+- Mode is enforced by the orchestrator's global `data_mode` setting (overrides YAML `mode` field).

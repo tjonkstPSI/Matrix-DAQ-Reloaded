@@ -1,49 +1,56 @@
-<!-- Author: T. Onkst | Date: 03092026 -->
+<!-- Author: T. Onkst | Date: 04202026 -->
 
 ## Modbus Plugin Specification
 
 ### Purpose
-Provide configurable Modbus channel mapping with a multi-device UI model (TCP/IP and RS485 setup per device), while runtime currently serves snapshot-based simulated values and preserves config compatibility for future real Modbus I/O.
+Provide configurable Modbus channel mapping with a multi-device UI model (TCP/IP and RS485 setup per device), with real Modbus TCP transport for reading holding/input registers and snapshot-based simulated values for offline development.
 
 ### Current Implementation Status
 - Implemented now:
+  - **Real Modbus TCP transport**: `_ServerConnection` class manages per-server `ModbusTcpClient` connections with configurable host, port, unit_id, timeout, and retries. `_read_all_servers()` polls all configured servers, `_decode_registers()` converts raw register data to float/int values based on type and byte/word order.
   - Modbus Configure dialog with tabbed multi-device editor
   - Per-device connection settings and channel table
-  - YAML persistence to `devices[*]` model
+  - YAML persistence to `devices[*]` model with `servers` block for real transport
   - Legacy compatibility projection to top-level `reads`, `servers`, `serial_devices`, `connection`
-  - Snapshot-buffer runtime (`simulate_step` returns cached values)
+  - Snapshot-buffer runtime (sim and real modes)
   - Runtime read resolution priority:
     1) `devices[*].reads[*]`
     2) fallback `reads[*]`
+  - Connection health channel: `Modbus/conn_ok`
+  - Double-click Alias column opens standard alias picker
+  - Global sim/real mode controlled by launch dialog Offline Mode checkbox
 - Not implemented yet:
-  - Real Modbus comms polling path (TCP/RTU read/write transport)
+  - RS485/RTU transport (TCP only)
   - Real write execution/audit flow
 
-### Runtime Model (Current)
+### Runtime Model
 - Worker thread updates `_snapshot_values` at ~`1 / recording_rate_hz`.
-- In current code path, values are simulated from configured read aliases:
-  - `Room Temp` and `Humidity` get dynamic demo values
-  - Other aliases default to `0.0`
+- In **real** mode: `start()` connects to all configured servers; `_snapshot_loop()` calls `_read_all_servers()` which polls each server, decodes registers, applies gain/offset scaling, and updates `_conn_ok` based on connection success. `stop()` disconnects all server connections.
+- In **sim** mode: all read aliases get phase-shifted sine waveforms; `_conn_ok` is always True.
 - Core reads snapshots non-blocking.
 - Core tick/log cadence is controlled by Channel Manager; Modbus worker cadence remains plugin-local.
+- Mode is enforced by the orchestrator's global `data_mode` setting (overrides YAML `mode` field).
 
-### Configuration (Current)
+### Configuration
 File: `configs/modbus.yaml`
 
 ```yaml
 enabled: true
-mode: sim
+mode: real
 recording_rate_hz: 10
+servers:
+  - host: 192.168.10.1
+    port: 502
+    unit_id: 1
+    timeout: 2.0
+    retries: 2
 devices:
   - name: ComApp
     connection:
-      interface_type: TCP/IP      # TCP/IP | RS485
+      interface_type: TCP/IP
       ip_address: 192.168.10.1
       network_port: 502
-      com_port: COM1
       unit_id: 1
-      baud_rate: 115200
-      serial_type: RTU            # RTU | ASCII
       word_order: big             # big | little
     reads:
       - alias: Room Temp
@@ -58,7 +65,7 @@ devices:
 Compatibility keys may also be present:
 - `reads`, `servers`, `serial_devices`, `connection`
 
-### UI Flow (Current)
+### UI Flow
 - Right-click Modbus tile → Configure:
   - Add/remove device tabs
   - Set per-device connection:
@@ -66,7 +73,9 @@ Compatibility keys may also be present:
     - RS485: COM port, unit id, baud, serial type
     - word order (big/little)
   - Edit channel table columns:
-    - Channel Name, Unit, Type, Address, Length, Data Type, Gain, Offset, Value
+    - Alias, Unit, Type, Address, Length, Data Type, Gain, Offset, Value
+  - Double-click the Alias column to open the standard alias picker
+  - Alias validation on save (standard naming convention enforced)
   - Test button:
     - saves + reloads plugin
     - fills Value column from live telemetry stream
@@ -87,9 +96,12 @@ Compatibility keys may also be present:
   - Signed -> `int16`/`int32`
   - Float -> `float32`/`float64`
 
-### Deferred / Next Real-Mode Work
-- Implement TCP/RS485 transport clients and polling scheduler
-- Map per-device connection settings into real readers
+### Outputs
+- Data channels: all enabled read aliases
+- Health channel: `Modbus/conn_ok` (bool as 1.0/0.0) — True when at least one server connection is active. Console tile uses this for Green/Red/Disconnected status.
+
+### Deferred / Next Work
+- Implement RS485/RTU transport
 - Implement true write path + safeguards + audit logs
 
 

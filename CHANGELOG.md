@@ -6,6 +6,40 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased] - 03/09/2026
 
+### iOT internal channels, shutdown types, and onsite hardening — 04/20/2026
+#### Added
+- **iOT shutdown-type differentiation**: per-channel `shutdown_type` (hard/soft) field in the alarm system. `AlarmEngine.evaluate()` now returns `any_soft_shutdown`, `any_hard_shutdown`, and `engine_running` in its summary dict alongside the existing `any_warning`/`any_shutdown`/`any_shutdown_request` flags.
+- **Internal boolean channels fully wired**: orchestrator now injects `iOT_AlmSftSdn` (soft shutdown active), `iOT_AlmEmgSdn` (hard/emergency shutdown active), and `iDG_EngRunStp` (engine running) into telemetry every tick. These are derived from the alarm engine summary and are available to DO condition evaluation, so their mapped relay pins in `ni_daq.yaml` now fire correctly.
+- **Channel Manager "Shutdown Type" column**: new Hard/Soft dropdown in the alarm table UI between "Alarm Action" and "Enabling Cond". Persisted as `shutdown_type` in each channel's `alarm` block in `channel_manager.yaml`. Defaults to "Hard" for backward compatibility.
+- **Alarm engine tests**: 6 new test cases covering hard/soft shutdown type differentiation, mixed-channel scenarios, and `engine_running` summary exposure.
+- **DO condition editor dialog** (`do_condition_editor.py`): popup on double-click of DO Condition column with operator picker, threshold input, live value display, manual Force HIGH/LOW/Release buttons, and condition preview. TRUE/FALSE operators disable the threshold field.
+- **DO source picker dialog** (`do_source_picker.py`): dedicated picker for DO source channel (col 2) populated from live telemetry and all enabled NI DAQ aliases, replacing the generic alias picker for DOs.
+- **NI DAQ chassis-grouped tasks**: `_nidaq_tasks.py` now groups AI channels by chassis rather than individual module, creating one consolidated DAQmx task per chassis. Resolves CompactDAQ `-200022` resource conflict when multiple modules share a chassis timing engine.
+- **Plugin health indicators**: all Modbus-type plugins (Modbus, Vaisala, Omega) and CAN now publish `*/conn_ok` boolean channels. Console tiles show Green (OK), Red/Error (`health_ok=False`), or Red/Disconnected (`conn_ok=False`).
+- **Modbus real transport**: full Modbus TCP client implementation in `modbus.py` with `_ServerConnection` management, `_decode_registers()` for float/int conversion with byte/word order support, multi-server polling, and scaling. Plugin now branches correctly between `real` and `sim` modes.
+- **Global data_mode enforcement**: orchestrator explicitly sets `plugin.mode = "sim" if global_sim else "real"` across all plugin loading/reloading/sync paths, overriding individual YAML `mode` fields. Per-plugin mode dropdowns removed from Omega, Vaisala, and CAN config dialogs.
+#### Fixed
+- **NI DAQ duplicate alias validation**: `validate()` now only checks aliases of *enabled* channels for duplicates, preventing false failures from disabled channels sharing an alias.
+- **NI DAQ resource conflict** (`-200022`): fixed by grouping AI channels per chassis instead of per module in `_nidaq_tasks.py`.
+- **Vaisala/Modbus sim-despite-real**: plugins ignored the global `data_mode` and used their YAML `mode` field. Fixed by orchestrator enforcement and correcting individual YAML files.
+- **Debug channel stripping**: `_strip_debug_keys()` updated to preserve `*/health_ok` and `*/conn_ok` channels so console can display plugin connection status.
+#### Changed
+- DO condition format simplified: source channel is always the DO's own alias (no separate source picker needed in the condition dialog). Condition column shows only `operator threshold` (e.g., `> 0.5`), not `alias operator threshold`.
+- NI DAQ config dialog DO table: "Alias" column renamed to "Source Channel" for clarity.
+- All Channels Table filters out `*/health_ok` and `*/conn_ok` from display.
+
+### Pre-onsite fixes: Modbus, CAN multi-bus, DO conditions — 04/20/2026
+#### Added
+- **Multi-bus CAN support**: `can.yaml` schema updated to `buses[*]` with per-bus `channel`, `baudrate`, `bustype`, `dbc_path`, and `signals`. Legacy single-bus config (`session` + top-level `signals` + `dbc_path`) auto-migrates to `buses[0]`. CAN plugin (`can.py`) opens one `python-can` bus per entry, loads one DBC per bus, and drains frames from all buses in the snapshot loop. Config dialog (`can_config.py`) refactored to a tabbed per-bus layout with Add Bus / Remove Bus controls, each tab containing channel, baudrate, DBC path, signal filter, and signal table with alias picker.
+- **NI DAQ DO condition column**: each DO channel in `ni_daq.yaml` can now have an optional `condition` dict (`source`, `operator`, `threshold`). The orchestrator evaluates all DO conditions each tick after all plugin values are merged, calling `ni_daq.write_do(alias, state)` for real-time output control. Condition format in the UI: `xCalc_FuelPumpCmd > 0.5`. Supported operators: `>`, `>=`, `<`, `<=`, `==`, `!=`. The NI DAQ config dialog now shows a Condition column in the Digital Output table with validation on save.
+- **Modbus alias picker**: double-click the Alias column in the Modbus config dialog opens `AliasPickerDialog` for standard channel selection. Column header renamed from "Channel Name" to "Alias" for consistency. Alias validation added on save.
+- **Modbus diagnostic print**: `[INFO] Modbus: N read channel(s) resolved` now printed during `configure()` for troubleshooting.
+#### Fixed
+- **Modbus channels not appearing in All Channels Table**: root cause was `enabled: false` at the top of `modbus.yaml`, which caused the orchestrator to skip initialization via `config_enabled = bool(plugin.config.get("enabled", True))`. Fixed by setting `enabled: true`; improved sim values to generate phase-shifted waveforms for all aliases.
+#### Changed
+- CAN plugin sim mode generates per-alias waveforms based on alias name patterns (RPM, pressure, temperature).
+- Modbus sim mode updated from hardcoded Room Temp/Humidity to per-alias phase-shifted sine waveforms.
+
 ### Restore Displays button — 04/17/2026
 #### Added
 - **Restore Displays** button in the console Controls box. Clicking it re-reads `selected_displays` from `plugins.yaml`, checks which display windows are still alive (`isVisible()` / C++ object check), recreates any that were closed, and brings already-open windows to front. Messages pane confirms what was restored or that everything was already open.

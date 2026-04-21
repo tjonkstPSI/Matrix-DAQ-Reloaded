@@ -731,31 +731,18 @@ class ConsoleWindow(QMainWindow):
         label = "Start Recording" if self._locked and not rec else ("Stop Recording" if self._locked and rec else "Lock Test")
         if self.btn_primary.text() != label:
             self.btn_primary.setText(label)
-        # Update plugin tiles with health/config policy
+        # Update plugin tiles with health/connection status
         for pid, tile in self._tiles.items():
             if not connected:
                 self._set_tile(tile, "#888888", "Unknown")
                 continue
-            if pid == "NI_DAQ":
-                health_ok = None
-                try:
-                    vals = self._last_payload.get("values") or {}
-                    if isinstance(vals, dict):
-                        v = vals.get("NI_DAQ/health_ok")
-                        if v is not None:
-                            health_ok = bool(int(v))
-                except Exception:
-                    health_ok = None
-                if health_ok is True:
-                    self._set_tile(tile, "#27ae60", "")
-                elif health_ok is False:
-                    self._set_tile(tile, "#c0392b", "Error")
-                else:
-                    # Fallback to config validity
-                    if self._plugin_config_ok(pid):
-                        self._set_tile(tile, "#27ae60", "")
-                    else:
-                        self._set_tile(tile, "#c0392b", "Invalid config")
+            health_status = self._check_plugin_health(pid)
+            if health_status == "ok":
+                self._set_tile(tile, "#27ae60", "")
+            elif health_status == "error":
+                self._set_tile(tile, "#c0392b", "Error")
+            elif health_status == "disconnected":
+                self._set_tile(tile, "#c0392b", "Disconnected")
             else:
                 if self._plugin_config_ok(pid):
                     self._set_tile(tile, "#27ae60", "")
@@ -983,6 +970,27 @@ class ConsoleWindow(QMainWindow):
             pass
 
     # Helpers
+    def _check_plugin_health(self, pid: str) -> str | None:
+        """Check plugin health/connection from telemetry values.
+
+        Returns 'ok', 'error', 'disconnected', or None (no health data available).
+        """
+        try:
+            vals = self._last_payload.get("values") or {}
+            if not isinstance(vals, dict):
+                return None
+            health_key = f"{pid}/health_ok"
+            conn_key = f"{pid}/conn_ok"
+            v_health = vals.get(health_key)
+            v_conn = vals.get(conn_key)
+            if v_health is not None:
+                return "ok" if bool(int(v_health)) else "error"
+            if v_conn is not None:
+                return "ok" if bool(int(v_conn)) else "disconnected"
+        except Exception:
+            pass
+        return None
+
     def _plugin_config_ok(self, plugin_id: str) -> bool:
         cfg_map = {
             "NI_DAQ": "ni_daq.yaml",

@@ -7,7 +7,7 @@ Stream, visualize, and record engine test data from NI cDAQ, CAN/CCP, and Modbus
 ## Overview
 - Desktop application for Windows 10/11
 - Python 3.x with PySide6 UI
-- Modular plugin architecture (NI DAQ, CAN, CCP, Calculated Channels, Cycle, LoadBank, Modbus, Statistics, Vaisala, EngineTest, Channel Manager)
+- Modular plugin architecture (NI DAQ, CAN, CCP, Calculated Channels, Cycle, LoadBank, Modbus, Statistics, Vaisala, Omega, EngineTest, Channel Manager)
 - Live visualization at up to 20 Hz; recording up to 100 Hz (per run)
 - Crash-safe, append-only chunked writes with < 1 s worst-case data loss
 - Segmentation by time (default 4 h, configurable) or size; suffix “_1, _2, …” only when segmentation occurs
@@ -82,8 +82,15 @@ Stream, visualize, and record engine test data from NI cDAQ, CAN/CCP, and Modbus
 - Tiered per-channel warning/alarm model with per-limit debounce/latch timing
 - Tier 1 (warning): UI yellow + log
 - Tier 2 (alarm): UI red + log, optional `Visible Alert + Shutdown` action
+- Per-channel **Shutdown Type** (Hard/Soft) determines which internal shutdown boolean is raised
 - Enabling conditions: Always Enabled, Engine Running, Engine Run time, Test Time
-- Aggregate booleans published as channels: `iOT_Warning`, `iOT_Alarm`
+- Internal boolean channels published each tick:
+  - `iOT_Warning` — any warning active
+  - `iOT_Alarm` — any shutdown active
+  - `iOT_AlmSftSdn` — soft shutdown active (mapped to DO relay for graceful shutdown)
+  - `iOT_AlmEmgSdn` — hard/emergency shutdown active (mapped to DO relay for immediate estop)
+  - `iDG_EngRunStp` — engine running (RPM > threshold, mapped to DO relay)
+- Plugin health indicators: console tiles show Green/Red/Disconnected based on `*/health_ok` or `*/conn_ok` telemetry channels
 
 ## Prerequisites
 - NI-DAQmx and NI-XNET drivers (Windows)
@@ -101,8 +108,10 @@ Stream, visualize, and record engine test data from NI cDAQ, CAN/CCP, and Modbus
 - Internal PSI use; comply with driver and dependency licenses
 
 ## Status
-The repository contains a working Core/UI implementation with plugin-based telemetry, recording/export pipeline (orchestrator plus `recording.py`), CCP real-mode polling with access-key unlock/diagnostics (including placeholder dual-ECM config model), CAN DBC-driven runtime decoding, and snapshot-buffered acquisition across core plugins. NI DAQ and CCP are split into focused helper modules under `src/plugins/`; Channel Manager and Engine Test ship as dedicated plugin files rather than orchestrator stubs.
+The repository contains a working Core/UI implementation with plugin-based telemetry, recording/export pipeline (orchestrator plus `recording.py`), CCP real-mode polling with access-key unlock/diagnostics (including placeholder dual-ECM config model), CAN multi-bus DBC-driven runtime decoding, and snapshot-buffered acquisition across core plugins. NI DAQ and CCP are split into focused helper modules under `src/plugins/`; Channel Manager and Engine Test ship as dedicated plugin files rather than orchestrator stubs.
 
-All plugins now have right-click Configure dialogs wired: NI_DAQ, CCP, CAN, Modbus, LoadBank, Calculated_Channels, Channel_Manager, Statistics, Vaisala, Cycle. The Cycle config includes an embedded QtCharts staircase plot preview. A dockable LoadBank operator control panel provides runtime setpoint, fan, E-Stop, and live readback. UI refresh is tightened to 50 ms (20 Hz) with 20 ms ZMQ polling for near-real-time responsiveness. Pytest unit tests cover the alarm engine, BCD encoding, calculated expressions, and CCP protocol.
+All plugins now have right-click Configure dialogs wired: NI_DAQ, CCP, CAN, Modbus, LoadBank, Calculated_Channels, Channel_Manager, Statistics, Vaisala, Omega, Cycle. The Cycle config includes an embedded QtCharts staircase plot preview. A dockable LoadBank operator control panel provides runtime setpoint, fan, E-Stop, and live readback. UI refresh is tightened to 50 ms (20 Hz) with 20 ms ZMQ polling for near-real-time responsiveness.
+
+Modbus plugin has full TCP transport (real-mode read path). Vaisala and Omega plugins operate via Modbus TCP with auto-reconnect. All hardware plugins publish connection health channels (`*/conn_ok`) displayed as Green/Red/Disconnected on console tiles. NI DAQ supports chassis-grouped task creation, DO condition-based output control with a popup editor, and hardware migration for chassis/card swaps. The alarm system supports per-channel shutdown type (hard/soft) with internal boolean channels (`iOT_AlmSftSdn`, `iOT_AlmEmgSdn`, `iDG_EngRunStp`) driving mapped DO relays. Global offline mode enforced by orchestrator overrides all plugin modes. Pytest unit tests cover the alarm engine (including shutdown types), BCD encoding, calculated expressions, and CCP protocol.
 
 

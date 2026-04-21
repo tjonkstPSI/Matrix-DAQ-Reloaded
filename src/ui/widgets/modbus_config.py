@@ -26,9 +26,12 @@ try:
 except Exception:
     raise
 
+from .nidaq_alias_picker import AliasPickerDialog
+from .standard_channels import validate_alias
+
 
 _COLS = [
-    "Channel Name",
+    "Alias",
     "Unit",
     "Type",
     "Address",
@@ -110,6 +113,7 @@ class ModbusConfigDialog(QDialog):
         self.table.setHorizontalHeaderLabels(_COLS)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setAlternatingRowColors(True)
+        self.table.cellDoubleClicked.connect(self._on_cell_dblclick)  # type: ignore
         root.addWidget(self.table)
 
         row_btns = QHBoxLayout()
@@ -329,7 +333,7 @@ class ModbusConfigDialog(QDialog):
             length = str(read.get("length", 1))
         sc = read.get("scaling") or {}
         return {
-            "Channel Name": str(read.get("alias", "")),
+            "Alias": str(read.get("alias", "")),
             "Unit": str(sc.get("unit", "")),
             "Type": typ,
             "Address": str(read.get("address", 0)),
@@ -340,9 +344,26 @@ class ModbusConfigDialog(QDialog):
             "Value": "",
         }
 
+    def _on_cell_dblclick(self, row: int, col: int) -> None:
+        if col != 0:
+            return
+        current = ""
+        item = self.table.item(row, 0)
+        if item is not None:
+            current = item.text().strip()
+        try:
+            dlg = AliasPickerDialog(parent=self, current_alias=current)
+            if dlg.exec() == QDialog.Accepted and dlg.selected_alias:
+                if item is None:
+                    item = QTableWidgetItem("")
+                    self.table.setItem(row, 0, item)
+                item.setText(dlg.selected_alias)
+        except Exception as exc:
+            QMessageBox.warning(self, "Alias Picker", f"Could not open alias picker: {exc}")
+
     def _add_row(self, values: Optional[Dict[str, str]] = None) -> None:
         values = values or {
-            "Channel Name": "",
+            "Alias": "",
             "Unit": "",
             "Type": "Holding Register",
             "Address": "0",
@@ -355,7 +376,7 @@ class ModbusConfigDialog(QDialog):
         r = self.table.rowCount()
         self.table.insertRow(r)
 
-        self.table.setItem(r, 0, QTableWidgetItem(values["Channel Name"]))
+        self.table.setItem(r, 0, QTableWidgetItem(values.get("Alias") or values.get("Channel Name", "")))
         self.table.setItem(r, 1, QTableWidgetItem(values["Unit"]))
 
         cmb_type = QComboBox(self.table)
@@ -506,6 +527,19 @@ class ModbusConfigDialog(QDialog):
             return False
         if str(doc.get("connection", {}).get("interface_type")) == "TCP/IP" and not str(doc.get("connection", {}).get("ip_address", "")).strip():
             QMessageBox.warning(self, "Missing IP", "IP Address is required for TCP/IP.")
+            return False
+        bad_aliases: list[str] = []
+        for dev in doc.get("devices", []):
+            for rd in dev.get("reads", []):
+                alias = str(rd.get("alias", "")).strip()
+                if alias and not validate_alias(alias):
+                    bad_aliases.append(alias)
+        if bad_aliases:
+            QMessageBox.warning(
+                self, "Invalid Alias",
+                f"The following aliases are invalid:\n{', '.join(bad_aliases)}\n\n"
+                "Aliases must match the standard naming pattern."
+            )
             return False
         try:
             import yaml  # type: ignore

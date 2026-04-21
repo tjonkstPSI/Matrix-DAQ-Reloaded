@@ -83,6 +83,7 @@ class VaisalaPlugin(BasePlugin):
         self._pressure_dyn_gain: float = 1.0
         self._pressure_dyn_offset: float = 0.0
         self._filtering_mode: str = "none"
+        self._conn_ok: bool = False
         # Telemetry feed from orchestrator (for dynamic pressure)
         self._telemetry_lock = threading.Lock()
         self._latest_telemetry: Dict[str, Any] = {}
@@ -186,10 +187,14 @@ class VaisalaPlugin(BasePlugin):
     # ------------------------------------------------------------------
 
     def aliases(self) -> Set[str]:
-        return {ch["alias"] for ch in self._enabled_channels}
+        out = {ch["alias"] for ch in self._enabled_channels}
+        out.add("Vaisala/conn_ok")
+        return out
 
     def units(self) -> Dict[str, str]:
-        return dict(self._unit_map)
+        m = dict(self._unit_map)
+        m["Vaisala/conn_ok"] = ""
+        return m
 
     def update_telemetry(self, vals: Dict[str, Any]) -> None:
         """Receive latest merged telemetry from the orchestrator (all plugins).
@@ -202,8 +207,12 @@ class VaisalaPlugin(BasePlugin):
     def simulate_step(self) -> Dict[str, Any]:
         if self.mode == "real":
             with self._snapshot_lock:
-                return dict(self._snapshot_values)
-        return self._compute_sim_values()
+                vals = dict(self._snapshot_values)
+            vals["Vaisala/conn_ok"] = 1.0 if self._conn_ok else 0.0
+            return vals
+        vals = self._compute_sim_values()
+        vals["Vaisala/conn_ok"] = 1.0
+        return vals
 
     # ------------------------------------------------------------------
     # Modbus TCP (real mode)
@@ -211,6 +220,7 @@ class VaisalaPlugin(BasePlugin):
 
     def _connect(self) -> bool:
         if ModbusTcpClient is None:
+            self._conn_ok = False
             return False
         conn = self.config.get("connection") or {}
         host = str(conn.get("host", "127.0.0.1")).strip()
@@ -221,10 +231,13 @@ class VaisalaPlugin(BasePlugin):
             timeout_s = 1.0
         try:
             self._client = ModbusTcpClient(host=host, port=port, timeout=timeout_s)
-            return bool(self._client.connect())
+            ok = bool(self._client.connect())
+            self._conn_ok = ok
+            return ok
         except Exception as exc:
             print(f"[Vaisala] Modbus connect error: {exc}")
             self._client = None
+            self._conn_ok = False
             return False
 
     def _disconnect(self) -> None:
@@ -256,10 +269,12 @@ class VaisalaPlugin(BasePlugin):
                 vals = self._read_all_channels(c, unit_id)
                 with self._snapshot_lock:
                     self._snapshot_values = vals
+                self._conn_ok = True
                 if not logged_first:
                     print(f"[Vaisala] First poll OK: {len(vals)} channel(s)")
                     logged_first = True
             except Exception as exc:
+                self._conn_ok = False
                 print(f"[Vaisala] Poll error: {exc}")
 
             self._poll_stop.wait(self._poll_period_s)

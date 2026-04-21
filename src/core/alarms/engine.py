@@ -23,6 +23,7 @@ class ChannelConfig:
     alarm: TierConfig
     enabling_condition: str = "always_enabled"  # always_enabled | engine_running | engine_run_time | test_time
     enable_threshold: float = 0.0
+    shutdown_type: str = "hard"  # hard | soft
 
 
 @dataclass
@@ -82,11 +83,14 @@ class AlarmEngine:
                 high_clear_delay_s=float(alarm.get("high_clear_delay_s", legacy_clear) or 0.0),
                 action=str(alarm.get("action", "visible_alert_shutdown") or "visible_alert_shutdown").strip().lower(),
             )
+            raw_stype = str(alarm.get("shutdown_type", item.get("shutdown_type", "hard")) or "hard").strip().lower()
+            stype = raw_stype if raw_stype in {"hard", "soft"} else "hard"
             self._limits[str(alias)] = ChannelConfig(
                 warning=warn_cfg,
                 alarm=alarm_cfg,
                 enabling_condition=str(item.get("enabling_condition", "always_enabled") or "always_enabled").strip().lower(),
                 enable_threshold=float(item.get("enable_threshold", 0.0) or 0.0),
+                shutdown_type=stype,
             )
             if str(alias) not in self._states:
                 self._states[str(alias)] = ChannelAlarmState()
@@ -111,6 +115,8 @@ class AlarmEngine:
         any_warn = False
         any_shut = False
         any_shutdown_request = False
+        any_soft_shutdown = False
+        any_hard_shutdown = False
         events: list[Dict[str, Any]] = []
         if self._test_start_ts <= 0.0:
             self._test_start_ts = now_ts
@@ -197,11 +203,19 @@ class AlarmEngine:
                 action = self._action_for_state(limits, current.state)
                 if action == "visible_alert_shutdown":
                     any_shutdown_request = True
+            if current.state == "SHUT":
+                if limits.shutdown_type == "soft":
+                    any_soft_shutdown = True
+                else:
+                    any_hard_shutdown = True
 
         summary = {
             "any_warning": any_warn,
             "any_shutdown": any_shut,
             "any_shutdown_request": any_shutdown_request,
+            "any_soft_shutdown": any_soft_shutdown,
+            "any_hard_shutdown": any_hard_shutdown,
+            "engine_running": engine_running,
         }
         return per_state, summary, events
 
