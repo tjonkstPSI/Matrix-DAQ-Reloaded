@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from .registry import PluginRegistry, PluginSpec
 from ..plugins.base import BasePlugin
@@ -241,7 +241,6 @@ class Orchestrator:
             calc = self.plugins.get("Calculated_Channels") if self._plugin_enabled.get("Calculated_Channels", True) else None
             if calc:
                 calc.configure(); calc.validate(); calc.start()
-            prev_complete = getattr(cycle, "is_complete")() if cycle else False
             run_mode = str(self.core_cfg.get("run_mode", "demo")).lower()
             demo_ticks = int(self.core_cfg.get("demo_ticks", 50))
             interval = float(self.core_cfg.get("tick_interval_s", 0.1))
@@ -268,6 +267,7 @@ class Orchestrator:
                     return f"{hhmmss}.{frac_ms:03d}"
                 except Exception:
                     return "00:00:00.000"
+            _last_cycle_setpoint: Optional[float] = None
             if run_mode == "demo":
                 for _ in range(demo_ticks):
                     if not self._running:
@@ -302,12 +302,7 @@ class Orchestrator:
                     if ccp:
                         vals.update(getattr(ccp, "simulate_step")())
                         units.update(getattr(ccp, "units")())
-                    if lb and cycle:
-                        sp = float(getattr(cycle, "current_setpoint_kw")())
-                        now_complete = getattr(cycle, "is_complete")()
-                        if (not now_complete) or (not prev_complete and now_complete):
-                            getattr(lb, "command_setpoint_pct")(sp)
-                        prev_complete = now_complete
+                    if lb:
                         vals.update(getattr(lb, "simulate_step")())
                         units.update(getattr(lb, "units")())
                     if vaisala:
@@ -319,17 +314,22 @@ class Orchestrator:
                     if engine_test:
                         vals.update(getattr(engine_test, "simulate_step")())
                         units.update(getattr(engine_test, "units")())
+                    if cycle:
+                        vals.update(getattr(cycle, "simulate_step")())
+                        units.update(getattr(cycle, "units")())
+                        _cyc_state = getattr(cycle, "_state", "idle")
+                        if _cyc_state == "running" and lb:
+                            _sp = cycle.current_setpoint_kw()
+                            if _sp != _last_cycle_setpoint:
+                                lb.command_setpoint_kw(_sp)
+                                print(f"[CYCLE->LB] Setpoint changed: {_last_cycle_setpoint} -> {_sp} kW")
+                                _last_cycle_setpoint = _sp
+                        elif _cyc_state != "running":
+                            if _last_cycle_setpoint is not None:
+                                print(f"[CYCLE->LB] Cycle state={_cyc_state}, holding last setpoint ({_last_cycle_setpoint} kW)")
+                            _last_cycle_setpoint = None
                     # Capture current timestamp for this tick
                     now_ts = time.time()
-                    # Run calculated channels using merged source values before alarms/stats
-                    if calc is not None:
-                        try:
-                            calc_vals = getattr(calc, "simulate_step")(vals)
-                            vals.update(calc_vals)
-                            # Units from plugin
-                            units.update(getattr(calc, "units")())
-                        except Exception:
-                            pass
                     if vaisala:
                         try:
                             vaisala.update_telemetry(vals)
@@ -396,6 +396,8 @@ class Orchestrator:
                                 self._reload_plugin(pid)
                             elif ctrl_msg.get("type") == "sync_plugin_selections":
                                 self._sync_all_plugin_selections()
+                            elif ctrl_msg.get("type") in ("cycle_play", "cycle_pause", "cycle_seek", "cycle_set_loops", "cycle_set_start_with_test"):
+                                self._handle_cycle_command(ctrl_msg)
                         except Exception as e:
                             try:
                                 print(f"[WARN] Control handling error: {e}")
@@ -429,6 +431,14 @@ class Orchestrator:
                     units["iOT_AlmSftSdn"] = ""
                     units["iOT_AlmEmgSdn"] = ""
                     units["iDG_EngRunStp"] = ""
+                    # Calculated channels run LAST so all source values (plugins, alarms, iOT) are available
+                    if calc is not None:
+                        try:
+                            calc_vals = getattr(calc, "simulate_step")(vals)
+                            vals.update(calc_vals)
+                            units.update(getattr(calc, "units")())
+                        except Exception:
+                            pass
                     self._evaluate_do_conditions(vals)
                     pub_vals = _strip_debug_keys(vals)
                     pub_units = _strip_debug_keys(units)
@@ -497,12 +507,7 @@ class Orchestrator:
                     if ccp:
                         vals.update(getattr(ccp, "simulate_step")())
                         units.update(getattr(ccp, "units")())
-                    if lb and cycle:
-                        sp = float(getattr(cycle, "current_setpoint_kw")())
-                        now_complete = getattr(cycle, "is_complete")()
-                        if (not now_complete) or (not prev_complete and now_complete):
-                            getattr(lb, "command_setpoint_pct")(sp)
-                        prev_complete = now_complete
+                    if lb:
                         vals.update(getattr(lb, "simulate_step")())
                         units.update(getattr(lb, "units")())
                     if vaisala:
@@ -514,14 +519,21 @@ class Orchestrator:
                     if engine_test:
                         vals.update(getattr(engine_test, "simulate_step")())
                         units.update(getattr(engine_test, "units")())
+                    if cycle:
+                        vals.update(getattr(cycle, "simulate_step")())
+                        units.update(getattr(cycle, "units")())
+                        _cyc_state = getattr(cycle, "_state", "idle")
+                        if _cyc_state == "running" and lb:
+                            _sp = cycle.current_setpoint_kw()
+                            if _sp != _last_cycle_setpoint:
+                                lb.command_setpoint_kw(_sp)
+                                print(f"[CYCLE->LB] Setpoint changed: {_last_cycle_setpoint} -> {_sp} kW")
+                                _last_cycle_setpoint = _sp
+                        elif _cyc_state != "running":
+                            if _last_cycle_setpoint is not None:
+                                print(f"[CYCLE->LB] Cycle state={_cyc_state}, holding last setpoint ({_last_cycle_setpoint} kW)")
+                            _last_cycle_setpoint = None
                     now_ts = time.time()
-                    if calc is not None:
-                        try:
-                            calc_vals = getattr(calc, "simulate_step")(vals)
-                            vals.update(calc_vals)
-                            units.update(getattr(calc, "units")())
-                        except Exception:
-                            pass
                     if vaisala:
                         try:
                             vaisala.update_telemetry(vals)
@@ -587,6 +599,8 @@ class Orchestrator:
                                 self._kickoff_ccp_test(ctrl_msg)
                             elif ctrl_msg.get("type") == "sync_plugin_selections":
                                 self._sync_all_plugin_selections()
+                            elif ctrl_msg.get("type") in ("cycle_play", "cycle_pause", "cycle_seek", "cycle_set_loops", "cycle_set_start_with_test"):
+                                self._handle_cycle_command(ctrl_msg)
                         except Exception as e:
                             try:
                                 print(f"[WARN] Control handling error: {e}")
@@ -620,6 +634,14 @@ class Orchestrator:
                     units["iOT_AlmSftSdn"] = ""
                     units["iOT_AlmEmgSdn"] = ""
                     units["iDG_EngRunStp"] = ""
+                    # Calculated channels run LAST so all source values (plugins, alarms, iOT) are available
+                    if calc is not None:
+                        try:
+                            calc_vals = getattr(calc, "simulate_step")(vals)
+                            vals.update(calc_vals)
+                            units.update(getattr(calc, "units")())
+                        except Exception:
+                            pass
                     self._evaluate_do_conditions(vals)
                     pub_vals = _strip_debug_keys(vals)
                     pub_units = _strip_debug_keys(units)
@@ -704,6 +726,8 @@ class Orchestrator:
         "!=": float.__ne__,
     }
 
+    _do_cond_diag_count: int = 0
+
     def _evaluate_do_conditions(self, vals: Dict[str, Any]) -> None:
         """Drive DO outputs based on expression conditions each tick."""
         nidaq = self.plugins.get("NI_DAQ") if self._plugin_enabled.get("NI_DAQ") else None
@@ -713,6 +737,8 @@ class Orchestrator:
             conditions = nidaq.do_conditions()
         except Exception:
             return
+        if self._do_cond_diag_count < 3:
+            print(f"[DO_COND] evaluating {len(conditions)} conditions")
         for cond in conditions:
             operator = cond.get("operator", "")
             alias = cond.get("alias", "")
@@ -727,6 +753,8 @@ class Orchestrator:
                     continue
                 source = cond.get("source", "")
                 if source not in vals:
+                    if self._do_cond_diag_count < 3:
+                        print(f"[DO_COND] SKIP {alias}: source '{source}' not in vals")
                     continue
                 src_val = float(vals[source])
                 threshold = float(cond["threshold"])
@@ -734,9 +762,13 @@ class Orchestrator:
                 if op_fn is None:
                     continue
                 state = 1 if op_fn(src_val, threshold) else 0
+                if self._do_cond_diag_count < 3:
+                    print(f"[DO_COND] {alias}: src={source} val={src_val} {operator} {threshold} -> state={state}")
                 nidaq.write_do(alias, state)
-            except Exception:
-                pass
+            except Exception as exc:
+                if self._do_cond_diag_count < 5:
+                    print(f"[DO_COND] ERROR {alias}: {exc}")
+        self._do_cond_diag_count += 1
 
     def _handle_ao_write(self, msg: Dict[str, Any]) -> None:
         alias = str(msg.get("alias", ""))
@@ -757,6 +789,34 @@ class Orchestrator:
             getattr(nidaq, "write_ao")(alias, value)
         except Exception:
             pass
+
+    def _handle_cycle_command(self, msg: Dict[str, Any]) -> None:
+        cycle = self.plugins.get("Cycle") if self._plugin_enabled.get("Cycle", True) else None
+        if cycle is None:
+            return
+        lb = self.plugins.get("LoadBank") if self._plugin_enabled.get("LoadBank", True) else None
+        cmd = str(msg.get("type", ""))
+        try:
+            if cmd == "cycle_play":
+                if lb is not None:
+                    lb.command_master_load(True)
+                    print("[CYCLE->LB] Master Load enabled for cycle")
+                cycle.play()
+                print("[INFO] Cycle: play")
+            elif cmd == "cycle_pause":
+                cycle.pause()
+                print("[INFO] Cycle: pause")
+            elif cmd == "cycle_seek":
+                cycle.seek(float(msg.get("time_s", 0.0)))
+                print(f"[INFO] Cycle: seek to {msg.get('time_s')}s")
+            elif cmd == "cycle_set_loops":
+                cycle.set_loops(int(msg.get("loops", 1)))
+                print(f"[INFO] Cycle: loops set to {msg.get('loops')}")
+            elif cmd == "cycle_set_start_with_test":
+                cycle.set_start_with_test(bool(msg.get("enabled", False)))
+                print(f"[INFO] Cycle: start_with_test = {msg.get('enabled')}")
+        except Exception as e:
+            print(f"[WARN] Cycle command failed: {e}")
 
     def _handle_loadbank_command(self, msg: Dict[str, Any]) -> None:
         if not self._plugin_enabled.get("LoadBank", True):
@@ -1176,6 +1236,20 @@ class Orchestrator:
                 except Exception:
                     pass
                 return
+        cycle = self.plugins.get("Cycle") if self._plugin_enabled.get("Cycle", True) else None
+        if cycle is not None and getattr(cycle, "start_with_test", False):
+            lb = self.plugins.get("LoadBank") if self._plugin_enabled.get("LoadBank", True) else None
+            if lb is not None:
+                ctrl = getattr(lb, "_control_values_a", [False, False, False])
+                if not (bool(ctrl[0]) if len(ctrl) >= 1 else False):
+                    print("[ERROR] Cannot start recording: Cycle 'Start with Test' is enabled but "
+                          "LoadBank Take Control is not active. Enable it first, then try again.")
+                    return
+            if lb is not None:
+                lb.command_master_load(True)
+                print("[CYCLE->LB] Master Load enabled for cycle (Start with Test)")
+            cycle.play()
+            print("[INFO] Cycle started with test (Start with Test enabled)")
         begin_recording(self)
 
     def _end_recording(self) -> None:

@@ -54,18 +54,23 @@ safety:
   require_accept_confirmation: true
   rate_limit_setpoint_hz: 1
 expose_channels:
-  measured_load_alias: LB Measured Load
+  measured_load_alias: lPO_LdbAct
+  setpoint_alias: lPO_LdbStp
   ready_alias: LB Ready
   faults_alias: LB Faults
-  setpoint_alias: LB Setpoint
   step_count_alias: LB Step Count
   step_remainder_alias: LB Step Remainder
   accept_alias: LB Accept
-  voltage_alias: Voltage [Vrms]
-  current_alias: Current [A]
+  voltage_ab_alias: lVO_Ldb1
+  voltage_bc_alias: lVO_Ldb2
+  voltage_ca_alias: lVO_Ldb3
+  current_l1_alias: lCT_Ldb1
+  current_l2_alias: lCT_Ldb2
+  current_l3_alias: lCT_Ldb3
+  frequency_alias: LB Frequency
   power_alias: Power
   error_alias: Error
-  fan_alias: Fan On
+  fan_alias: lDG_Fan
   control_available_alias: Control Available
   normal_operation_alias: Normal Operation
   load_available_alias: Load Available

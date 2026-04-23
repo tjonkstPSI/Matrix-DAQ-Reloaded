@@ -1,4 +1,4 @@
-# Author: T. Onkst | Date: 08122025
+# Author: T. Onkst | Date: 04212026
 
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ class LoadBankPlugin(BasePlugin):
         self._next_poll_ts: Dict[str, float] = {}
         self._control_enable_ok = False
         self._last_control_enable_try_ts: float = 0.0
-        self._control_values_a: list[bool] = [True, True, True]
+        self._control_values_a: list[bool] = [False, False, False]
         self._control_dirty_a: bool = True
         self._heartbeat_enabled: bool = False
         self._heartbeat_interval_s: float = 1.0
@@ -169,8 +169,13 @@ class LoadBankPlugin(BasePlugin):
             exposes.get("setpoint_alias", ""): setpoint_unit,
             exposes.get("step_count_alias", ""): "",
             exposes.get("step_remainder_alias", ""): "kW",
-            exposes.get("voltage_alias", ""): "Vrms",
-            exposes.get("current_alias", ""): "A",
+            exposes.get("voltage_ab_alias", ""): "Vrms",
+            exposes.get("voltage_bc_alias", ""): "Vrms",
+            exposes.get("voltage_ca_alias", ""): "Vrms",
+            exposes.get("current_l1_alias", ""): "A",
+            exposes.get("current_l2_alias", ""): "A",
+            exposes.get("current_l3_alias", ""): "A",
+            exposes.get("frequency_alias", ""): "Hz",
             exposes.get("power_alias", ""): "",
             exposes.get("error_alias", ""): "",
             exposes.get("fan_alias", ""): "",
@@ -190,8 +195,9 @@ class LoadBankPlugin(BasePlugin):
         self._connected = False
         self._control_enable_ok = False
         self._last_control_enable_try_ts = 0.0
-        self._control_values_a = [True, True, True]
+        self._control_values_a = [False, False, False]
         self._control_dirty_a = True
+        self._snapshot_values = {}
         self._heartbeat_state = False
         self._next_heartbeat_ts = 0.0
         self._last_step_vector = []
@@ -237,9 +243,8 @@ class LoadBankPlugin(BasePlugin):
             cur[1] = bool(fan_power)
         if master_load is not None:
             cur[2] = bool(master_load)
-        if cur != self._control_values_a:
-            self._control_values_a = cur
-            self._control_dirty_a = True
+        self._control_values_a = cur
+        self._control_dirty_a = True
 
     def command_take_control(self, enabled: bool) -> None:
         self.set_control_enable_a(take_control=enabled)
@@ -264,14 +269,21 @@ class LoadBankPlugin(BasePlugin):
         exposes = self.config.get("expose_channels", {}) or {}
         out: Dict[str, Any] = {}
         self._measured_val += 0.2 * (self._setpoint_val - self._measured_val)
-        out[exposes.get("measured_load_alias", "LB Measured Load")] = self._measured_val
-        out[exposes.get("setpoint_alias", "LB Setpoint")] = self._setpoint_val
+        out[exposes.get("measured_load_alias", "lPO_LdbAct")] = self._measured_val
+        out[exposes.get("setpoint_alias", "lPO_LdbStp")] = self._setpoint_val
         out[exposes.get("ready_alias", "LB Ready")] = 1
         out[exposes.get("faults_alias", "LB Faults")] = 0
-        out[exposes.get("power_alias", "LB Power")] = 1 if self._setpoint_val > 0.0 else 0
-        out[exposes.get("error_alias", "LB Error")] = 0
-        out[exposes.get("voltage_alias", "LB Voltage")] = 480.0
-        out[exposes.get("current_alias", "LB Current")] = max(0.0, self._measured_val * 1.2)
+        out[exposes.get("power_alias", "Power")] = 1 if self._setpoint_val > 0.0 else 0
+        out[exposes.get("error_alias", "Error")] = 0
+        out[exposes.get("fan_alias", "lDG_Fan")] = 1 if self._setpoint_val > 0.0 else 0
+        out[exposes.get("voltage_ab_alias", "lVO_Ldb1")] = 480.0
+        out[exposes.get("voltage_bc_alias", "lVO_Ldb2")] = 480.0
+        out[exposes.get("voltage_ca_alias", "lVO_Ldb3")] = 480.0
+        cur = max(0.0, self._measured_val * 1.2)
+        out[exposes.get("current_l1_alias", "lCT_Ldb1")] = cur
+        out[exposes.get("current_l2_alias", "lCT_Ldb2")] = cur
+        out[exposes.get("current_l3_alias", "lCT_Ldb3")] = cur
+        out[exposes.get("frequency_alias", "LB Frequency")] = 60.0
         return out
 
     def _seed_snapshot(self) -> None:
@@ -282,6 +294,10 @@ class LoadBankPlugin(BasePlugin):
             self._snapshot_values = {}
 
     def _real_worker_loop(self) -> None:
+        conn = self._resolved_connection()
+        cmd = (self._map.get("commands", {}) or {}).get("control_enable_a", {}) or {}
+        print(f"[LB] Worker starting: host={conn.get('host')} port={conn.get('port')} "
+              f"ctrl_addr={cmd.get('address')} init_vals={self._control_values_a}")
         while not self._worker_stop.is_set():
             if not self._connected:
                 self._connected = self._connect_client()
@@ -289,7 +305,8 @@ class LoadBankPlugin(BasePlugin):
                     self._worker_stop.wait(0.75)
                     continue
             try:
-                out = self._poll_real_once(time.time())
+                now = time.time()
+                out = self._poll_real_once(now)
                 if out:
                     with self._snapshot_lock:
                         self._snapshot_values.update(out)
@@ -362,6 +379,8 @@ class LoadBankPlugin(BasePlugin):
             if val is None:
                 continue
             alias = self._status_alias(key, cfg, exposes)
+            if self._ctrl_diag_count < 5 and key == "fan_on":
+                print(f"[LB] READ fan_on: addr={cfg.get('address')} val={val} -> alias={alias}")
             out[alias] = val
 
         # Always expose current command echo.
@@ -388,10 +407,15 @@ class LoadBankPlugin(BasePlugin):
             "ready_bit": "ready_alias",
             "power_bool": "power_alias",
             "error_bool": "error_alias",
-            "voltage_vrms": "voltage_alias",
-            "current_a": "current_alias",
             "power_kw": "measured_load_alias",
             "fan_on": "fan_alias",
+            "voltage_ab_vrms": "voltage_ab_alias",
+            "voltage_bc_vrms": "voltage_bc_alias",
+            "voltage_ca_vrms": "voltage_ca_alias",
+            "current_l1_a": "current_l1_alias",
+            "current_l2_a": "current_l2_alias",
+            "current_l3_a": "current_l3_alias",
+            "frequency_hz": "frequency_alias",
             "control_available": "control_available_alias",
             "normal_operation": "normal_operation_alias",
             "load_available": "load_available_alias",
@@ -419,6 +443,8 @@ class LoadBankPlugin(BasePlugin):
             pass
         return False
 
+    _meter_diag_ts: float = 0.0
+
     def _read_point(self, cfg: Dict[str, Any], unit_id: int) -> Optional[float]:
         c = self._client
         if c is None:
@@ -427,6 +453,8 @@ class LoadBankPlugin(BasePlugin):
         address = self._address_zero_based(cfg.get("address", 0))
         dtype = str(cfg.get("type", "uint16")).lower()
         count = int(cfg.get("count", 1))
+        is_meter = fc in (3, 4) and dtype == "float32"
+        log_meter = is_meter and (time.time() - self._meter_diag_ts) >= 30.0
         try:
             if fc == 1:
                 rr = self._client_read(c.read_coils, address, max(1, count), unit_id)
@@ -444,6 +472,9 @@ class LoadBankPlugin(BasePlugin):
                 regs_needed = 2 if dtype in {"uint32", "int32", "float32", "bcd_double", "bcd32"} else 1
                 rr = self._client_read(c.read_input_registers, address, max(regs_needed, count), unit_id)
                 if self._is_error_response(rr):
+                    if log_meter:
+                        print(f"[LB] METER FC4 ERROR addr={address} cfg_addr={cfg.get('address')} resp={rr}")
+                        self._meter_diag_ts = time.time()
                     return None
                 regs = list(getattr(rr, "registers", []) or [])
                 raw = self._decode_registers(regs, dtype, cfg)
@@ -451,10 +482,20 @@ class LoadBankPlugin(BasePlugin):
                 regs_needed = 2 if dtype in {"uint32", "int32", "float32", "bcd_double", "bcd32"} else 1
                 rr = self._client_read(c.read_holding_registers, address, max(regs_needed, count), unit_id)
                 if self._is_error_response(rr):
+                    if log_meter:
+                        print(f"[LB] METER FC3 ERROR addr={address} cfg_addr={cfg.get('address')} resp={rr}")
+                        self._meter_diag_ts = time.time()
                     return None
                 regs = list(getattr(rr, "registers", []) or [])
                 raw = self._decode_registers(regs, dtype, cfg)
-        except Exception:
+            if log_meter:
+                print(f"[LB] METER fc={fc} addr={address} cfg_addr={cfg.get('address')} "
+                      f"regs={regs if fc in (3,4) else 'n/a'} raw={raw}")
+                self._meter_diag_ts = time.time()
+        except Exception as exc:
+            if log_meter:
+                print(f"[LB] METER EXCEPTION fc={fc} addr={address}: {type(exc).__name__}: {exc}")
+                self._meter_diag_ts = time.time()
             self._connected = False
             self._disconnect_client()
             return None
@@ -618,6 +659,8 @@ class LoadBankPlugin(BasePlugin):
             self._disconnect_client()
             return False
 
+    _ctrl_diag_count: int = 0
+
     def _write_control_enable_a(self, unit_id: int) -> bool:
         c = self._client
         if c is None:
@@ -625,7 +668,6 @@ class LoadBankPlugin(BasePlugin):
         cmd = (self._map.get("commands", {}) or {}).get("control_enable_a", {}) or {}
         fc = int(cmd.get("fc", 15))
         if fc != 15:
-            # Keep behavior explicit for this VI-derived block.
             return False
         address = self._address_zero_based(cmd.get("address", 3456))
         raw_vals = self._control_values_a
@@ -635,12 +677,23 @@ class LoadBankPlugin(BasePlugin):
         if not values:
             values = [True]
         try:
+            if self._ctrl_diag_count < 5:
+                print(f"[LB] write_coils addr={address} (1-based={address+1}) values={values} unit={unit_id}")
             wr = c.write_coils(address=address, values=values, **uid_kwargs(unit_id))
             if self._is_error_response(wr):
+                if self._ctrl_diag_count < 5:
+                    print(f"[LB] write_coils FAILED (error response): {wr}")
+                    self._ctrl_diag_count += 1
                 return False
+            if self._ctrl_diag_count < 5:
+                print(f"[LB] write_coils OK")
+                self._ctrl_diag_count += 1
             self._control_dirty_a = False
             return True
-        except Exception:
+        except Exception as exc:
+            if self._ctrl_diag_count < 5:
+                print(f"[LB] write_coils EXCEPTION: {type(exc).__name__}: {exc}")
+                self._ctrl_diag_count += 1
             self._connected = False
             self._disconnect_client()
             return False

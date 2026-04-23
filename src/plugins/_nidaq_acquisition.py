@@ -88,19 +88,24 @@ def read_real(p: NiDAQPlugin) -> Dict[str, Any]:
                             vals[alias] = int(bool(v))
                             any_success = True
                     elif isinstance(di_vals, list):
-                        vals[aliases[0]] = int(bool(di_vals[0]))
+                        for idx, alias in enumerate(aliases):
+                            if idx < len(di_vals):
+                                vals[alias] = int(bool(di_vals[idx]))
+                                any_success = True
+                    else:
+                        vals[aliases[0]] = int(bool(di_vals))
                         any_success = True
                     try:
                         if p._di_read_diag_count < 5:
-                            shape = f"list[{len(di_vals)}]"
                             if isinstance(di_vals, list) and di_vals and isinstance(di_vals[0], list):
                                 shape = f"list[{len(di_vals)}x{len(di_vals[0])}]"
-                            sample_preview = []
-                            if isinstance(di_vals, list):
-                                if di_vals and isinstance(di_vals[0], list):
-                                    sample_preview = [int(bool(x[0])) for x in di_vals[:min(3, len(di_vals))]]
-                                else:
-                                    sample_preview = [int(bool(di_vals[0]))]
+                                sample_preview = [int(bool(x[0])) for x in di_vals[:min(3, len(di_vals))]]
+                            elif isinstance(di_vals, list):
+                                shape = f"list[{len(di_vals)}]"
+                                sample_preview = [int(bool(x)) for x in di_vals[:min(3, len(di_vals))]]
+                            else:
+                                shape = "scalar"
+                                sample_preview = [int(bool(di_vals))]
                             print(f"[NIDAQ] DI read diag: device={device} shape={shape} aliases={aliases[:3]} values={sample_preview}")
                             p._di_read_diag_count += 1
                     except Exception:

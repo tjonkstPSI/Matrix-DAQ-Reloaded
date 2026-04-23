@@ -821,7 +821,7 @@ channels:
   - phys: MATRIXMod6/port1/line0
     alias: mDG_FacSsdEspAct
     enabled: true
-    initial: 0
+    initial: 1
     condition:
       source: mDG_FacSsdEspAct
       operator: '>'
@@ -873,7 +873,7 @@ channels:
   - phys: MATRIXMod6/port1/line11
     alias: mDG_GenEspAct
     enabled: true
-    initial: 0
+    initial: 1
     condition:
       source: mDG_GenEspAct
       operator: '>'

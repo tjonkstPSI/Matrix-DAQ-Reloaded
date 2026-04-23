@@ -467,10 +467,14 @@ def teardown_tasks(p: NiDAQPlugin) -> None:
     p._ao_tasks = []
 
 
+_do_hw_write_diag_count: int = 0
+
+
 def write_do_hardware(
     do_tasks: List[Dict[str, Any]],
     do_states: Dict[str, int],
 ) -> None:
+    global _do_hw_write_diag_count
     if not do_tasks:
         return
     try:
@@ -479,10 +483,15 @@ def write_do_hardware(
             aliases = list(dt.get("aliases", []) or [])
             if task is None or not aliases:
                 continue
-            values = [int(bool(do_states.get(alias, 0))) for alias in aliases]
+            values = [bool(do_states.get(alias, 0)) for alias in aliases]
+            if _do_hw_write_diag_count < 10:
+                print(f"[NIDAQ] DO hw write: aliases={aliases} values={values}")
+                _do_hw_write_diag_count += 1
             task.write(values, auto_start=True)
-    except Exception:
-        pass
+    except Exception as exc:
+        if _do_hw_write_diag_count < 20:
+            print(f"[NIDAQ] DO hw write ERROR: {type(exc).__name__}: {exc}")
+            _do_hw_write_diag_count += 1
 
 
 def write_ao_hardware(

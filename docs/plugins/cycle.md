@@ -1,9 +1,9 @@
-<!-- Author: T. Onkst | Date: 08112025 -->
+<!-- Author: T. Onkst | Date: 04212026 -->
 
 ## Cycle Plugin Specification
 
 ### Purpose
-Execute a user-defined load schedule for the load bank using a CSV file with Time and Load columns (Load in kW). Supports pause/stop/restart/skip and looping (default 1 total pass). There is no interpolation: new setpoints are applied at the specified times. Integrates tightly with the LoadBank plugin and drives its setpoint directly in kW.
+Execute a user-defined load schedule for the load bank using a CSV file with Time and Load columns (Load in kW). Supports play/pause/seek/loops/restart and integrates tightly with the LoadBank plugin via orchestrator setpoint piping. There is no interpolation: new setpoints are applied at the specified times (step behavior).
 
 ### CSV Schema
 - File format: CSV
@@ -13,102 +13,91 @@ Execute a user-defined load schedule for the load bank using a CSV file with Tim
 - Semantics:
   - Time is monotonically non-decreasing; Load is the target setpoint (kW) applied at that time (step behavior)
   - No interpolation; the setpoint changes only at the provided time stamps
+  - Cycles typically end at 0kW to ramp down load before completion
 
-### Looping & Controls
-- loops_total: default 1 (no infinite mode). If > 1, repeats the cycle that many times.
-- inter_loop_dwell_s: default 0; no safe-state enforced between loops
-- Controls during run:
-  - Pause: hold current setpoint; timer paused
-  - Stop: abort cycle; LoadBank remains under app control; recording can continue until user stops test
-  - Restart: resume from start of current loop or from beginning (configurable)
-  - Skip: jump to next step/row
+### State Machine
+The cycle plugin maintains an internal state:
+
+| State | Description |
+|-------|-------------|
+| `idle` | Not started; waiting for play command |
+| `running` | Actively advancing through the schedule; setpoints piped to loadbank |
+| `paused` | Timer frozen; last setpoint held on loadbank |
+| `complete` | All loops finished; last setpoint held; Play restarts from beginning |
+
+### Runtime Controls
+All controls are available via the Cycle Control section in the LoadBank operator panel and routed via IPC to the orchestrator:
+
+- **Play**: start from idle, resume from paused, or restart from complete
+- **Pause**: freeze timer at current position; loadbank holds last setpoint
+- **Seek**: jump to a specific time (only when paused)
+- **Loops**: set total loop count at runtime
+- **Start with Test**: when enabled, pressing Record checks LoadBank readiness (Take Control active), then starts the cycle and recording simultaneously
 
 ### Integration with LoadBank
-- Issues setpoint commands to the LoadBank plugin in kW (direct pass-through)
-- No Accept required when running a cycle; step changes apply automatically
-- Rate limiting and readback confirmation handled by LoadBank per model map (if supported)
+- Orchestrator pipes `cycle.current_setpoint_kw()` to `lb.command_setpoint_kw()` **only when the value changes** — a 5-step cycle produces exactly 5 Modbus writes, not one per tick
+- Master Load is automatically enabled when cycle plays (via orchestrator `_handle_cycle_command`)
+- On pause: last setpoint held, Master Load stays on
+- On complete/stop: last setpoint held (no auto-zero); operator uses Emergency Stop / Zero Load to drop load manually
+- Rate limiting and step decomposition handled by LoadBank per model map
 
 ### Execution Model
-- Scheduler runs at the system recording rate R (≤ 100 Hz)
-- At each tick:
-  - Determine current cycle row based on elapsed time within the loop (step schedule)
-  - If at a new step boundary, update the target setpoint to the row's Load (kW)
-  - Send setpoint to LoadBank (respecting model rate limit if configured)
-- Boundary markers are logged at each CSV row transition and loop boundary
+- At each orchestrator tick:
+  - `simulate_step()` computes current position, setpoint, loop number, and progress
+  - If state is `running` and setpoint differs from last sent value, `lb.command_setpoint_kw()` is called
+- Loop boundary: when elapsed time exceeds `loop_len * loops_total`, state transitions to `complete`
+- Multi-loop: elapsed time wraps via modulo for `loops_total > 1`
+
+### Telemetry Channels
+Published every tick by `simulate_step()`:
+
+| Channel | Unit | Description |
+|---------|------|-------------|
+| `Cycle/state` | — | State code: 0=idle, 1=running, 2=paused, 3=complete |
+| `Cycle/position_s` | s | Current position within the active loop |
+| `Cycle/setpoint_kw` | kW | Current load setpoint from schedule |
+| `Cycle/loop_current` | — | Current loop number (1-based) |
+| `Cycle/loop_total` | — | Total configured loops |
+| `Cycle/progress_pct` | % | Overall progress across all loops |
+| `Cycle/schedule_len_s` | s | Duration of one loop |
 
 ### Configuration (YAML)
 File: `configs/cycle.yaml`
 
 ```yaml
-recording_rate_hz: 100
-
 source:
-  csv_path: "C:/Configs/cycles/standard_breakin.csv"
-  columns: { time: "Time", load: "Load" }   # Load is in kW
-
+  csv_path: configs/cycles/demo.csv
+  columns:
+    time: Time
+    load: Load
 execution:
   loops_total: 1
+  start_with_test: false
   inter_loop_dwell_s: 0
-  restart_policy: "restart_loop"     # restart_loop | resume_step
-  skip_behavior: "next_row"          # next_row | next_change
-  interpolation: "none"              # no interpolation; step schedule
-
-integration:
-  loadbank:
-    accept_required: false            # ignored for cycle; steps apply automatically
-    units: "kW"                       # cycle drives LoadBank setpoint in kW
-    smoothing:
-      ramp_limit_pct_per_s: null      # not applicable to step schedule; reserved for future
-
-optional_safety:                      # nice-to-have future feature (disabled by default)
-  enabled: false
-  watch_channel: "IntakeAirTemp"      # channel name to monitor
-  limit_high: 60.0                    # unit as per channel (e.g., C)
-  backoff_kw: 10.0                    # reduce setpoint by this kW when exceeded
-  cooloff_s: 30                       # hold reduced load for this many seconds before reevaluating
-
-ui:
-  show_status_table: true
-  show_current_step_details: true
 ```
 
-#### Validation Rules
-- CSV readable; required columns present; Time non-decreasing; Load kW within [0, +∞) and reasonable for site limits
-- loops_total ≥ 1; inter_loop_dwell_s ≥ 0
-- If optional_safety.enabled, ensure watch_channel exists; limits and backoff are non-negative
+### UI
 
-### UI Flow
-- Right-click Cycle tile → Configure:
-  1) Browse/enter CSV path; BOM-encoded files handled automatically (`utf-8-sig`)
-  2) Configure time and load column names
-  3) Set loops_total, dwell, restart/skip behavior, interpolation
-  4) (Optional future) configure safety backoff watcher
-  5) Save; embedded QtCharts staircase plot preview renders the cycle profile
-- Preview details:
-  - Step/hold visualization (no linear ramp) matching actual load bank behavior
-  - Filled area chart with light blue accent on dark background
-  - Multi-loop profiles shown with dashed vertical loop-boundary markers
-  - Y-axis always starts at 0 kW (negative load not possible)
-  - Status bar below plot: point count, loop count, cycle duration
-  - "Refresh preview" button re-parses CSV and redraws
-- Runtime display: current loop/index, current/next step, time remaining, setpoint, accept status
+#### Configure Dialog (right-click Cycle tile -> Configure)
+- **CSV Source**: browse/enter CSV path, column name mapping, embedded QtCharts staircase plot preview with multi-loop visualization
+- **Execution**: loops total, start with test checkbox, inter-loop dwell
+
+#### Cycle Control Section (in LoadBank operator panel)
+- **Start with Test** checkbox
+- **State/Position/Setpoint/Loop** labels updated from telemetry
+- **Progress bar** showing overall completion percentage
+- **CycleChartWidget**: lightweight QPainter step-line chart with filled area, axis labels, and red vertical position marker
+- **Play/Pause** buttons
+- **Seek** spinner + Go button (active when paused)
+- **Loops** spinner
+
+The `CycleChartWidget` (`src/ui/widgets/cycle_chart.py`) is imported with a `try/except` guard — if the file is missing on a workstation, the chart area is simply omitted and the rest of the panel functions normally.
 
 ### Error Handling
-- CSV parse/validation errors → red status; must be corrected before run
-- LoadBank comms loss: follow system policy → trigger E‑stop via calculated-channel logic; cycle aborts
-- If operator does not accept when required, cycle remains paused at boundary
+- CSV parse/validation errors -> status label in config dialog
+- LoadBank comms loss: system policy via calculated-channel estop logic
+- Missing `cycle_chart.py` on workstation: graceful degradation, panel loads without chart
 
 ### Outputs and Metadata
-- Record boundary and loop events in per-run logs
-- Optionally record a “Cycle Target (kW)” channel at rate R for traceability
-
-### Test Cases (Cycle)
-- CYC-CSV-001: Load CSV with Time/Load (kW); validation of monotonic time and plausible ranges
-- CYC-Loops-001: loops_total=3 executes three passes; boundary logs correct
-- CYC-Step-Apply-001: Setpoints change at exact time stamps (no interpolation); LoadBank receives kW setpoints
-- CYC-Pause-Stop-001: Pause holds current setpoint; Stop aborts cycle
-- CYC-Restart-Skip-001: Restart behavior per policy; Skip jumps to next row/change
-- CYC-Plot-Preview-001: After CSV import, plot preview renders Time vs Load kW correctly
-- CYC-TargetChannel-001: Target setpoint (kW) channel aligns to R and matches step schedule
-- CYC-Safety-Backoff-001: (Future) With optional_safety enabled and limit exceeded, setpoint is backed off by configured kW and cooloff applied
-
+- Telemetry channels recorded at core tick rate (see table above)
+- Boundary and loop events logged to console

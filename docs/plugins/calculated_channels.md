@@ -1,4 +1,4 @@
-<!-- Author: T. Onkst | Date: 03092026 -->
+<!-- Author: T. Onkst | Date: 04212026 -->
 
 ## Calculated Channels Plugin Specification
 
@@ -42,6 +42,7 @@ channels:
   - returns latest computed calc snapshot
 - Worker thread computes at `recording_rate_hz` period (minimum 10 ms).
 - Core tick/log cadence is controlled by Channel Manager; calculated outputs are sampled from this plugin's latest snapshot at tick time.
+- **Orchestrator evaluation order**: Calculated Channels always evaluate **after** all source plugins (NI DAQ, CAN, CCP, Modbus, Vaisala, Omega, LoadBank) have published their values in the tick. This guarantees that all hardware inputs exist before expressions reference them. Without this ordering, a calculated channel could evaluate before its source plugin runs, producing incorrect results (e.g., a conditional expression returning `1` when both inputs are actually `0` because one hadn't been published yet).
 - Evaluation order is top-to-bottom in `channels`; later rows may reference earlier calculated aliases by symbol mapping.
 - Symbol resolution:
   - numeric mapping -> constant

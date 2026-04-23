@@ -1,4 +1,4 @@
-# Author: T. Onkst | Date: 03092026
+# Author: T. Onkst | Date: 04212026
 
 from __future__ import annotations
 
@@ -112,6 +112,7 @@ class LoadBankConfigDialog(QDialog):
 
         self.cmb_primary_model.clear()
         self.cmb_secondary_model.clear()
+        self.cmb_secondary_model.addItem("None", "")
         for model_name, map_path in self._models:
             self.cmb_primary_model.addItem(model_name, map_path)
             self.cmb_secondary_model.addItem(model_name, map_path)
@@ -163,6 +164,9 @@ class LoadBankConfigDialog(QDialog):
     def _set_model_combo(self, combo: QComboBox, model_name: str) -> None:
         model_name = (model_name or "").strip()
         if not model_name:
+            idx = combo.findText("None")
+            if idx >= 0:
+                combo.setCurrentIndex(idx)
             return
         idx = combo.findText(model_name)
         if idx >= 0:
@@ -179,6 +183,12 @@ class LoadBankConfigDialog(QDialog):
         secondary_model, secondary_map = self._model_info(self.cmb_secondary_model)
         primary_ip = self.txt_primary_ip.text().strip()
         secondary_ip = self.txt_secondary_ip.text().strip()
+
+        # "None" selection means no secondary loadbank.
+        if secondary_model == "None" or not secondary_map:
+            secondary_model = ""
+            secondary_map = ""
+            secondary_ip = ""
 
         try:
             voltage = int(float(self.txt_voltage.text().strip() or "480"))
@@ -206,12 +216,12 @@ class LoadBankConfigDialog(QDialog):
                 "ip_address": secondary_ip,
                 "port": 502,
                 "unit_id": 1,
-                "enabled": bool(secondary_ip),
+                "enabled": False if not secondary_model else bool(secondary_ip),
             },
         }
 
         # Future runtime-oriented shape for multi-device support.
-        doc["devices"] = [
+        devices = [
             {
                 "role": "primary",
                 "name": "Primary",
@@ -220,15 +230,17 @@ class LoadBankConfigDialog(QDialog):
                 "connection": {"host": primary_ip, "port": 502, "unit_id": 1},
                 "enabled": bool(primary_ip),
             },
-            {
+        ]
+        if secondary_model:
+            devices.append({
                 "role": "secondary",
                 "name": "Secondary",
                 "model": secondary_model,
                 "map_file": secondary_map,
                 "connection": {"host": secondary_ip, "port": 502, "unit_id": 1},
                 "enabled": bool(secondary_ip),
-            },
-        ]
+            })
+        doc["devices"] = devices
 
         # Backward-compatible legacy keys expected by current runtime.
         doc["connection"] = {"host": primary_ip or "127.0.0.1", "port": 502, "unit_id": 1}

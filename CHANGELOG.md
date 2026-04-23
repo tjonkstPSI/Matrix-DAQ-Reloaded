@@ -6,6 +6,35 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased] - 03/09/2026
 
+### Cycle plugin overhaul, LoadBank onsite commissioning, NI DI/DO fixes — 04/21/2026
+#### Added
+- **Cycle plugin play/pause/seek/loops/restart**: `CyclePlugin` now supports full runtime control — `play()`, `pause()`, `seek(time_s)`, `set_loops(n)`, `set_start_with_test(enabled)`. State machine covers `idle`, `running`, `paused`, `complete` with clean transitions. Restarting a completed cycle via Play resets to the beginning automatically.
+- **Cycle telemetry channels**: `simulate_step()` publishes `Cycle/state`, `Cycle/position_s`, `Cycle/setpoint_kw`, `Cycle/loop_current`, `Cycle/loop_total`, `Cycle/progress_pct`, and `Cycle/schedule_len_s` every tick.
+- **Cycle Control UI section**: new group box in the LoadBank operator panel with Play/Pause buttons, Seek spinner, Loops spinner, Start with Test checkbox, and labels for state/position/setpoint/loop/progress. Includes a `CycleChartWidget` (QPainter step-line chart with position marker) and `QProgressBar`.
+- **`CycleChartWidget`** (`src/ui/widgets/cycle_chart.py`): lightweight custom QPainter widget displaying the load schedule as a step-line chart with filled area, axis labels, grid lines, and a red vertical marker for current position.
+- **Cycle-to-LoadBank setpoint piping**: orchestrator pipes `cycle.current_setpoint_kw()` to `lb.command_setpoint_kw()` only when the value changes (not every tick). A 5-step cycle produces exactly 5 Modbus writes. Master Load is automatically enabled on cycle play and held through completion.
+- **Start with Test recording gate**: when `start_with_test: true` in `cycle.yaml`, pressing Record checks that LoadBank Take Control is active before starting the cycle and recording simultaneously.
+- **Simplex 750kW loadbank model map** (`configs/loadbanks/Simplex-750kW.yaml`): B-side Modbus addresses for the 750kW load bank — control coils, indicator coils, metering registers (float32 BA word order), and step array (300+200+150+50+25+25 = 750kW).
+- **LoadBank Frequency channel**: added to both Simplex 750kW and 1.5MW model maps.
+- **LoadBank recording telemetry channels**: `lDG_Fan`, `lPO_LdbAct`, `lPO_LdbStp`, `lCT_Ldb1/2/3`, `lVO_Ldb1/2/3` wired into recording telemetry for any active loadbank.
+- **LoadBank secondary model "None" option**: configuration dropdown now includes a "None" option for single-loadbank setups.
+- **Orchestrator cycle IPC handlers**: `cycle_play`, `cycle_pause`, `cycle_seek`, `cycle_set_loops`, `cycle_set_start_with_test` control messages routed from UI to CyclePlugin.
+#### Fixed
+- **NI DAQ DI boolean values**: digital input reads were returning raw DAQmx integers instead of clean `0`/`1` floats. Added explicit `int(bool(v))` conversion in `_nidaq_acquisition.py` `_read_di_real()` to ensure DI channels publish `0.0` or `1.0`. This fixed the `qDG_FacEspAct` estop circuit read that was preventing the estop relay from completing.
+- **NI DAQ DO task creation for single-line ports**: `_nidaq_tasks.py` now uses `port0/line0:0` format (explicit start:end range) instead of `port0/line0` when a DO port has only one configured line. Prevents DAQmx from interpreting a bare line reference as the full port width.
+- **Calculated Channels orchestrator ordering**: calculated channels now always evaluate after all source plugins (CAN, CCP, NI DAQ, Modbus, Vaisala, Omega, LoadBank) have published their values in the tick. Previously, ordering was not guaranteed and a calculated channel could evaluate before its inputs existed, causing incorrect results (e.g., `mOT_EngSsd` reading `1` instead of `0`).
+- **LoadBank fan control initialization**: `_control_values_a` now initializes to `[False, False, False]` instead of `[True, True, True]`, preventing fan power and load from being commanded ON at startup.
+- **LoadBank telemetry decoupled from Cycle**: loadbank telemetry (metering, status, setpoint) now publishes independently of whether the Cycle plugin is active.
+- **LoadBank Modbus float32 word order**: corrected `word_order` from `AB` to `BA` for all metering registers (voltage, current, power, frequency) in both `Simplex-1.5MW.yaml` and `Simplex-750kW.yaml`. Fixes "very big numbers" in metering readback after loadbank power cycle.
+- **LoadBank UI panel import guard**: `CycleChartWidget` import wrapped in `try/except` with `None` fallback so the LoadBank panel loads even if `cycle_chart.py` is missing from the workstation.
+- **Cycle play from complete state**: hitting Play after a completed cycle now resets and restarts from the beginning instead of silently doing nothing.
+- **Start with Test gate**: removed Master Load from the readiness check (only checks Take Control), since Master Load is automatically enabled by the cycle play handler — eliminates the chicken-and-egg block that prevented recording from starting.
+#### Changed
+- **Cycle config dialog cleaned up**: removed Plugin Enabled checkbox, Recording Rate spinner, Integration (load bank) section, and Optional Safety section — all were either obsolete or never wired. Added Start with Test checkbox to the Execution section.
+- **`cycle.yaml` simplified**: removed `enabled`, `recording_rate_hz`, `execution.restart_policy`, `execution.skip_behavior`, `execution.interpolation`, `integration`, and `optional_safety` blocks. Retained: `source`, `execution.loops_total`, `execution.start_with_test`, `execution.inter_loop_dwell_s`.
+- **LoadBank diagnostic logging reduced**: removed diagnostic register scan (`_scan_register_range`), capped fan read diagnostics at 5, capped control write diagnostics at 5, reduced metering diagnostics to 30s intervals.
+- **Cycle hold-on-complete behavior**: when the cycle finishes, the last setpoint is held (no auto-zero). Operator uses Emergency Stop / Zero Load to drop load manually. Cycles are typically written to end at 0kW.
+
 ### Onsite testing: CCP A2L decode rewrite, pymodbus compat, Vaisala/Modbus data fixes — 04/21/2026
 #### Added
 - **CCP A2L COMPU_METHOD COEFFS parsing**: `parse_a2l()` now extracts the 6 COEFFS (a, b, c, d, e, f) from every `RAT_FUNC` COMPU_METHOD block and `IDENTICAL` methods. COEFFS are stored in a new `coeffs` field on the `A2LChannel` dataclass and linked to each MEASUREMENT via the compu_method reference. The A2L file tested contains 130+ unique COEFFS patterns; only ~25% are identity — the rest require active conversion.

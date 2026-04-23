@@ -397,6 +397,7 @@ class ConsoleWindow(QMainWindow):
             try:
                 dlg = LoadBankConfigDialog(self)
                 dlg.exec()
+                self._refresh_loadbank_config()
             except Exception as e:
                 try:
                     QMessageBox.critical(self, "LoadBank Configure Error", f"Failed to open LoadBank config dialog:\n{e}")
@@ -617,6 +618,19 @@ class ConsoleWindow(QMainWindow):
             return bool(int(float(v)))
         except Exception:
             return None
+
+    def _refresh_loadbank_config(self) -> None:
+        """Re-read loadbank.yaml and update model labels on all operator panels."""
+        main = getattr(self, "_lb_panel_main", None)
+        if main is not None and hasattr(main, "reload_config"):
+            main.reload_config()
+        for w in list(getattr(self, "_lb_operator_windows", []) or []):
+            try:
+                cw = w.centralWidget() if w.isVisible() else None
+                if cw is not None and hasattr(cw, "reload_config"):
+                    cw.reload_config()
+            except Exception:
+                pass
 
     def _refresh_loadbank_panels(self, vals: Dict[str, Any]) -> None:
         ready = self._loadbank_ready_from_values(vals)

@@ -1,4 +1,4 @@
-<!-- Author: T. Onkst | Date: 03092026 -->
+<!-- Author: T. Onkst | Date: 04212026 -->
 
 ## NI DAQ Plugin Specification
 
@@ -26,6 +26,8 @@ Acquire NI cDAQ data (AI voltage, AI temp, DI, DO, AO) with robust real-mode DAQ
   - A snapshot thread continuously calls `_read_real()` and updates latest values
 - `simulate_step()` returns cached snapshot in real mode.
 - **Tick rate alignment**: NI DAQ snapshot period inherits from core tick rate (`channel_manager.yaml` `recording_rate_hz`). The `recording_rate_hz` field in `ni_daq.yaml` is deprecated (`auto` inherits from core); if set to a numeric value that differs from the core rate, a warning is logged.
+- DI reads apply explicit `int(bool(v))` conversion to produce clean `0.0`/`1.0` float values. Raw DAQmx digital reads can return arbitrary integers; the conversion ensures downstream consumers (calculated channels, DO conditions, alarm engine) see proper boolean semantics.
+- DO task creation handles single-line ports using `port0/line0:0` format (explicit start:end range) to prevent DAQmx from interpreting a bare line reference as the full port width.
 - In sim mode, signals are generated locally:
   - AI voltage: oversampled synthetic waveform + scaling
   - AI temp: synthetic engineering values
@@ -226,6 +228,7 @@ If `condition` is absent or empty, the DO behaves as before (manual / initial on
 CompactDAQ chassis share a single timing engine across all modules. `_nidaq_tasks.py` groups channels by **chassis** (not individual module) when creating DAQmx tasks. A helper `_chassis_from_device(device)` extracts the chassis name using the regex `^(.+?)Mod\d+$` (e.g., `AGENTMod4` -> `AGENT`, `cDAQ1Mod3` -> `cDAQ1`). This produces one consolidated AI task per chassis, avoiding the NI-DAQmx `-200022` resource conflict that occurs when separate tasks try to use different modules on the same chassis simultaneously. The grouping applies to all task types: fast AI voltage, temperature, DI, DO, and AO.
 
 ### Notes on Robustness
+- **Orchestrator evaluation order**: NI DAQ values (including DI/DO) are published before Calculated Channels evaluate, ensuring all hardware inputs are available as expression symbols. This ordering is guaranteed by the orchestrator tick loop.
 - Per-chassis AI tasks consolidate all modules within a CompactDAQ chassis into a single timing domain.
 - Adaptive timeout and buffer sizing are used in real read path to reduce backlog/timeout issues.
 - Snapshot model prevents DAQ read timing from stalling core tick cadence (sample-and-hold at publish/record tick).

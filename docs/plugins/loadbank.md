@@ -1,137 +1,104 @@
-<!-- Author: T. Onkst | Date: 08112025 -->
+<!-- Author: T. Onkst | Date: 04212026 -->
 
 ## LoadBank Plugin Specification
 
 ### Purpose
-Specialized Modbus TCP control/monitor plugin for load banks from multiple suppliers. Operators select a loadbank model from a dropdown (different register maps), configure IP settings, test the connection in the config UI, and upon exiting configuration the plugin auto-connects and maintains a constant connection throughout the test session.
+Specialized Modbus TCP control/monitor plugin for load banks from multiple suppliers. Operators select a loadbank model from a dropdown (different register maps), configure IP settings, and upon exiting configuration the plugin auto-connects and maintains a constant connection throughout the test session. Supports both manual operator control and automated cycle-driven setpoints.
 
 ### Scope
-- Transport: Modbus TCP
+- Transport: Modbus TCP (pymodbus with `_modbus_compat.py` version shim)
 - Model support: multiple suppliers/models via model map files
 - Functionality:
   - Configure host, port, unit-id
-  - Select loadbank model (predefined register map)
-  - Test connection in configuration UI
+  - Select primary and optional secondary loadbank models (predefined register maps)
   - Auto-connect and keep-alive after configuration
-  - Provide control channels used by UI and Cycle plugin (setpoint/accept)
-  - Provide status/measurement channels for monitoring and recording (aligned to R)
+  - Provide control channels used by UI and Cycle plugin (setpoint in kW)
+  - Provide status/measurement channels for monitoring and recording
+  - Recording telemetry: `lDG_Fan`, `lPO_LdbAct`, `lPO_LdbStp`, `lCT_Ldb1/2/3`, `lVO_Ldb1/2/3`
 
 ### Model Maps
 - Each supported loadbank model has a model map YAML in `configs/loadbanks/<model>.yaml`
-- Map defines addresses, types, scaling, limits for:
-  - Commands: load setpoint write, accept/apply, optional mode bits
-  - Status: measured load, status words, fault bits, ready, comms health
-- Example model map (YAML):
+- Currently supported: `Simplex-1.5MW.yaml` (A-side), `Simplex-750kW.yaml` (B-side)
+- Map defines:
+  - `address_base`: `0` or `1` (vendor documentation offset; plugin adjusts to 0-based wire addresses)
+  - `commands.setpoint`: coil array (FC15) step-based load control with `steps_kw` array and greedy descending step selection
+  - `commands.control_enable_a`: coil array for Take Control, Fan Power, Master Load
+  - `indicators`: coil reads (FC1) for fan status, control available, normal operation, etc.
+  - `status`: register reads (FC3/FC4) for metering — voltage, current, power, frequency as float32 with configurable `word_order` (`AB` or `BA`)
+  - `heartbeat`: optional periodic coil toggle for keepalive
 
-```yaml
-# configs/loadbanks/Acme-LB100.yaml
-model: "Acme-LB100"
-commands:
-  setpoint:
-    fc: 6                 # write single holding register
-    address: 40100
-    type: uint16
-    ui_unit: "%"         # UI percent 0..100 → register via scaling
-    scaling: { m: 10.0, b: 0.0 }  # 1% → +10 register units
-    min: 0
-    max: 100
-    confirm_readback: true
-  accept:
-    fc: 5                 # write single coil
-    address: 1
-status:
-  measured_load:
-    fc: 3                 # read holding register
-    address: 41000
-    type: uint16
-    scaling: { m: 0.1, b: 0.0, unit: "%" }
-    poll_hz: 2
-  faults_word:
-    fc: 3
-    address: 41010
-    type: uint16
-    poll_hz: 1
-  ready_bit:
-    fc: 2                 # read discrete input
-    address: 10
-    poll_hz: 2
-```
+#### Float32 Word Order
+Metering registers (voltage, current, power, frequency) are decoded as IEEE 754 float32 from two consecutive 16-bit Modbus registers. The `word_order` field controls register pairing:
+- `AB`: high word first (register N = MSW, N+1 = LSW)
+- `BA`: low word first (register N = LSW, N+1 = MSW) — **used by Simplex loadbanks**
+
+#### Step-Based Setpoint (Simplex)
+Load is applied via a coil array where each coil represents a load step (e.g., 300kW, 200kW, 150kW, 50kW, 25kW, 25kW for 750kW). The plugin uses a greedy descending algorithm to select the optimal combination of steps for a given kW target:
+1. Sort steps descending
+2. For each step, include if remaining target >= step value
+3. Write coil array via FC15 (multiple coils)
 
 ### Configuration (YAML)
 File: `configs/loadbank.yaml`
 
 ```yaml
-recording_rate_hz: 100
-
-connection:
-  host: "192.168.1.60"
-  port: 502
-  unit_id: 1
-  timeout_ms: 200
-  max_retries: 3
-
-model:
-  selected: "Acme-LB100"                  # dropdown of available models (from configs/loadbanks/*.yaml)
-  map_file: "configs/loadbanks/Acme-LB100.yaml"
-
-polling:
-  default_status_poll_hz: 2               # used when model map does not specify
-
+enabled: true
+mode: real
+load_banks:
+  primary:
+    model: Simplex 1.5MW
+    map_file: configs/loadbanks/Simplex-1.5MW.yaml
+    ip_address: 192.168.100.1
+    port: 502
+    unit_id: 1
+    enabled: true
+  secondary:
+    model: None
+    enabled: false
 safety:
-  setpoint_limits_percent: { min: 0, max: 100 }
-  require_accept_confirmation: true
+  setpoint_limits_percent:
+    min: 0
+    max: 1500
   rate_limit_setpoint_hz: 1
-
 expose_channels:
-  measured_load_alias: "LB Measured Load"
-  ready_alias: "LB Ready"
-  faults_alias: "LB Faults"
-  setpoint_alias: "LB Setpoint"          # command echo channel recorded at R
-  accept_alias: "LB Accept"              # command event channel recorded at R
+  measured_load_alias: lPO_LdbAct
+  setpoint_alias: lPO_LdbStp
+  fan_alias: lDG_Fan
+  voltage_ab_alias: lVO_Ldb1
+  voltage_bc_alias: lVO_Ldb2
+  voltage_ca_alias: lVO_Ldb3
+  current_l1_alias: lCT_Ldb1
+  current_l2_alias: lCT_Ldb2
+  current_l3_alias: lCT_Ldb3
+  frequency_alias: LB Frequency
 ```
 
-#### Validation Rules
-- `model.selected` must correspond to an existing model map; `map_file` readable and schema-valid
-- `connection.host`/`port`/`unit_id` types valid; timeouts/retries non-negative
-- Model map `commands.setpoint` must define min/max; enforce against `safety.setpoint_limits_percent` if present
-- Aliases required and unique across enabled names
+### Operator Control Workflow
+All controls are user-driven; nothing activates automatically at startup:
 
-### UI Flow
-- Right-click LoadBank tile → Configure:
-  1) Pick `model.selected` from dropdown (populated from `configs/loadbanks/*.yaml`)
-  2) Set IP config: host, port, unit-id, timeouts
-  3) Test Connection button: attempts connect, performs a lightweight read (e.g., status or identity)
-  4) Save
-- On exiting configuration: plugin auto-connects and maintains connection; auto-reconnect with backoff if dropped
-- Context actions: Show Error, Reset Error (disconnect/reconnect), Configure
+1. **Take Control**: user toggles in UI -> writes control coil to claim the loadbank from other systems
+2. **Fan Power**: user toggles in UI -> writes fan coil (requires Take Control active; hardware-enforced). Fan is shared between A/B sides — app will not turn off a fan that's already on.
+3. **Set Load + Apply Load**: user enters kW value and clicks Apply Load -> sends `master_load(True)` + `setpoint_kw(value)`. Master Load enables the hardware load switch; setpoint writes the step coil array.
+4. **Emergency Stop / Zero Load**: sends `setpoint_kw(0)` + `master_load(False)` — immediately drops all load.
 
-### Acquisition & Control
-- Status reads: polled at per-point `poll_hz` from the model map, or `polling.default_status_poll_hz` if unspecified; aligned to R grid using last-value-hold
-- Commands:
-  - Setpoint: percent 0..100 entered by UI/Cycle; scaled to register; rate-limited; optional confirm_readback
-  - Accept: momentary coil write; optionally confirm by reading coil or status
-- Command echoes: record last commanded setpoint and accept events at R for traceability
+Initial state: `_control_values_a = [False, False, False]` (Take Control off, Fan off, Master Load off).
+
+### UI
+- **Configuration dialog** (right-click tile -> Configure): primary/secondary model dropdowns (populated from `configs/loadbanks/*.yaml` plus "None"), IP/port/unit-id fields
+- **Operator panel** (console panel button): Take Control toggle, Fan Power toggle, Load Setpoint spinner + Apply Load button, Emergency Stop button, live metering readback (voltage, current, power, frequency, fan status), Cycle Control section (see Cycle plugin docs)
 
 ### Integration with Cycle Plugin
-- Cycle issues setpoint targets over time; LoadBank applies setpoint and, if configured, requires operator “Accept”
-- Pause/stop/restart/skip from Cycle are forwarded as needed; comms loss triggers E-stop via calculated channel logic (outside of LoadBank)
+- When the Cycle plugin plays, the orchestrator enables Master Load automatically and begins piping setpoints
+- Setpoint commands are sent only when the value changes (change-detection, not every tick)
+- On cycle pause: last setpoint held, Master Load stays on
+- On cycle complete: last setpoint held (cycles typically end at 0kW); operator uses Emergency Stop to drop load
+- On cycle restart (Play from complete): resets to beginning and runs again
 
 ### Outputs and Metadata
-- Metadata includes: model name, map file path, connection details (host, port, unit-id), command and status mapping
-- Recorded channels include: measured load, readiness, faults word/flags, command echoes
+- Metadata includes: model name, map file path, connection details (host, port, unit-id)
+- Recorded channels: `lDG_Fan` (fan boolean), `lPO_LdbAct` (actual power kW), `lPO_LdbStp` (setpoint kW), `lCT_Ldb1/2/3` (phase currents A), `lVO_Ldb1/2/3` (phase voltages V), plus frequency and indicator channels
 
-### Error Conditions (Examples)
-- Connection failure/timeouts → UI red; Show Error details; auto-retry with backoff
-- Illegal function/address per selected model map → validation error
-- Confirm readback mismatch on setpoint → warning, retry or surface to UI
-
-### Test Cases (LoadBank)
-- LB-Models-001: Model dropdown lists all maps; selection loads correct addresses/types
-- LB-ConnTest-001: Test Connection succeeds/fails appropriately (mock server)
-- LB-AutoConnect-001: After saving, auto-connect and keep-alive; auto-reconnect on drop
-- LB-Setpoint-001: Apply setpoint within limits; scaling correct; confirm readback
-- LB-Accept-001: Accept command writes coil; event recorded
-- LB-Status-001: Status points polled at configured rates; aligned to R grid
-- LB-ErrorUI-001: Show Error/Reset Error behavior on simulated faults
-
-
+### Error Conditions
+- Connection failure/timeouts -> auto-retry with backoff
+- Metering zeros after power cycle -> hardware issue; requires loadbank reboot
+- Float32 garbage values -> check `word_order` in model map YAML (AB vs BA)

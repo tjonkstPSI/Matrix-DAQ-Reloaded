@@ -413,13 +413,20 @@ class NiDAQPlugin(BasePlugin):
 
     # --- Public command APIs ---
 
+    _do_write_diag_count: int = 0
+
     def write_do(self, alias: str, state: int) -> None:
         try:
             self._do_states[str(alias)] = int(bool(state))
             if self.mode == "real" and self._do_tasks:
                 self._write_do_hardware()
-        except Exception:
-            pass
+            elif self._do_write_diag_count < 5:
+                print(f"[NIDAQ] write_do SKIPPED: alias={alias} state={state} mode={self.mode} do_tasks={len(self._do_tasks)}")
+                self._do_write_diag_count += 1
+        except Exception as exc:
+            if self._do_write_diag_count < 10:
+                print(f"[NIDAQ] write_do ERROR: alias={alias} state={state} exc={exc}")
+                self._do_write_diag_count += 1
 
     def write_ao(self, alias: str, value: float) -> None:
         try:

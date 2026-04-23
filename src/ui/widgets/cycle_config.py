@@ -1,4 +1,4 @@
-# Author: T. Onkst | Date: 03092026
+# Author: T. Onkst | Date: 04212026
 
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ class CycleConfigDialog(QDialog):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Configure Cycle")
-        self.resize(720, 620)
+        self.resize(720, 520)
         self._project_root = Path(__file__).resolve().parents[3]
         self._cfg_path = self._project_root / "configs" / "cycle.yaml"
         self._cfg: Dict[str, Any] = {}
@@ -52,17 +52,7 @@ class CycleConfigDialog(QDialog):
     def _init_ui(self) -> None:
         root = QVBoxLayout(self)
 
-        self.chk_enabled = QCheckBox("Plugin enabled")
-        root.addWidget(self.chk_enabled)
-
-        top = QFormLayout()
-        self.spin_rate = QSpinBox(self)
-        self.spin_rate.setRange(1, 1000)
-        self.spin_rate.setValue(10)
-        top.addRow("Recording rate (Hz)", self.spin_rate)
-        root.addLayout(top)
-
-        src_box = QGroupBox("CSV source")
+        src_box = QGroupBox("CSV Source")
         sf = QVBoxLayout(src_box)
         row = QHBoxLayout()
         self.txt_csv = QLineEdit(self)
@@ -105,47 +95,14 @@ class CycleConfigDialog(QDialog):
         self.spin_loops = QSpinBox(self)
         self.spin_loops.setRange(1, 100000)
         self.spin_loops.setValue(1)
+        self.chk_start_with_test = QCheckBox("Start with test")
         self.spin_dwell = QSpinBox(self)
         self.spin_dwell.setRange(0, 86400)
         self.spin_dwell.setValue(0)
-        self.cmb_restart = QComboBox(self)
-        self.cmb_restart.addItems(["restart_loop", "hold", "stop"])
-        self.cmb_skip = QComboBox(self)
-        self.cmb_skip.addItems(["next_row", "hold", "abort"])
-        self.cmb_interp = QComboBox(self)
-        self.cmb_interp.addItems(["none", "linear"])
         ef.addRow("Loops total", self.spin_loops)
+        ef.addRow(self.chk_start_with_test)
         ef.addRow("Inter-loop dwell (s)", self.spin_dwell)
-        ef.addRow("Restart policy", self.cmb_restart)
-        ef.addRow("Skip behavior", self.cmb_skip)
-        ef.addRow("Interpolation", self.cmb_interp)
         root.addWidget(ex)
-
-        integ = QGroupBox("Integration (load bank)")
-        ig = QFormLayout(integ)
-        self.chk_lb_req = QCheckBox("Accept required")
-        self.txt_lb_units = QLineEdit(self)
-        self.txt_ramp = QLineEdit(self)
-        self.txt_ramp.setPlaceholderText("null = no limit")
-        ig.addRow(self.chk_lb_req)
-        ig.addRow("Load units", self.txt_lb_units)
-        ig.addRow("Ramp limit (%/s)", self.txt_ramp)
-        root.addWidget(integ)
-
-        safe = QGroupBox("Optional safety")
-        sg = QFormLayout(safe)
-        self.chk_safe = QCheckBox("Enabled")
-        self.txt_watch = QLineEdit(self)
-        self.txt_lim_hi = QLineEdit(self)
-        self.txt_backoff = QLineEdit(self)
-        self.spin_cool = QSpinBox(self)
-        self.spin_cool.setRange(0, 86400)
-        sg.addRow(self.chk_safe)
-        sg.addRow("Watch channel", self.txt_watch)
-        sg.addRow("Limit high", self.txt_lim_hi)
-        sg.addRow("Backoff (kW)", self.txt_backoff)
-        sg.addRow("Cooloff (s)", self.spin_cool)
-        root.addWidget(safe)
 
         btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=self)
         btns.accepted.connect(self._on_accept)  # type: ignore
@@ -342,11 +299,6 @@ class CycleConfigDialog(QDialog):
     def _load(self, defer_preview: bool = False) -> None:
         self._cfg = self._read_yaml(self._cfg_path)
         c = self._cfg
-        self.chk_enabled.setChecked(bool(c.get("enabled", False)))
-        try:
-            self.spin_rate.setValue(int(float(c.get("recording_rate_hz", 10))))
-        except Exception:
-            self.spin_rate.setValue(10)
 
         src = (c.get("source") or {}) if isinstance(c.get("source"), dict) else {}
         self.txt_csv.setText(str(src.get("csv_path", "") or ""))
@@ -363,57 +315,19 @@ class CycleConfigDialog(QDialog):
             self.spin_loops.setValue(int(ex.get("loops_total", 1)))
         except Exception:
             self.spin_loops.setValue(1)
+        self.chk_start_with_test.setChecked(bool(ex.get("start_with_test", False)))
         try:
             self.spin_dwell.setValue(int(ex.get("inter_loop_dwell_s", 0)))
         except Exception:
             self.spin_dwell.setValue(0)
-        for combo, key, default in (
-            (self.cmb_restart, "restart_policy", "restart_loop"),
-            (self.cmb_skip, "skip_behavior", "next_row"),
-            (self.cmb_interp, "interpolation", "none"),
-        ):
-            v = str(ex.get(key, default))
-            i = combo.findText(v)
-            combo.setCurrentIndex(i if i >= 0 else 0)
-
-        lb = ((c.get("integration") or {}).get("loadbank") or {}) if isinstance(c.get("integration"), dict) else {}
-        if isinstance(lb, dict):
-            self.chk_lb_req.setChecked(bool(lb.get("accept_required", False)))
-            self.txt_lb_units.setText(str(lb.get("units", "kW")))
-            sm = (lb.get("smoothing") or {}) if isinstance(lb.get("smoothing"), dict) else {}
-            rl = sm.get("ramp_limit_pct_per_s")
-            self.txt_ramp.setText("" if rl is None else str(rl))
-
-        osafe = (c.get("optional_safety") or {}) if isinstance(c.get("optional_safety"), dict) else {}
-        self.chk_safe.setChecked(bool(osafe.get("enabled", False)))
-        self.txt_watch.setText("" if osafe.get("watch_channel") is None else str(osafe.get("watch_channel")))
-        lh = osafe.get("limit_high")
-        self.txt_lim_hi.setText("" if lh is None else str(lh))
-        bo = osafe.get("backoff_kw")
-        self.txt_backoff.setText("" if bo is None else str(bo))
-        try:
-            self.spin_cool.setValue(int(float(osafe.get("cooloff_s", 0))))
-        except Exception:
-            self.spin_cool.setValue(0)
 
         if defer_preview:
             QTimer.singleShot(100, self._refresh_preview)
         else:
             self._refresh_preview()
 
-    def _opt_float(self, s: str) -> Any:
-        s = s.strip()
-        if not s:
-            return None
-        try:
-            return float(s)
-        except Exception:
-            return None
-
     def _build_doc(self) -> Dict[str, Any]:
-        doc: Dict[str, Any] = dict(self._cfg)
-        doc["enabled"] = self.chk_enabled.isChecked()
-        doc["recording_rate_hz"] = int(self.spin_rate.value())
+        doc: Dict[str, Any] = {}
         doc["source"] = {
             "csv_path": self.txt_csv.text().strip() or "configs/cycles/demo.csv",
             "columns": {
@@ -423,31 +337,8 @@ class CycleConfigDialog(QDialog):
         }
         doc["execution"] = {
             "loops_total": int(self.spin_loops.value()),
+            "start_with_test": self.chk_start_with_test.isChecked(),
             "inter_loop_dwell_s": int(self.spin_dwell.value()),
-            "restart_policy": self.cmb_restart.currentText(),
-            "skip_behavior": self.cmb_skip.currentText(),
-            "interpolation": self.cmb_interp.currentText(),
-        }
-        ramp = self.txt_ramp.text().strip()
-        ramp_val = None
-        if ramp:
-            try:
-                ramp_val = float(ramp)
-            except Exception:
-                ramp_val = None
-        doc["integration"] = {
-            "loadbank": {
-                "accept_required": self.chk_lb_req.isChecked(),
-                "units": self.txt_lb_units.text().strip() or "kW",
-                "smoothing": {"ramp_limit_pct_per_s": ramp_val},
-            }
-        }
-        doc["optional_safety"] = {
-            "enabled": self.chk_safe.isChecked(),
-            "watch_channel": self.txt_watch.text().strip() or None,
-            "limit_high": self._opt_float(self.txt_lim_hi.text()),
-            "backoff_kw": self._opt_float(self.txt_backoff.text()),
-            "cooloff_s": int(self.spin_cool.value()),
         }
         return doc
 
