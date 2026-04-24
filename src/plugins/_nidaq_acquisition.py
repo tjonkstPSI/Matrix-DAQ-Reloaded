@@ -1,9 +1,10 @@
-# Author: T. Onkst | Date: 03092026
+# Author: T. Onkst | Date: 04212026
 
 from __future__ import annotations
 
 import time
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, Any, List, TYPE_CHECKING
 
 from ._nidaq_scaling import apply_scaling, convert_temp_unit
@@ -12,136 +13,198 @@ if TYPE_CHECKING:
     from .ni_daq import NiDAQPlugin
 
 
-def read_real(p: NiDAQPlugin) -> Dict[str, Any]:
+def _read_fast_ai(p: NiDAQPlugin) -> Dict[str, Any]:
+    """Copy latest values from fast AI reader threads (non-blocking)."""
     vals: Dict[str, Any] = {}
     any_success = False
-    try:
-        if p._inject_fail_remaining > 0:
-            p._inject_fail_remaining -= 1
-            raise RuntimeError("Injected NI_DAQ read failure (test)")
-        rec_rate = float(p._sim_rate_hz) if p._sim_rate_hz > 0 else 10.0
-        n = max(1, p._oversample_factor)
-        margin = float(p._read_timeout_margin_s)
-        fast_rate = max(1.0, float(p._fast_rate) or 1.0)
-        timeout_fast = max((n / fast_rate) + margin, 2.5 / max(1.0, rec_rate))
-        timeout_temp = max((1.0 / max(1.0, rec_rate)) + margin, 2.5 / max(1.0, rec_rate))
-        timeout_di = max((1.0 / max(1.0, rec_rate)) + margin, 2.0 / max(1.0, rec_rate))
+    n = max(1, p._oversample_factor)
 
-        if p._fast_tasks:
-            if p._threaded_fast_ai and p._fast_reader_threads:
-                any_success = _read_threaded_fast_ai(p, vals, n)
-            else:
-                if not p._fast_path_printed:
-                    try:
-                        print("[NIDAQ] read: using LEGACY fast-AI path")
-                    except Exception:
-                        pass
-                    p._fast_path_printed = True
-                any_success = _read_legacy_fast_ai(p, vals, n, timeout_fast)
-
-        temp_unit_map = getattr(p, "_temp_unit_map", None)
-        if temp_unit_map is None:
-            temp_unit_map = {}
-            for ch in p._ai_temp:
-                a = ch.get("alias")
-                if a:
-                    temp_unit_map[str(a)] = str(ch.get("unit", "C"))
-
-        if p._temp_tasks:
-            for tt in p._temp_tasks:
-                task = tt.get("task")
-                aliases = list(tt.get("aliases", []) or [])
-                if task is None or not aliases:
-                    continue
+    if p._fast_tasks:
+        if p._threaded_fast_ai and p._fast_reader_threads:
+            any_success = _read_threaded_fast_ai(p, vals, n)
+        else:
+            if not p._fast_path_printed:
                 try:
-                    temp_samples = task.read(number_of_samples_per_channel=1, timeout=timeout_temp)
-                    if isinstance(temp_samples, list) and temp_samples and isinstance(temp_samples[0], list):
-                        for idx, alias in enumerate(aliases):
-                            try:
-                                raw_c = float(temp_samples[idx][0])
-                                vals[alias] = convert_temp_unit(raw_c, temp_unit_map.get(alias, "C"))
-                                any_success = True
-                            except Exception:
-                                continue
-                    elif isinstance(temp_samples, list):
-                        try:
-                            raw_c = float(temp_samples[0])
-                            vals[aliases[0]] = convert_temp_unit(raw_c, temp_unit_map.get(aliases[0], "C"))
-                            any_success = True
-                        except Exception:
-                            pass
+                    print("[NIDAQ] read: using LEGACY fast-AI path")
                 except Exception:
                     pass
+                p._fast_path_printed = True
+            rec_rate = float(p._sim_rate_hz) if p._sim_rate_hz > 0 else 10.0
+            margin = float(p._read_timeout_margin_s)
+            fast_rate = max(1.0, float(p._fast_rate) or 1.0)
+            timeout_fast = max((n / fast_rate) + margin, 2.5 / max(1.0, rec_rate))
+            any_success = _read_legacy_fast_ai(p, vals, n, timeout_fast)
 
-        if p._di_tasks:
-            for dt in p._di_tasks:
-                task = dt.get("task")
-                aliases = list(dt.get("aliases", []) or [])
-                device = str(dt.get("device", ""))
-                if task is None or not aliases:
-                    continue
-                try:
-                    di_vals = task.read(number_of_samples_per_channel=1, timeout=timeout_di)
-                    if isinstance(di_vals, list) and di_vals and isinstance(di_vals[0], list):
-                        for idx, alias in enumerate(aliases):
-                            v = di_vals[idx][0]
-                            vals[alias] = int(bool(v))
-                            any_success = True
-                    elif isinstance(di_vals, list):
-                        for idx, alias in enumerate(aliases):
-                            if idx < len(di_vals):
-                                vals[alias] = int(bool(di_vals[idx]))
-                                any_success = True
-                    else:
-                        vals[aliases[0]] = int(bool(di_vals))
-                        any_success = True
-                    try:
-                        if p._di_read_diag_count < 5:
-                            if isinstance(di_vals, list) and di_vals and isinstance(di_vals[0], list):
-                                shape = f"list[{len(di_vals)}x{len(di_vals[0])}]"
-                                sample_preview = [int(bool(x[0])) for x in di_vals[:min(3, len(di_vals))]]
-                            elif isinstance(di_vals, list):
-                                shape = f"list[{len(di_vals)}]"
-                                sample_preview = [int(bool(x)) for x in di_vals[:min(3, len(di_vals))]]
-                            else:
-                                shape = "scalar"
-                                sample_preview = [int(bool(di_vals))]
-                            print(f"[NIDAQ] DI read diag: device={device} shape={shape} aliases={aliases[:3]} values={sample_preview}")
-                            p._di_read_diag_count += 1
-                    except Exception:
-                        pass
-                except Exception:
-                    pass
-
-        for alias, state in p._do_states.items():
-            vals[alias] = int(state)
-        for alias, state in p._ao_states.items():
-            vals[alias] = float(state)
-
+    if any_success:
         try:
-            now = time.time()
-            if any_success:
-                p._health["last_good_read_ts"] = now
-                p._health["consec_failures"] = 0
-                p._health["last_error"] = ""
-            else:
-                if now >= float(p._fast_warmup_until or 0.0):
-                    p._health["consec_failures"] = int(p._health.get("consec_failures", 0)) + 1
-                    p._health["last_error"] = "read_error"
+            p._health["last_good_read_ts"] = time.time()
+            p._health["consec_failures"] = 0
+            p._health["last_error"] = ""
         except Exception:
             pass
-    except Exception:
-        try:
-            now = time.time()
-            if now >= float(p._fast_warmup_until or 0.0):
-                p._health["consec_failures"] = int(p._health.get("consec_failures", 0)) + 1
-                p._health["last_error"] = "read_error"
+    return vals
+
+
+def _read_one_temp_task(
+    tt: Dict[str, Any],
+    timeout_temp: float,
+    temp_unit_map: Dict[str, str],
+) -> Dict[str, Any]:
+    """Read a single temperature DAQmx task (thread-safe, no shared state).
+
+    For hw-timed tasks: read all available samples from the buffer and take the
+    last (most recent) value per channel.
+    For on-demand tasks: request exactly 1 sample (triggers ADC conversion).
+    """
+    vals: Dict[str, Any] = {}
+    task = tt.get("task")
+    aliases = list(tt.get("aliases", []) or [])
+    if task is None or not aliases:
+        return vals
+
+    hw_timed = bool(tt.get("hw_timed", False))
+
+    try:
+        if hw_timed:
             try:
-                print("[NIDAQ] _read_real error; consec_failures=", p._health.get("consec_failures", "?"))
+                avail = int(getattr(task.in_stream, "avail_samp_per_chan", 0))
+            except Exception:
+                avail = 0
+            if avail < 1:
+                return vals
+            temp_samples = task.read(
+                number_of_samples_per_channel=avail,
+                timeout=0.0,
+            )
+        else:
+            temp_samples = task.read(
+                number_of_samples_per_channel=1,
+                timeout=timeout_temp,
+            )
+
+        if isinstance(temp_samples, list) and temp_samples and isinstance(temp_samples[0], list):
+            for idx, alias in enumerate(aliases):
+                try:
+                    raw_c = float(temp_samples[idx][-1])
+                    vals[alias] = convert_temp_unit(raw_c, temp_unit_map.get(alias, "C"))
+                except Exception:
+                    continue
+        elif isinstance(temp_samples, list):
+            try:
+                raw_c = float(temp_samples[-1] if hw_timed else temp_samples[0])
+                vals[aliases[0]] = convert_temp_unit(raw_c, temp_unit_map.get(aliases[0], "C"))
             except Exception:
                 pass
+    except Exception:
+        pass
+    return vals
+
+
+def _read_slow_channels(p: NiDAQPlugin) -> Dict[str, Any]:
+    """Read temperature and DI channels.
+
+    Temperature tasks are read in parallel (one thread per module) to cut
+    total blocking time roughly in half when multiple TC modules are present.
+    """
+    vals: Dict[str, Any] = {}
+    any_success = False
+    rec_rate = float(p._sim_rate_hz) if p._sim_rate_hz > 0 else 10.0
+    margin = float(p._read_timeout_margin_s)
+    timeout_temp = max((1.0 / max(1.0, rec_rate)) + margin, 2.5 / max(1.0, rec_rate))
+    timeout_di = max((1.0 / max(1.0, rec_rate)) + margin, 2.0 / max(1.0, rec_rate))
+
+    if p._inject_fail_remaining > 0:
+        p._inject_fail_remaining -= 1
+        return vals
+
+    temp_unit_map = getattr(p, "_temp_unit_map", None)
+    if temp_unit_map is None:
+        temp_unit_map = {}
+        for ch in p._ai_temp:
+            a = ch.get("alias")
+            if a:
+                temp_unit_map[str(a)] = str(ch.get("unit", "C"))
+
+    if p._temp_tasks:
+        valid_tasks = [tt for tt in p._temp_tasks if tt.get("task") and tt.get("aliases")]
+        if len(valid_tasks) > 1:
+            with ThreadPoolExecutor(max_workers=len(valid_tasks)) as pool:
+                futures = {
+                    pool.submit(_read_one_temp_task, tt, timeout_temp, temp_unit_map): tt
+                    for tt in valid_tasks
+                }
+                for fut in as_completed(futures):
+                    try:
+                        result = fut.result()
+                        if result:
+                            vals.update(result)
+                            any_success = True
+                    except Exception:
+                        pass
+        elif valid_tasks:
+            result = _read_one_temp_task(valid_tasks[0], timeout_temp, temp_unit_map)
+            if result:
+                vals.update(result)
+                any_success = True
+
+    if p._di_tasks:
+        for dt in p._di_tasks:
+            task = dt.get("task")
+            aliases = list(dt.get("aliases", []) or [])
+            device = str(dt.get("device", ""))
+            if task is None or not aliases:
+                continue
+            try:
+                di_vals = task.read(number_of_samples_per_channel=1, timeout=timeout_di)
+                if isinstance(di_vals, list) and di_vals and isinstance(di_vals[0], list):
+                    for idx, alias in enumerate(aliases):
+                        v = di_vals[idx][0]
+                        vals[alias] = int(bool(v))
+                        any_success = True
+                elif isinstance(di_vals, list):
+                    for idx, alias in enumerate(aliases):
+                        if idx < len(di_vals):
+                            vals[alias] = int(bool(di_vals[idx]))
+                            any_success = True
+                else:
+                    vals[aliases[0]] = int(bool(di_vals))
+                    any_success = True
+                try:
+                    if p._di_read_diag_count < 5:
+                        if isinstance(di_vals, list) and di_vals and isinstance(di_vals[0], list):
+                            shape = f"list[{len(di_vals)}x{len(di_vals[0])}]"
+                            sample_preview = [int(bool(x[0])) for x in di_vals[:min(3, len(di_vals))]]
+                        elif isinstance(di_vals, list):
+                            shape = f"list[{len(di_vals)}]"
+                            sample_preview = [int(bool(x)) for x in di_vals[:min(3, len(di_vals))]]
+                        else:
+                            shape = "scalar"
+                            sample_preview = [int(bool(di_vals))]
+                        print(f"[NIDAQ] DI read diag: device={device} shape={shape} aliases={aliases[:3]} values={sample_preview}")
+                        p._di_read_diag_count += 1
+                except Exception:
+                    pass
+            except Exception:
+                pass
+
+    if any_success:
+        try:
+            p._health["last_good_read_ts"] = time.time()
+            p._health["consec_failures"] = 0
+            p._health["last_error"] = ""
         except Exception:
             pass
+    return vals
+
+
+def read_real(p: NiDAQPlugin) -> Dict[str, Any]:
+    """Full read of all channel types (used by legacy callers and sim fallback)."""
+    vals = _read_fast_ai(p)
+    vals.update(_read_slow_channels(p))
+    for alias, state in p._do_states.items():
+        vals[alias] = int(state)
+    for alias, state in p._ao_states.items():
+        vals[alias] = float(state)
     return vals
 
 
@@ -327,25 +390,118 @@ def _read_legacy_fast_ai(p: NiDAQPlugin, vals: Dict[str, Any], n: int, timeout_f
 
 
 def start_snapshot_worker(p: NiDAQPlugin) -> None:
+    """Start decoupled snapshot workers.
+
+    Fast path: copies AI voltage from reader threads + DO/AO states using a
+    monotonic deadline loop for precise tick-rate cadence.
+
+    Slow path: reads temperature and DI as fast as the hardware can sustain
+    (no artificial sleep) and caches results for the fast path to merge.
+    """
     try:
         if p._snapshot_thread is not None and getattr(p._snapshot_thread, "is_alive", lambda: False)():
             return
         p._snapshot_stop.clear()
 
-        def _loop() -> None:
+        slow_vals: Dict[str, Any] = {}
+        slow_lock = threading.Lock()
+
+        def _slow_loop() -> None:
+            """Continuously read temp + DI at hardware's natural rate."""
+            _polls = 0
+            _data_reads = 0
+            _last_diag_ts = time.monotonic()
             while not p._snapshot_stop.is_set():
                 try:
-                    vals = read_real(p)
+                    new_slow = _read_slow_channels(p)
+                    _polls += 1
+                    if new_slow:
+                        with slow_lock:
+                            slow_vals.update(new_slow)
+                        _data_reads += 1
                 except Exception:
-                    vals = {}
-                p._append_health_channels(vals)
-                with p._snapshot_lock:
-                    p._snapshot_values = dict(vals)
-                p._snapshot_stop.wait(p._snapshot_period_s)
+                    pass
+                now = time.monotonic()
+                if now - _last_diag_ts >= 5.0:
+                    try:
+                        elapsed = max(0.001, now - _last_diag_ts)
+                        data_hz = _data_reads / elapsed
+                        print(f"[NIDAQ] slow loop: {_data_reads} data updates "
+                              f"in 5s ({data_hz:.1f} Hz), "
+                              f"{_polls} polls, "
+                              f"{len(slow_vals)} ch cached")
+                    except Exception:
+                        pass
+                    _polls = 0
+                    _data_reads = 0
+                    _last_diag_ts = now
+                p._snapshot_stop.wait(0.001)
 
-        t = threading.Thread(target=_loop, daemon=True)
-        t.start()
-        p._snapshot_thread = t
+        def _fast_loop() -> None:
+            """Copy fast AI + slow cache + DO/AO into snapshot at tick rate."""
+            period = p._snapshot_period_s
+            deadline = time.monotonic() + period
+            _ticks = 0
+            _last_diag_ts = time.monotonic()
+            while not p._snapshot_stop.is_set():
+                try:
+                    vals: Dict[str, Any] = {}
+                    fast = _read_fast_ai(p)
+                    vals.update(fast)
+
+                    with slow_lock:
+                        vals.update(slow_vals)
+
+                    for alias, state in p._do_states.items():
+                        vals[alias] = int(state)
+                    for alias, state in p._ao_states.items():
+                        vals[alias] = float(state)
+
+                    p._append_health_channels(vals)
+                    with p._snapshot_lock:
+                        p._snapshot_values = dict(vals)
+                    _ticks += 1
+                except Exception:
+                    pass
+
+                now = time.monotonic()
+                if now - _last_diag_ts >= 5.0:
+                    try:
+                        hz = _ticks / max(0.001, now - _last_diag_ts)
+                        print(f"[NIDAQ] fast loop: {_ticks} snapshots in 5s "
+                              f"({hz:.1f} Hz), {len(fast)} fast + "
+                              f"{len(slow_vals)} slow cached")
+                    except Exception:
+                        pass
+                    _ticks = 0
+                    _last_diag_ts = now
+
+                sleep_s = max(0.0, deadline - time.monotonic())
+                if sleep_s > 0:
+                    p._snapshot_stop.wait(sleep_s)
+                now_m = time.monotonic()
+                if now_m > deadline + period:
+                    deadline = now_m + period
+                else:
+                    deadline += period
+
+        has_slow = bool(p._temp_tasks or p._di_tasks)
+        if has_slow:
+            t_slow = threading.Thread(target=_slow_loop, daemon=True)
+            t_slow.start()
+            try:
+                print("[NIDAQ] slow channel reader thread started (temp + DI, no sleep)")
+            except Exception:
+                pass
+
+        t_fast = threading.Thread(target=_fast_loop, daemon=True)
+        t_fast.start()
+        p._snapshot_thread = t_fast
+        try:
+            print(f"[NIDAQ] snapshot worker started (decoupled={has_slow}, "
+                  f"fast_period={p._snapshot_period_s*1000:.0f}ms)")
+        except Exception:
+            pass
     except Exception:
         p._snapshot_thread = None
 

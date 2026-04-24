@@ -48,6 +48,9 @@ class NiDAQPlugin(BasePlugin):
         self._oversample_applies_to: str = "voltage"
         self._filter_type: str = "butterworth"
         self._butterworth_order: int = 4
+        self._temp_adc_timing_mode: str = "default"
+        self._temp_auto_zero: str = "default"
+        self._temp_sample_rate_hz: float = 4.0
         self._core_tick_rate_hz: float = 0.0
         self._temp_unit_map: Dict[str, str] = {}
         self._sim_rate_hz: float = 10.0
@@ -137,10 +140,15 @@ class NiDAQPlugin(BasePlugin):
             self._oversample_applies_to = str(ovs.get("applies_to", self._oversample_applies_to))
             self._filter_type = str(ovs.get("filter", self._filter_type)).lower()
             self._butterworth_order = int(ovs.get("butterworth_order", self._butterworth_order))
+            temp_cfg = acq.get("temperature") or {}
+            self._temp_adc_timing_mode = str(temp_cfg.get("adc_timing_mode", self._temp_adc_timing_mode)).lower()
+            self._temp_auto_zero = str(temp_cfg.get("auto_zero", self._temp_auto_zero)).lower()
+            self._temp_sample_rate_hz = float(temp_cfg.get("sample_rate_hz", self._temp_sample_rate_hz))
             try:
                 print(f"[NIDAQ] configure: threaded_fast_ai={self._threaded_fast_ai} "
                       f"oversample={self._oversample_factor}x applies_to={self._oversample_applies_to} "
-                      f"filter={self._filter_type} tick_rate={self._sim_rate_hz}Hz")
+                      f"filter={self._filter_type} tick_rate={self._sim_rate_hz}Hz "
+                      f"temp_adc={self._temp_adc_timing_mode} temp_autozero={self._temp_auto_zero}")
             except Exception:
                 pass
         except Exception:

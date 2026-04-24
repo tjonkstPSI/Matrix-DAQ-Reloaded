@@ -22,8 +22,11 @@ Acquire NI cDAQ data (AI voltage, AI temp, DI, DO, AO) with robust real-mode DAQ
 ### Runtime Model
 - In real mode:
   - DAQ tasks are created at `start()`
-  - Fast AI channels are grouped per physical device
-  - A snapshot thread continuously calls `_read_real()` and updates latest values
+  - Fast AI voltage channels are hardware-timed continuous and grouped per chassis
+  - Temperature channels now attempt hardware-timed continuous acquisition (`acquisition.temperature.sample_rate_hz`) and fall back to on-demand reads if DAQmx rejects the continuous task
+  - Snapshot publishing is decoupled into two worker loops:
+    - fast loop (core-tick cadence): publishes fast AI + cached slow channels + DO/AO
+    - slow loop (best effort): refreshes temperature/DI cache without blocking fast loop
 - `simulate_step()` returns cached snapshot in real mode.
 - **Tick rate alignment**: NI DAQ snapshot period inherits from core tick rate (`channel_manager.yaml` `recording_rate_hz`). The `recording_rate_hz` field in `ni_daq.yaml` is deprecated (`auto` inherits from core); if set to a numeric value that differs from the core rate, a warning is logged.
 - DI reads apply explicit `int(bool(v))` conversion to produce clean `0.0`/`1.0` float values. Raw DAQmx digital reads can return arbitrary integers; the conversion ensures downstream consumers (calculated channels, DO conditions, alarm engine) see proper boolean semantics.
@@ -68,6 +71,10 @@ acquisition:
     butterworth_order: 4     # filter order (default 4, power users only)
   read_timeout_margin_s: 0.15
   threaded_fast_ai: true
+  temperature:
+    adc_timing_mode: default   # default | automatic | high_speed | high_resolution | best_50hz | best_60hz
+    auto_zero: default         # default | none | once | every_sample
+    sample_rate_hz: 4          # hardware-timed temp task rate; <=0 disables hw-timed attempt
 health:
   poll_hz: 2
   read_fail_warn_threshold: 10
@@ -79,7 +86,19 @@ watchdog:
 
 ### Oversample and Decimation Filter
 
-Voltage (and optionally current) channels are oversampled at `R * factor` where `R` is the core tick rate and `factor` is the configurable oversample factor (default 10). Temperature, DI, DO, and AO channels are read at `R` directly (temperature modules have hardware anti-aliasing built in).
+Voltage (and optionally current) channels are oversampled at `R * factor` where `R` is the core tick rate and `factor` is the configurable oversample factor (default 10). DI/DO/AO channels are read/published at the core cadence. Temperature channels are acquired through the dedicated slow path: hardware-timed continuous when available, otherwise on-demand fallback.
+
+### Temperature Acquisition Path (NI 9214/TC focus)
+
+- `acquisition.temperature.sample_rate_hz > 0` enables a **hardware-timed continuous** attempt for temperature tasks.
+- If DAQmx accepts the task, the plugin logs:
+  - `[NIDAQ] AI_T hw-timed STARTED: ...`
+- If DAQmx rejects task timing/resource/property combinations, the plugin logs a failure and automatically falls back to on-demand temp reads:
+  - `[NIDAQ] AI_T hw-timed FAILED, falling back to on-demand: ...`
+- `adc_timing_mode` / `auto_zero` are super-user settings. Setting either to `default` skips writing that DAQmx property and leaves driver/module defaults intact.
+
+Operational note:
+- Slow-loop diagnostics report **slow-path payload updates**, not strictly "new thermocouple conversion events." If DI is active, payload update rate can be higher than thermocouple conversion cadence.
 
 | Filter Mode | Behavior | Default |
 |-------------|----------|---------|

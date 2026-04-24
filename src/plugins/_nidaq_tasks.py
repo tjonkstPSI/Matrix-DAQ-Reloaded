@@ -129,6 +129,168 @@ def _create_fast_ai_tasks(p: NiDAQPlugin, Task: Any, AcquisitionType: Any, fast_
         p._fast_warmup_until = 0.0
 
 
+def _apply_temp_adc_settings(p: NiDAQPlugin, task: Any, device: str) -> None:
+    """Apply ADC timing mode and auto-zero settings to temperature channels.
+
+    Configurable via ni_daq.yaml -> acquisition.temperature:
+      adc_timing_mode: high_speed | high_resolution | automatic | default
+      auto_zero:       none | once | every_sample | default
+
+    Setting either to "default" skips that property entirely, letting the
+    DAQmx driver use whatever the module's factory default is.
+    """
+    adc_mode_str = getattr(p, "_temp_adc_timing_mode", "default")
+    az_str = getattr(p, "_temp_auto_zero", "default")
+
+    if adc_mode_str == "default" and az_str == "default":
+        try:
+            print(f"[NIDAQ] AI_T adc settings: device={device} "
+                  f"mode=default auto_zero=default (skipped, using driver defaults)")
+        except Exception:
+            pass
+        return
+
+    try:
+        from nidaqmx.constants import ADCTimingMode, AutoZeroType  # type: ignore
+    except Exception:
+        return
+
+    adc_map = {
+        "high_speed": ADCTimingMode.HIGH_SPEED,
+        "high_resolution": ADCTimingMode.HIGH_RESOLUTION,
+        "automatic": ADCTimingMode.AUTOMATIC,
+        "best_50hz": ADCTimingMode.BEST_50_HZ_REJECTION,
+        "best_60hz": ADCTimingMode.BEST_60_HZ_REJECTION,
+    }
+    az_map = {
+        "none": AutoZeroType.NONE,
+        "once": AutoZeroType.ONCE,
+        "every_sample": AutoZeroType.EVERY_SAMPLE,
+    }
+
+    adc_mode = adc_map.get(adc_mode_str)
+    az_mode = az_map.get(az_str)
+
+    if adc_mode is None and az_mode is None:
+        try:
+            print(f"[NIDAQ] AI_T adc settings: device={device} "
+                  f"mode={adc_mode_str} auto_zero={az_str} (no matching constants, skipped)")
+        except Exception:
+            pass
+        return
+
+    applied = []
+    for ch_obj in task.ai_channels:
+        try:
+            if adc_mode is not None:
+                ch_obj.ai_adc_timing_mode = adc_mode
+            if az_mode is not None:
+                ch_obj.ai_auto_zero_mode = az_mode
+            applied.append(ch_obj.name)
+        except Exception as e:
+            try:
+                print(f"[NIDAQ] AI_T adc settings warn: ch={ch_obj.name} err={e}")
+            except Exception:
+                pass
+    try:
+        print(f"[NIDAQ] AI_T adc settings: device={device} "
+              f"mode={adc_mode_str} auto_zero={az_str} "
+              f"applied_to={len(applied)} channels")
+    except Exception:
+        pass
+
+
+def _add_temp_channels(task: Any, chans: List[Dict[str, Any]], device: str) -> List[str]:
+    """Add thermocouple/RTD channels to a task. Returns list of aliases added."""
+    local_aliases: List[str] = []
+    try:
+        from nidaqmx.constants import (
+            ThermocoupleType,
+            TemperatureUnits,
+            CJCSource,
+            RTDType,
+            ResistanceConfiguration,
+            ExcitationSource,
+        )  # type: ignore
+    except Exception:
+        ThermocoupleType = TemperatureUnits = CJCSource = RTDType = ResistanceConfiguration = ExcitationSource = None  # type: ignore
+    for ch in chans:
+        phys = str(ch.get("phys", ""))
+        if not phys:
+            continue
+        sensor = ch.get("sensor", {}) or {}
+        stype = str(sensor.get("type", "TC")).upper()
+        try:
+            print(f"[NIDAQ] AI_T add attempt: device={device} phys={phys} type={stype}")
+        except Exception:
+            pass
+        try:
+            if (
+                stype == "RTD"
+                and RTDType is not None
+                and TemperatureUnits is not None
+                and ResistanceConfiguration is not None
+            ):
+                subtype = str(sensor.get("subtype", "PT100")).upper()
+                wires = int(sensor.get("wires", 3))
+                try:
+                    rtd_enum_map = {m.name: m for m in RTDType}
+                except Exception:
+                    rtd_enum_map = {}
+                rtd_type = rtd_enum_map.get(subtype) or rtd_enum_map.get("PT100") or (next(iter(rtd_enum_map.values())) if rtd_enum_map else None)
+                wire_cfg_map = {
+                    2: ResistanceConfiguration.TWO_WIRE,
+                    3: ResistanceConfiguration.THREE_WIRE,
+                    4: ResistanceConfiguration.FOUR_WIRE,
+                }
+                cfg = wire_cfg_map.get(wires, ResistanceConfiguration.THREE_WIRE)
+                if rtd_type is not None:
+                    excit_current = float(sensor.get("excitation_current_a", 0.001))
+                    if ExcitationSource is not None:
+                        task.ai_channels.add_ai_rtd_chan(
+                            phys,
+                            rtd_type=rtd_type,
+                            resistance_config=cfg,
+                            units=TemperatureUnits.DEG_C,
+                            current_excit_source=ExcitationSource.INTERNAL,
+                            current_excit_val=excit_current,
+                        )
+                    else:
+                        task.ai_channels.add_ai_rtd_chan(
+                            phys,
+                            rtd_type=rtd_type,
+                            resistance_config=cfg,
+                            units=TemperatureUnits.DEG_C,
+                        )
+                else:
+                    task.ai_channels.add_ai_voltage_chan(phys, min_val=-1.0, max_val=1.0)
+            else:
+                tc_sub = str(sensor.get("subtype", "K")).upper()
+                tc_map = {}
+                if ThermocoupleType is not None:
+                    try:
+                        tc_map = {k.name: k for k in ThermocoupleType}
+                    except Exception:
+                        tc_map = {}
+                tc_enum = tc_map.get(tc_sub)
+                if tc_enum is not None and TemperatureUnits is not None and CJCSource is not None:
+                    task.ai_channels.add_ai_thrmcpl_chan(
+                        phys,
+                        thermocouple_type=tc_enum,
+                        units=TemperatureUnits.DEG_C,
+                        cjc_source=CJCSource.BUILT_IN,
+                    )
+                else:
+                    task.ai_channels.add_ai_voltage_chan(phys, min_val=-1.0, max_val=1.0)
+            local_aliases.append(str(ch.get("alias", phys)))
+        except Exception as e:
+            try:
+                print(f"[NIDAQ] AI_T add error: device={device} phys={phys} err={e}")
+            except Exception:
+                pass
+    return local_aliases
+
+
 def _create_temp_tasks(p: NiDAQPlugin, Task: Any) -> None:
     try:
         enabled_ai_temp = [
@@ -146,6 +308,7 @@ def _create_temp_tasks(p: NiDAQPlugin, Task: Any) -> None:
     enabled_temp = [ch for ch in p._ai_temp if bool(ch.get("enabled", True))]
     if not enabled_temp:
         return
+
     groups_t: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     for ch in enabled_temp:
         phys = str(ch.get("phys", ""))
@@ -154,110 +317,118 @@ def _create_temp_tasks(p: NiDAQPlugin, Task: Any) -> None:
         module = phys.split("/", 1)[0]
         chassis = _chassis_from_device(module)
         groups_t[chassis].append(ch)
+
+    temp_rate = float(getattr(p, "_temp_sample_rate_hz", 0))
+    hw_timed = temp_rate > 0
     p._temp_tasks = []
+
+    try:
+        from nidaqmx.constants import AcquisitionType  # type: ignore
+    except Exception:
+        AcquisitionType = None  # type: ignore
+        hw_timed = False
+
     for device, chans in groups_t.items():
-        t = None
+        if hw_timed and AcquisitionType is not None:
+            ok = _try_create_hw_timed_temp(p, Task, AcquisitionType, device, chans, temp_rate)
+            if ok:
+                continue
+        _create_on_demand_temp(p, Task, device, chans)
+
+
+def _try_create_hw_timed_temp(
+    p: NiDAQPlugin, Task: Any, AcquisitionType: Any,
+    device: str, chans: List[Dict[str, Any]], temp_rate: float,
+) -> bool:
+    """Attempt hardware-timed continuous temp task. Returns True on success."""
+    t = None
+    try:
+        t = Task()
+        local_aliases = _add_temp_channels(t, chans, device)
+        if not local_aliases:
+            return False
+
         try:
-            t = Task()
-            local_aliases: List[str] = []
+            _apply_temp_adc_settings(p, t, device)
+        except Exception as e:
             try:
-                from nidaqmx.constants import (
-                    ThermocoupleType,
-                    TemperatureUnits,
-                    CJCSource,
-                    RTDType,
-                    ResistanceConfiguration,
-                    ExcitationSource,
-                )  # type: ignore
-            except Exception:
-                ThermocoupleType = TemperatureUnits = CJCSource = RTDType = ResistanceConfiguration = ExcitationSource = None  # type: ignore
-            for ch in chans:
-                phys = str(ch.get("phys", ""))
-                if not phys:
-                    continue
-                sensor = ch.get("sensor", {}) or {}
-                stype = str(sensor.get("type", "TC")).upper()
-                try:
-                    print(f"[NIDAQ] AI_T add attempt: device={device} phys={phys} type={stype} sensor={sensor}")
-                except Exception:
-                    pass
-                try:
-                    if (
-                        stype == "RTD"
-                        and RTDType is not None
-                        and TemperatureUnits is not None
-                        and ResistanceConfiguration is not None
-                    ):
-                        subtype = str(sensor.get("subtype", "PT100")).upper()
-                        wires = int(sensor.get("wires", 3))
-                        try:
-                            rtd_enum_map = {m.name: m for m in RTDType}
-                        except Exception:
-                            rtd_enum_map = {}
-                        rtd_type = rtd_enum_map.get(subtype) or rtd_enum_map.get("PT100") or (next(iter(rtd_enum_map.values())) if rtd_enum_map else None)
-                        wire_cfg_map = {
-                            2: ResistanceConfiguration.TWO_WIRE,
-                            3: ResistanceConfiguration.THREE_WIRE,
-                            4: ResistanceConfiguration.FOUR_WIRE,
-                        }
-                        cfg = wire_cfg_map.get(wires, ResistanceConfiguration.THREE_WIRE)
-                        if rtd_type is not None:
-                            excit_current = float(sensor.get("excitation_current_a", 0.001))
-                            if ExcitationSource is not None:
-                                t.ai_channels.add_ai_rtd_chan(
-                                    phys,
-                                    rtd_type=rtd_type,
-                                    resistance_config=cfg,
-                                    units=TemperatureUnits.DEG_C,
-                                    current_excit_source=ExcitationSource.INTERNAL,
-                                    current_excit_val=excit_current,
-                                )
-                            else:
-                                t.ai_channels.add_ai_rtd_chan(
-                                    phys,
-                                    rtd_type=rtd_type,
-                                    resistance_config=cfg,
-                                    units=TemperatureUnits.DEG_C,
-                                )
-                        else:
-                            t.ai_channels.add_ai_voltage_chan(phys, min_val=-1.0, max_val=1.0)
-                    else:
-                        tc_sub = str(sensor.get("subtype", "K")).upper()
-                        tc_map = {}
-                        if ThermocoupleType is not None:
-                            try:
-                                tc_map = {k.name: k for k in ThermocoupleType}
-                            except Exception:
-                                tc_map = {}
-                        tc_enum = tc_map.get(tc_sub)
-                        if tc_enum is not None and TemperatureUnits is not None and CJCSource is not None:
-                            t.ai_channels.add_ai_thrmcpl_chan(
-                                phys,
-                                thermocouple_type=tc_enum,
-                                units=TemperatureUnits.DEG_C,
-                                cjc_source=CJCSource.BUILT_IN,
-                            )
-                        else:
-                            t.ai_channels.add_ai_voltage_chan(phys, min_val=-1.0, max_val=1.0)
-                    local_aliases.append(str(ch.get("alias", phys)))
-                except Exception as e:
-                    try:
-                        print(f"[NIDAQ] AI_T add error: device={device} phys={phys} err={e}")
-                    except Exception:
-                        pass
-            if local_aliases:
-                try:
-                    print(f"[NIDAQ] AI_T on-demand: device={device} channels={len(local_aliases)}")
-                except Exception:
-                    pass
-                p._temp_tasks.append({"task": t, "device": device, "aliases": local_aliases})
-                t = None
-        finally:
-            try:
-                if t is not None:
-                    t.close()
+                print(f"[NIDAQ] AI_T adc settings failed (non-fatal): device={device} err={e}")
             except Exception:
                 pass
+
+        samps_per_chan = int(max(2, 2 * temp_rate))
+        t.timing.cfg_samp_clk_timing(
+            rate=temp_rate,
+            sample_mode=AcquisitionType.CONTINUOUS,
+            samps_per_chan=samps_per_chan,
+        )
+        try:
+            t.in_stream.input_buf_size = int(max(samps_per_chan, 10 * temp_rate))
+        except Exception:
+            pass
+
+        t.start()
+        try:
+            print(f"[NIDAQ] AI_T hw-timed STARTED: device={device} "
+                  f"rate={temp_rate} Hz, channels={len(local_aliases)}, "
+                  f"buf={samps_per_chan}")
+        except Exception:
+            pass
+        p._temp_tasks.append({
+            "task": t, "device": device, "aliases": local_aliases,
+            "hw_timed": True, "rate": temp_rate,
+        })
+        t = None
+        return True
+    except Exception as e:
+        try:
+            print(f"[NIDAQ] AI_T hw-timed FAILED, falling back to on-demand: "
+                  f"device={device} err={e}")
+        except Exception:
+            pass
+        try:
+            if t is not None:
+                try:
+                    t.stop()
+                except Exception:
+                    pass
+                t.close()
+        except Exception:
+            pass
+        return False
+
+
+def _create_on_demand_temp(
+    p: NiDAQPlugin, Task: Any, device: str, chans: List[Dict[str, Any]],
+) -> None:
+    """Create an on-demand (software-timed) temp task as fallback."""
+    t = None
+    try:
+        t = Task()
+        local_aliases = _add_temp_channels(t, chans, device)
+        if local_aliases:
+            try:
+                _apply_temp_adc_settings(p, t, device)
+            except Exception as e:
+                try:
+                    print(f"[NIDAQ] AI_T adc settings failed (non-fatal): device={device} err={e}")
+                except Exception:
+                    pass
+            try:
+                print(f"[NIDAQ] AI_T on-demand: device={device} channels={len(local_aliases)}")
+            except Exception:
+                pass
+            p._temp_tasks.append({
+                "task": t, "device": device, "aliases": local_aliases,
+                "hw_timed": False,
+            })
+            t = None
+    finally:
+        try:
+            if t is not None:
+                t.close()
+        except Exception:
+            pass
 
 
 def _create_di_tasks(p: NiDAQPlugin, Task: Any) -> None:

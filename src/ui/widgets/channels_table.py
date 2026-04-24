@@ -150,6 +150,8 @@ class _CategoryPanel(QGroupBox):
     def __init__(self, title: str, parent: QWidget | None = None) -> None:
         super().__init__(title, parent)
         self._aliases: List[str] = []
+        self._prev_texts: List[str] = []
+        self._prev_states: List[str] = []
         self._table = QTableWidget(0, 3, self)
         self._table.setHorizontalHeaderLabels(["Alias", "Value", "Unit"])
         self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
@@ -183,6 +185,8 @@ class _CategoryPanel(QGroupBox):
     ) -> None:
         if aliases != self._aliases:
             self._aliases = aliases
+            self._prev_texts = [""] * len(aliases)
+            self._prev_states = [""] * len(aliases)
             self._table.setRowCount(len(aliases))
             for row, alias in enumerate(aliases):
                 self._table.setItem(row, 0, QTableWidgetItem(str(alias)))
@@ -202,14 +206,15 @@ class _CategoryPanel(QGroupBox):
                     text = str(val)
             else:
                 text = str(val) if val is not None else ""
-            item_v = self._table.item(row, 1)
-            if item_v is not None:
-                item_v.setText(text)
-            item_u = self._table.item(row, 2)
-            if item_u is not None:
-                item_u.setText(str(units.get(alias, "")))
+            if text != self._prev_texts[row]:
+                self._prev_texts[row] = text
+                item_v = self._table.item(row, 1)
+                if item_v is not None:
+                    item_v.setText(text)
             state = str(states.get(alias, "OK"))
-            apply_alarm_state_to_row(self._table, row, state)
+            if state != self._prev_states[row]:
+                self._prev_states[row] = state
+                apply_alarm_state_to_row(self._table, row, state)
 
         self._resize_to_fit()
 

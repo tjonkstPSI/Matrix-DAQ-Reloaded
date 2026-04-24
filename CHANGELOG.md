@@ -6,6 +6,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased] - 03/09/2026
 
+### NI DAQ temperature acquisition optimization and YAML super-user controls — 04/21/2026
+#### Added
+- **NI DAQ temperature super-user settings** in `ni_daq.yaml` under `acquisition.temperature`:
+  - `adc_timing_mode` (`default|automatic|high_speed|high_resolution|best_50hz|best_60hz`)
+  - `auto_zero` (`default|none|once|every_sample`)
+  - `sample_rate_hz` (continuous temp task attempt rate; default 4 Hz)
+- **Hardware-timed continuous temp task attempt** for `ai_temp` channels. On success, NI DAQ starts a continuous temperature task and reads latest buffered samples.
+- **Automatic fallback path**: if DAQmx rejects hardware-timed temperature task setup, plugin logs the failure and transparently falls back to on-demand temperature reads.
+#### Changed
+- **NI DAQ snapshot slow-loop diagnostics** now report slow-path payload updates and poll count in a clearer format.
+- **Default temperature ADC behavior** is now driver-controlled (`adc_timing_mode: default`, `auto_zero: default`) unless a super-user explicitly overrides in YAML.
+
 ### Cycle plugin overhaul, LoadBank onsite commissioning, NI DI/DO fixes — 04/21/2026
 #### Added
 - **Cycle plugin play/pause/seek/loops/restart**: `CyclePlugin` now supports full runtime control — `play()`, `pause()`, `seek(time_s)`, `set_loops(n)`, `set_start_with_test(enabled)`. State machine covers `idle`, `running`, `paused`, `complete` with clean transitions. Restarting a completed cycle via Play resets to the beginning automatically.

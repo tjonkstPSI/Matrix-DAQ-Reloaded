@@ -4,6 +4,10 @@ recording_rate_hz: 20.0
 acquisition:
   threaded_fast_ai: true
   read_timeout_margin_s: 1.0
+  temperature:
+    adc_timing_mode: default
+    auto_zero: default
+    sample_rate_hz: 4
 
 health:
   poll_hz: 2
