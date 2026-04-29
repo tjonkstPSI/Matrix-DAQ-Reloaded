@@ -21,6 +21,34 @@ class A2LChannel:
     coeffs: Optional[Coeffs] = None
 
 
+@dataclass(frozen=True)
+class A2LDaqList:
+    name: str
+    tier: str
+    period_ms: int
+    list_number: Optional[int] = None
+    odt_count: int = 0
+    first_pid: Optional[int] = None
+    can_id: Optional[int] = None
+    raw_can_id: Optional[int] = None
+    raster: Optional[int] = None
+
+
+def normalize_dto_can_id(can_id: Optional[int]) -> Optional[int]:
+    """Normalize ASAP2 CCP DTO CAN IDs to runtime CAN arbitration IDs.
+
+    Some A2L files encode fixed extended DTO IDs with flag bits in the upper
+    nibble. NI-XNET reports the actual 29-bit arbitration ID, so strip those
+    metadata bits when present (for example 0x8CFF5200 -> 0x0CFF5200).
+    """
+    if can_id is None:
+        return None
+    value = int(can_id)
+    if value > 0x1FFFFFFF:
+        value &= 0x1FFFFFFF
+    return value
+
+
 def parse_address(token: str) -> Optional[int]:
     try:
         if token.startswith(("0x", "0X")):
@@ -203,6 +231,135 @@ def parse_a2l(path: Path) -> Dict[str, A2LChannel]:
                     cur_limits = (a_val, b_val)
 
     return channels
+
+
+_DAQ_TIERS = frozenset({"1ms", "10ms", "50ms", "100ms"})
+
+
+def is_daq_tier(value: str) -> bool:
+    return _canonical_poll_tier(value) in _DAQ_TIERS
+
+
+def _canonical_poll_tier(value: Any) -> str:
+    text = str(value or "").strip().lower().replace(" ", "")
+    aliases = {
+        "high": "high", "hi": "high", "h": "high",
+        "highpoll": "high", "high_poll": "high",
+        "low": "low", "lo": "low", "l": "low",
+        "lowpoll": "low", "low_poll": "low",
+        "1": "1ms", "1ms": "1ms",
+        "10": "10ms", "10ms": "10ms",
+        "50": "50ms", "50ms": "50ms",
+        "100": "100ms", "100ms": "100ms",
+        "daq1ms": "1ms", "daq10ms": "10ms",
+        "daq50ms": "50ms", "daq100ms": "100ms",
+    }
+    return aliases.get(text, "high")
+
+
+def parse_a2l_daq_lists(path: Path) -> Dict[str, A2LDaqList]:
+    """Parse CCP DAQ-list declarations from ASAP1B_CCP IF_DATA.
+
+    The runtime still uses SHORT_UP. This metadata is used by the config UI to
+    estimate old-tool-style per-tier list capacity from A2L ODT declarations.
+    """
+    out: Dict[str, A2LDaqList] = {}
+    if not path.exists():
+        return out
+
+    lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+
+    in_source = False
+    in_qp_blob = False
+    source_lines: List[str] = []
+    qp_lines: List[str] = []
+
+    def _first_int(line: str) -> Optional[int]:
+        tokens = line.strip().split()
+        if not tokens:
+            return None
+        return parse_address(tokens[0])
+
+    def _quoted(line: str) -> str:
+        if '"' not in line:
+            return ""
+        try:
+            _, rest = line.split('"', 1)
+            val, _ = rest.split('"', 1)
+            return val.strip()
+        except Exception:
+            return ""
+
+    def _finish_source() -> None:
+        if not source_lines:
+            return
+        name = _quoted(source_lines[0])
+        numeric = [_first_int(x) for x in source_lines[1:] if _first_int(x) is not None]
+        period_ms = int(numeric[1]) if len(numeric) >= 2 else 0
+        tier = _canonical_poll_tier(f"{period_ms}ms")
+        list_number: Optional[int] = None
+        odt_count = 0
+        first_pid: Optional[int] = None
+        can_id: Optional[int] = None
+        raster: Optional[int] = None
+        for raw in qp_lines:
+            line = raw.strip()
+            if not line:
+                continue
+            tokens = line.split()
+            head = tokens[0]
+            if head == "LENGTH" and len(tokens) >= 2:
+                odt_count = int(parse_address(tokens[1]) or 0)
+            elif head == "FIRST_PID" and len(tokens) >= 2:
+                first_pid = parse_address(tokens[1])
+            elif head == "CAN_ID_FIXED" and len(tokens) >= 2:
+                can_id = parse_address(tokens[1])
+            elif head == "RASTER" and len(tokens) >= 2:
+                raster = parse_address(tokens[1])
+            elif list_number is None:
+                list_number = parse_address(head)
+        if name or odt_count or period_ms:
+            out[tier] = A2LDaqList(
+                name=name or f"{tier} DAQ",
+                tier=tier,
+                period_ms=period_ms or {"1ms": 1, "10ms": 10, "50ms": 50, "100ms": 100}.get(tier, 10),
+                list_number=list_number,
+                odt_count=odt_count,
+                first_pid=first_pid,
+                can_id=normalize_dto_can_id(can_id),
+                raw_can_id=can_id,
+                raster=raster,
+            )
+
+    for raw_line in lines:
+        line = raw_line.strip()
+        if line.startswith("/begin SOURCE"):
+            in_source = True
+            in_qp_blob = False
+            source_lines = []
+            qp_lines = []
+            continue
+        if line.startswith("/end SOURCE"):
+            _finish_source()
+            in_source = False
+            in_qp_blob = False
+            source_lines = []
+            qp_lines = []
+            continue
+        if not in_source:
+            continue
+        if line.startswith("/begin QP_BLOB"):
+            in_qp_blob = True
+            continue
+        if line.startswith("/end QP_BLOB"):
+            in_qp_blob = False
+            continue
+        if in_qp_blob:
+            qp_lines.append(line)
+        else:
+            source_lines.append(line)
+
+    return out
 
 
 def dtype_size(dtype: Optional[str]) -> int:

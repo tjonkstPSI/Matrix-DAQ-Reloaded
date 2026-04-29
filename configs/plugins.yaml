@@ -1,10 +1,7 @@
 selected_plugins:
-- EngineTest
 - CCP
-- NI_DAQ
 - Channel_Manager
-- CAN
-- Calculated_Channels
+- EngineTest
 selected_displays:
 - "AllChannelsTable (grouped by type) \u2014 auto-categorized via alias prefix into\
   \ side-by-side panels with FlowLayout reflow"

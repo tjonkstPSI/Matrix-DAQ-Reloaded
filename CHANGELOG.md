@@ -6,6 +6,99 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased] - 03/09/2026
 
+### CCP Console UI cleanup — 04/29/2026
+#### Added
+- **CCP tile health indicators**: CCP plugin tile in the console now reflects runtime health. Green when connected and data flowing, red "Disconnected" when ECU is unreachable, red "Error" when connected but data flow is broken (e.g., unlock failed, all polls timing out). Implemented via `CCP/conn_ok` and `CCP/health_ok` keys published from `_append_diag_values()`.
+- **CCP console messages**: Key lifecycle events now display in the console Messages box — connection success, unlock OK/failed, polling started, DAQ streaming started, connection lost, and DAQ setup failures. Messages are minimal to avoid flooding; per-poll diagnostics remain terminal-only.
+- **BasePlugin console messaging**: `_console_msg()` and `_drain_console_msgs()` added to `BasePlugin` (`base.py`) as a thread-safe queuing mechanism. Any plugin can now send messages to the console Messages box. Messages are drained during `simulate_step()` via a `__console_msgs__` key, forwarded by the orchestrator to the ZMQ `status` topic as `plugin_message` type, and handled by `ConsoleWindow._handle_status_msg`.
+#### Changed
+- **Default priority flipped to LOW**: `poll_default_priority` changed from `high` to `low` across plugin, UI, and YAML config. New channels start as Low Poll; users promote important channels to High Poll as needed.
+- **Configurable HIGH:LOW ratio**: `high_low_ratio` (default 3, range 1-20) added to `ccp.yaml` for super-user tuning of the weighted round-robin scheduler. Exposed in the poll config terminal log.
+
+### CCP SHORT_UP default + poll engine overhaul — 04/28/2026
+#### Changed
+- **Default acquisition mode**: Changed from `daq` to `short_up`. SHORT_UP polling with HIGH/LOW priority is now the primary acquisition path, matching the behavior of the legacy LabVIEW tool.
+- **Priority namespace**: `"high"` and `"low"` are now first-class SHORT_UP priority values, no longer aliased to DAQ tiers (`10ms`/`100ms`). Added `is_daq_tier()` helper in `_ccp_a2l.py`.
+- **Poll engine**: Replaced fixed `poll_interval_ms` timer with continuous polling governed by `target_poll_hz` (default 10 Hz per channel). Removed hard cap of 6 on `poll_channels_per_tick`.
+- **Throughput reporting**: Periodic terminal log shows `reads/sec`, estimated Hz per HIGH/LOW priority, and budget utilization %.
+- **UI tier dropdown**: Options changed from `10ms/50ms/100ms/1ms` to `High Poll / Low Poll / DAQ 1ms / DAQ 10ms / DAQ 50ms / DAQ 100ms`.
+- **UI channel allocation**: Capacity section shows SHORT_UP channel summary + DAQ tier bars (DAQ bars hidden when no DAQ channels assigned).
+- **UI target Hz**: Added `QSpinBox` for `target_poll_hz` (1-50) with live budget estimation display.
+- **Default priority**: Changed from `100ms` to `high` (High Poll) across plugin, UI, and YAML config.
+#### Preserved
+- All DAQ code (`_connect_daq_ctx`, `_build_multi_daq_plan`, `_poll_daq_ctx`, `DAQConfigError`, ODT capacity checking) remains fully functional via `acquisition_mode: daq`.
+
+### CCP documentation review — 04/28/2026
+#### Changed
+- **`docs/plugins/ccp.md`**: Rewrote "NI-XNET DTO CAN ID Reporting" → "NI-XNET Session Modes and DTO Filtering" to document the CAN ID pre-filter, `filtered_out`/`pid_miss` diagnostic counters, and why unfiltered stream mode caused cross-traffic corruption.
+- **`docs/plugins/ccp.md`**: Expanded "Fallback Behavior" to document `DAQConfigError` vs `RuntimeError` distinction — configuration errors always raise, communication errors respect `fallback_short_up`.
+- **`docs/plugins/ccp.md`**: Expanded "DAQ Streaming Notes" ODT cap paragraph with three-layer enforcement (UI red bars/blocked save, runtime `DAQConfigError`, hard overflow).
+- **`docs/plugins/ccp.md`**: Fixed YAML examples — `fallback_short_up` now shows `false` (actual default), added `max_odt_utilization_pct` at device level, added `daq_ena_address`/`daq_ena_value` as commented-out v577 examples, added `CCP_ACCESS_KEY` env var hint.
+- **`docs/plugins/ccp.md`**: Added "Troubleshooting and Lessons Learned" section covering cross-traffic corruption, ODT saturation, silent fallback bypass, notification codes, and a quick diagnostic checklist.
+- **`docs/plans/ccp_multi_list_daq_production.md`**: Status changed from "Draft - Pending Review" to "Completed" with reference to follow-up hardening.
+
+### CCP DAQ data-integrity hardening — 04/28/2026
+#### Added
+- **DTO CAN-ID filter**: `_poll_daq_ctx` now pre-filters received frames by expected DTO CAN IDs (built from active DAQ lists + `0x0` fallback for NI-XNET). All other bus traffic is rejected before PID matching, preventing cross-traffic from corrupting channel values.
+- **`DAQConfigError` exception**: new subclass of `RuntimeError` for configuration problems (ODT cap exceeded, no valid tiers, missing channels). Always re-raised immediately, bypassing `fallback_short_up` — ensures misconfigurations always produce a hard error with an actionable message.
+- **ODT utilization cap**: `_build_multi_daq_plan` enforces a configurable `max_odt_utilization_pct` (default 90%). If a tier exceeds the cap, a `DAQConfigError` names the overflow channels and tells the user to redistribute. Running at 100% caused unreliable data on v577/v661 ECUs.
+- **UI capacity enforcement**: Config dialog shows red progress bars and "OVER 90% LIMIT" text when a tier exceeds the cap. Save is blocked with a descriptive error message. Constant `_MAX_ODT_UTILIZATION_PCT = 90` matches the runtime default.
+- **Improved DAQ poll diagnostics**: periodic log now shows `raw` (total frames), `filtered_out` (rejected by CAN ID), `decoded` (successful DTOs), and `pid_miss` (unrecognized PIDs). Startup prints accepted DTO CAN IDs and PID map.
+#### Changed
+- **DAQ plan log includes utilization %**: e.g., `10ms = 15 channels in 3/10 ODTs (30%, cap=90%)`.
+
+### CCP multi-list DAQ production integration — 04/28/2026
+#### Added
+- **Multi-list DAQ setup loop**: `_connect_daq_ctx` now configures multiple DAQ lists sequentially (one per tier with channels), starts each, then sends `START_STOP_ALL`. Proven sequence matches the validated probe tool.
+- **Specific actionable DAQ error messages**: every failure scenario (ODT overflow, unlock rejected, no seed response, GET_DAQ_SIZE failure, CCP_DAQ_ena write failure) now produces a message telling the user what to fix.
+- **SHORT_UP fallback warning with estimated rate**: when `fallback_short_up: true` is set and DAQ fails, the plugin prints a persistent per-second warning including estimated sample rate (e.g., `~2.3 Hz (45 channels)`).
+- **START_STOP_ALL stop on cleanup**: `_stop_daq_ctx` now sends `START_STOP_ALL(mode=0)` after stopping individual lists.
+#### Changed
+- **`_build_daq_plan` replaced by `_build_multi_daq_plan`**: channels grouped by assigned tier, each tier packed independently with its own ODT/offset tracking. Raises on overflow instead of silently dropping channels.
+- **`fallback_short_up` default changed to `false`**: DAQ failure now stops the device with a clear error by default. SHORT_UP fallback is a YAML-only super user option, not exposed in the UI.
+- **DAQ unlock rejection now raises**: if the ECU rejects the unlock with a non-zero RC, the plugin immediately raises instead of continuing with no data.
+
+### CCP DAQ robustness and ECU compatibility — 04/27/2026
+#### Added
+- **CCP notification code handling**: CRM return codes 0x30-0x33 are now treated as ACK + warning (not errors). The plugin logs the notification and continues.
+- **Dual-unlock sequence**: when `daq_ena_address` is configured, the plugin performs a CAL unlock (resource 0x01) before the DAQ unlock (resource 0x02), enabling calibration writes needed by certain ECUs.
+- **CCP_DAQ_ena support**: v577 ECUs have a calibration gate (`CCP_DAQ_ena`) that must be written via SET_MTA + DNLOAD to enable DAQ streaming. Configured via `acquisition.daq_ena_address` and `acquisition.daq_ena_value` in ccp.yaml.
+- **SET_MTA and DNLOAD commands**: added `build_set_mta` (0x02) and `build_dnload` (0x03) to the CCP protocol layer.
+- **START_STOP_ALL command**: added `build_start_stop_all` (0x08) sent after per-list START to support ECUs that require it.
+- **Verbose DAQ setup logging**: every CRM during DAQ init is now printed (CAL unlock, SET_S_STATUS, SET_MTA, DNLOAD, DAQ unlock, GET_DAQ_SIZE, START, START_STOP_ALL).
+- **Enhanced bus sniff**: when 0 DTOs are received, the bus sniff now prints sample payloads and extended-ID flags for the top CAN IDs.
+#### Changed
+- **DAQ tier derived from channels**: the active DAQ list tier is now determined by the majority tier among selected channels, not a hardcoded config value.
+- **PID-based DTO filtering**: DTO frames are matched by PID byte (first payload byte) instead of CAN arbitration ID, because NI-XNET stream sessions may report DTO IDs as 0x00000000.
+- **SET_S_STATUS ordering**: SET_S_STATUS is now sent before DNLOAD (required by some ECUs to accept calibration writes).
+
+### CCP multi-list DAQ packing and per-tier capacity enforcement — 04/27/2026
+#### Added
+- **Multi-list DAQ streaming**: channels are grouped by assigned tier and packed into separate ECU DAQ lists (1ms/10ms/50ms/100ms). Multiple lists stream concurrently per ECU.
+- **Multi-device DAQ**: DAQ streaming now works for all configured devices (primary and secondary), each independently using its own A2L's DAQ lists on its own CAN bus.
+- **PID lookup table**: a unified `daq_pid_map` maps each PID to its plan entries across all active lists for efficient O(1) DTO decoding.
+- **Per-tier capacity UI**: the config dialog "DAQ Tier Capacity" section shows per-tier ODT usage (e.g., `10ms: 5/10 ODTs (15ch)`) and warns when over capacity.
+- **Save-time validation**: saving is blocked if any DAQ tier exceeds the ECU's reported ODT capacity. User must adjust tier assignments first.
+- **DAQ tier column**: the channel table "Tier" column cycles through `10ms` / `50ms` / `100ms` / `1ms` / `High` / `Low` on double-click (default: `10ms`).
+- **DAQ active list count diagnostic**: `CCP/daq_active_list_count` tracks how many DAQ lists are running across all devices.
+- **DAQ setup and poll logging**: successful DAQ setup prints all active lists and their ODT counts; periodic poll status logs DTO rates across all lists.
+#### Changed
+- **Per-channel priority replaced by tier**: `priority` field now stores tier strings (`10ms`/`50ms`/`100ms`/`1ms`/`high`/`low`). `high` maps to `10ms`, `low` maps to `100ms` for backward compatibility.
+- **Device gate removed**: DAQ is no longer restricted to `device_index == 0`; any device with `acquisition_mode: daq` will attempt DAQ streaming.
+- **Stop all active lists on shutdown**: `_stop_daq_ctx` now sends `START_STOP stop` for each running list, not just a single list.
+- **SHORT_UP fallback retained**: if DAQ setup fails entirely for a device, it falls back to `SHORT_UP` polling (DAQ and SHORT_UP never run simultaneously for the same device).
+
+### CCP SHORT_UP priority polling responsiveness — 04/27/2026
+#### Added
+- **CCP throughput diagnostics**: added request RTT, timeout, CRM error, poll-loop, reads/sec, estimated sweep, and NI-XNET receive-loop metrics to diagnose large-channel `SHORT_UP` refresh rates.
+- **CCP throughput probe**: the CCP config test flow now reports a short selected-channel throughput probe with attempted reads/sec, successful reads/sec, timeout rate, average/p95 RTT, and estimated sweep time.
+- **CCP selected-channel filter**: the CCP config dialog now has a "Show selected channels only" toggle that live-filters the A2L channel table to rows checked in the Use column.
+- **CCP runtime load diagnostics**: added `CCP/bus_load_pct`, `CCP/poll_rtt_avg_ms`, `CCP/high_priority_budget_pct`, and `CCP/high_priority_over_budget`.
+#### Changed
+- **DTO ID normalization**: A2L DTO IDs with metadata bits, such as `0x8CFF5200`, are normalized for runtime receive matching as `0x0CFF5200`.
+- **Responsive CCP config loading**: the dialog now opens with shallow `MEASUREMENT` name discovery, caches A2L name scans, preserves saved metadata for selected channels, and avoids parsing conversion/unit/limit data at open.
+- **Lean channel table**: tier is now a plain double-click toggle cell instead of a per-row combo widget, and very large A2L lists are capped in the table with a status message.
+
 ### NI DAQ temperature acquisition optimization and YAML super-user controls — 04/21/2026
 #### Added
 - **NI DAQ temperature super-user settings** in `ni_daq.yaml` under `acquisition.temperature`:

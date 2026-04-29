@@ -393,6 +393,7 @@ class Orchestrator:
                                 self._kickoff_ccp_test(ctrl_msg)
                             elif ctrl_msg.get("type") == "reload_plugin":
                                 pid = str(ctrl_msg.get("plugin", ""))
+                                self._stash_session_keys(ctrl_msg)
                                 self._reload_plugin(pid)
                             elif ctrl_msg.get("type") == "sync_plugin_selections":
                                 self._sync_all_plugin_selections()
@@ -440,6 +441,7 @@ class Orchestrator:
                         except Exception:
                             pass
                     self._evaluate_do_conditions(vals)
+                    self._forward_console_msgs(vals)
                     pub_vals = _strip_debug_keys(vals)
                     pub_units = _strip_debug_keys(units)
                     payload = json.dumps({
@@ -592,6 +594,7 @@ class Orchestrator:
                                 self._handle_loadbank_command(ctrl_msg)
                             elif ctrl_msg.get("type") == "reload_plugin":
                                 pid = str(ctrl_msg.get("plugin", ""))
+                                self._stash_session_keys(ctrl_msg)
                                 self._reload_plugin(pid)
                             elif ctrl_msg.get("type") == "plugin_inject_fail":
                                 self._handle_inject_fail(ctrl_msg)
@@ -643,6 +646,7 @@ class Orchestrator:
                         except Exception:
                             pass
                     self._evaluate_do_conditions(vals)
+                    self._forward_console_msgs(vals)
                     pub_vals = _strip_debug_keys(vals)
                     pub_units = _strip_debug_keys(units)
                     payload = json.dumps({
@@ -982,6 +986,16 @@ class Orchestrator:
         if prev != enabled:
             print(f"[INFO] Plugin '{plugin_id}' enabled state: {prev} -> {enabled}")
 
+    @staticmethod
+    def _stash_session_keys(ctrl_msg: dict) -> None:
+        """Store session access keys from the UI process into this process."""
+        import sys
+        keys = ctrl_msg.get("session_keys")
+        if isinstance(keys, dict) and keys:
+            store = getattr(sys, "_matrix_ccp_session_keys", {})
+            store.update(keys)
+            sys._matrix_ccp_session_keys = store  # type: ignore[attr-defined]
+
     def _reload_plugin(self, plugin_id: str) -> None:
         if not plugin_id:
             return
@@ -1091,9 +1105,16 @@ class Orchestrator:
 
         def _worker() -> None:
             setattr(self, "_ccp_test_running", True)
+            restart_after_test = False
             try:
                 _emit("start", True, "Starting CCP connection test...")
                 try:
+                    try:
+                        restart_after_test = bool(getattr(ccp, "_worker_thread", None) is not None)
+                        if restart_after_test:
+                            ccp.stop()
+                    except Exception:
+                        restart_after_test = False
                     ccp.load_config()
                     if self._global_sim_mode:
                         ccp.mode = "sim"
@@ -1108,6 +1129,23 @@ class Orchestrator:
             except Exception as e:
                 _emit("error", False, f"CCP test exception: {e}", done=True)
             finally:
+                try:
+                    ccp.stop()
+                except Exception:
+                    pass
+                if restart_after_test:
+                    try:
+                        ccp.load_config()
+                        if self._global_sim_mode:
+                            ccp.mode = "sim"
+                        ccp.configure()
+                        status = ccp.validate()
+                        if status.ok:
+                            ccp.start()
+                        else:
+                            _emit("restart", False, f"CCP restart skipped: {status.message}")
+                    except Exception as e:
+                        _emit("restart", False, f"CCP restart failed: {e}")
                 setattr(self, "_ccp_test_running", False)
 
         try:
@@ -1132,6 +1170,19 @@ class Orchestrator:
             self.bus.publish_status(payload)
         except Exception:
             pass
+
+    def _forward_console_msgs(self, vals: dict) -> None:
+        """Extract __console_msgs__ from merged plugin vals and publish to status topic."""
+        msgs = vals.pop("__console_msgs__", None)
+        if not msgs:
+            return
+        import json as _json
+        for text in msgs:
+            try:
+                payload = _json.dumps({"type": "plugin_message", "text": str(text)}).encode("utf-8")
+                self.bus.publish_status(payload)
+            except Exception:
+                pass
 
     def request_stop(self) -> None:
         self._running = False

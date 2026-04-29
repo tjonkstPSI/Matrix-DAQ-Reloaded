@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 
 from ..config.loader import load_yaml_config
 
@@ -22,6 +23,8 @@ class BasePlugin:
         self.config_name = config_name
         self.config: Dict[str, Any] = {}
         self.mode: str = "real"  # or "sim"
+        self._console_msgs: List[str] = []
+        self._console_msgs_lock = threading.Lock()
 
     def load_config(self) -> None:
         path = self.configs_dir / self.config_name
@@ -60,5 +63,21 @@ class BasePlugin:
         Default empty; plugins should override when applicable.
         """
         return {}
+
+    def _console_msg(self, text: str) -> None:
+        """Queue a message for display in the console Messages box.
+
+        Thread-safe -- can be called from worker threads.
+        Messages are drained by the orchestrator after each simulate_step().
+        """
+        with self._console_msgs_lock:
+            self._console_msgs.append(str(text))
+
+    def _drain_console_msgs(self) -> List[str]:
+        """Return and clear all queued console messages."""
+        with self._console_msgs_lock:
+            msgs = list(self._console_msgs)
+            self._console_msgs.clear()
+        return msgs
 
 

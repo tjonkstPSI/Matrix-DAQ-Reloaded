@@ -832,6 +832,13 @@ class ConsoleWindow(QMainWindow):
                     self.txt_messages.append(f"[WARN] Excel export failed: {msg.get('error','unknown')}")
             except Exception:
                 pass
+        elif t == "plugin_message":
+            try:
+                text = str(msg.get("text", ""))
+                if text:
+                    self.txt_messages.append(text)
+            except Exception:
+                pass
 
     def _on_stats_clicked(self) -> None:
         # Request manual stats snapshot from Core
