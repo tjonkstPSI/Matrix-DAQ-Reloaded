@@ -1,10 +1,7 @@
-enabled: true
 snapshot:
-  window:
-    seconds: 5.0
-    samples: null
-  capture_mode: backward
-  notify_on_skip: true
+  window_type: seconds
+  window_value: 5.0
+  capture_mode: forward
 metrics:
   selected:
   - mean
@@ -17,14 +14,9 @@ manual_logging:
 automatic_logging:
   enabled: false
   trigger:
-    channel: Room Temp
+    channel: null
     comparator: '>'
-    threshold: 25.0
+    threshold: 0.0
     edge: rising
-    holdoff_s: 0.0
-output:
-  format: wide
-  enable_excel_export: false
-  excel_per_stat_sheet: true
+channel_mode: all
 channels: []
-recording_rate_hz: 10

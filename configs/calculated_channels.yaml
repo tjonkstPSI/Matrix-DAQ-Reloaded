@@ -1,29 +1,76 @@
 enabled: true
+recording_rate_hz: 50.0
 channels:
-- alias: mOT_EngSsd
-  expr: 1.0 if (softalarm == 1 and rpm == 0) else 0.0
+- name: EstopLogic
+  enabled: true
   symbols:
     rpm: cSP_Eng
     softalarm: iOT_AlmSftSdn
-  unit: bool
+    estop: qDG_FacEspAct
+  body: 'softsd = 1 if (softalarm == 1 and rpm == 0) else 0
+
+    estopstatus = 0 if (softsd == 1 or estop == 0) else 1
+
+    estoplight = 0 if (softsd == 1) else 1
+
+    fuellockoff = 0 if (estop == 0) else 1
+
+
+    '
+  outputs:
+  - var: softsd
+    alias: mOT_EngSsd
+    unit: bool
+  - var: fuellockoff
+    alias: eFuelLockoffStatus
+    unit: bool
+  - var: estopstatus
+    alias: mDG_GenEspAct
+    unit: bool
+  - var: estoplight
+    alias: mDG_FacSsdEspAct
+    unit: bool
+- name: J1995 Power Correction
   enabled: true
-- alias: mDG_GenEspAct
-  expr: 0 if (SoftShutdown == 1 or EstopStat == 0) else 1
   symbols:
-    EstopStat: qDG_FacEspAct
-    SoftShutdown: mOT_EngSsd
-  unit: bool
-  enabled: true
-- alias: mDG_FacSsdEspAct
-  expr: 0 if (AlmEmgSdn == 1) else 1
-  symbols:
-    AlmEmgSdn: mOT_EngSsd
-  unit: bool
-  enabled: true
-- alias: eFuelLockoffStatus
-  expr: 0 if (Estop == 0) else 1
-  symbols:
-    Estop: qDG_FacEspAct
-  unit: bool
-  enabled: true
-recording_rate_hz: 50.0
+    baro: qPR_Amb
+    temp: qTP_Amb
+    rh: vRH_Amb
+    bp: lPO_LdbPwr
+  body: '#Convert observed power to corrected power
+
+
+    #Convert temps to K and pressure to Pa
+
+    tempK = temp + 273.15
+
+    baroPa = baro*1000
+
+
+    #Saturated water vapor pressure
+
+    #https://www.engineeringtoolbox.com/water-vapor-saturation-pressure-air-d_689.html
+
+    psx = (exp(77.345+0.0057*tempK-7235/tempK)/(tempK^8.2))
+
+
+    #Dry air inlet pressure
+
+    bdo = baroPa - rh*psx
+
+
+    #Correction Factor
+
+    CF = 1.18*((99000/bdo)*((tempK)/298)^0.5)-0.18
+
+
+    #Corrected Power
+
+    bpc = CF*bp'
+  outputs:
+  - var: CF
+    alias: xPO_CF
+    unit: ''
+  - var: bpc
+    alias: mPO_PwrCor
+    unit: kW

@@ -1,13 +1,17 @@
-# Author: T. Onkst | Date: 08132025
+# Author: T. Onkst | Date: 04292026
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Set
+import time
+from collections import deque
+from dataclasses import dataclass, field
+from typing import Any, Deque, Dict, List, Optional, Set
 import threading
 
 from .base import BasePlugin, PluginStatus
 
+
+_HISTORY_DEPTH = 10
 
 ALLOWED_FUNCS = {
     "abs": abs,
@@ -28,12 +32,48 @@ except Exception:
 
 
 @dataclass
-class CalcItem:
-    alias: str
-    expr: str
+class CalcBlock:
+    name: str
+    body: str
     symbols: Dict[str, Any]
-    unit: str = ""
+    outputs: List[Dict[str, str]] = field(default_factory=list)
     enabled: bool = True
+
+
+class BlockHistory:
+    """Per-block rolling history of scope snapshots for prev() lookups."""
+
+    def __init__(self, depth: int = _HISTORY_DEPTH) -> None:
+        self._depth = depth
+        self._ring: Deque[Dict[str, float]] = deque(maxlen=depth)
+
+    def push(self, scope: Dict[str, Any]) -> None:
+        self._ring.append({k: float(v) for k, v in scope.items()
+                           if isinstance(v, (int, float))})
+
+    def get(self, var: str, steps: int) -> float:
+        """Return value of *var* from *steps* cycles ago.  Returns 0.0 if unavailable."""
+        idx = len(self._ring) - steps
+        if idx < 0 or idx >= len(self._ring):
+            return 0.0
+        return self._ring[idx].get(var, 0.0)
+
+    def clear(self) -> None:
+        self._ring.clear()
+
+
+def _migrate_legacy_channel(c: dict) -> dict:
+    """Convert old single-expression channel dict to new block format."""
+    expr = str(c.get("expr", ""))
+    alias = str(c.get("alias", ""))
+    unit = str(c.get("unit", ""))
+    return {
+        "name": alias,
+        "enabled": bool(c.get("enabled", True)),
+        "symbols": dict(c.get("symbols") or {}),
+        "body": f"result = {expr}",
+        "outputs": [{"var": "result", "alias": alias, "unit": unit}],
+    }
 
 
 class SafeExprEvaluator:
@@ -44,6 +84,34 @@ class SafeExprEvaluator:
         import ast
         node = ast.parse(expr, mode="eval")
         return float(self._eval_node(node.body, bindings))
+
+    def evaluate_block(
+        self,
+        body: str,
+        bindings: Dict[str, Any],
+        history: Optional[BlockHistory] = None,
+    ) -> Dict[str, Any]:
+        """Evaluate a multiline block of `var = expr` assignments.
+
+        *history* enables the ``prev(var, steps)`` function.
+        Returns the full scope dict (inputs + all computed intermediates).
+        """
+        scope = dict(bindings)
+        scope["_history"] = history
+        for line in body.strip().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            varname, sep, rhs = line.partition("=")
+            if not sep:
+                continue
+            varname = varname.strip()
+            rhs = rhs.strip()
+            if not varname or not rhs:
+                continue
+            scope[varname] = self.eval(rhs, scope)
+        scope.pop("_history", None)
+        return scope
 
     def _eval_node(self, node, bindings: Dict[str, Any]) -> Any:
         import ast
@@ -81,7 +149,11 @@ class SafeExprEvaluator:
             raise ValueError(f"unknown symbol: {key}")
         if isinstance(node, ast.Call):
             fn_name = getattr(node.func, 'id', None)
-            if fn_name is None or fn_name not in self.allowed_funcs:
+            if fn_name is None:
+                raise ValueError("unsupported function")
+            if fn_name == "prev":
+                return self._handle_prev(node, bindings)
+            if fn_name not in self.allowed_funcs:
                 raise ValueError("unsupported function")
             args = [self._eval_node(a, bindings) for a in node.args]
             return self.allowed_funcs[fn_name](*args)
@@ -119,13 +191,33 @@ class SafeExprEvaluator:
             raise ValueError("unsupported boolean op")
         raise ValueError("unsupported expression element")
 
+    def _handle_prev(self, node, bindings: Dict[str, Any]) -> float:
+        """Evaluate prev(varname, steps) using the block history buffer."""
+        import ast
+        history: Optional[BlockHistory] = bindings.get("_history")
+        if history is None:
+            return 0.0
+        args = node.args
+        if len(args) < 1 or len(args) > 2:
+            raise ValueError("prev() requires 1-2 arguments: prev(var) or prev(var, steps)")
+        var_node = args[0]
+        if not isinstance(var_node, ast.Name):
+            raise ValueError("prev() first argument must be a variable name")
+        var_name = var_node.id
+        steps = 1
+        if len(args) == 2:
+            steps = int(self._eval_node(args[1], bindings))
+        if steps < 1:
+            steps = 1
+        return history.get(var_name, steps)
+
 
 class CalculatedChannelsPlugin(BasePlugin):
     id = "Calculated_Channels"
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self._items: List[CalcItem] = []
+        self._blocks: List[CalcBlock] = []
         self._evaluator = SafeExprEvaluator(ALLOWED_FUNCS)
         self._units: Dict[str, str] = {}
         self._snapshot_values: Dict[str, Any] = {}
@@ -135,23 +227,58 @@ class CalculatedChannelsPlugin(BasePlugin):
         self._worker_thread = None
         self._worker_stop = threading.Event()
         self._worker_period_s: float = 0.05
+        self._block_histories: List[BlockHistory] = []
+        self._last_eval_time: float = 0.0
 
     def configure(self) -> None:
         cfg = self.config or {}
-        items: List[CalcItem] = []
+        blocks: List[CalcBlock] = []
         for c in cfg.get("channels", []) or []:
             if not isinstance(c, dict):
                 continue
-            alias = c.get("alias")
-            expr = c.get("expr")
-            symbols = c.get("symbols") or {}
-            unit = str(c.get("unit", ""))
-            enabled = bool(c.get("enabled", True))
-            if not alias or not expr or not isinstance(symbols, dict):
+            if "body" in c:
+                name = str(c.get("name", ""))
+                body = str(c.get("body", ""))
+                symbols = c.get("symbols") or {}
+                outputs = c.get("outputs") or []
+                enabled = bool(c.get("enabled", True))
+                if not body or not isinstance(symbols, dict):
+                    continue
+                if not isinstance(outputs, list):
+                    continue
+                out_list = []
+                for o in outputs:
+                    if isinstance(o, dict) and o.get("var") and o.get("alias"):
+                        out_list.append({
+                            "var": str(o["var"]),
+                            "alias": str(o["alias"]),
+                            "unit": str(o.get("unit", "")),
+                        })
+                blocks.append(CalcBlock(
+                    name=name,
+                    body=body,
+                    symbols=dict(symbols),
+                    outputs=out_list,
+                    enabled=enabled,
+                ))
+            elif "expr" in c:
+                migrated = _migrate_legacy_channel(c)
+                blocks.append(CalcBlock(
+                    name=migrated["name"],
+                    body=migrated["body"],
+                    symbols=migrated["symbols"],
+                    outputs=migrated["outputs"],
+                    enabled=migrated["enabled"],
+                ))
+        self._blocks = blocks
+        self._block_histories = [BlockHistory() for _ in self._blocks]
+        self._last_eval_time = 0.0
+        self._units = {}
+        for blk in self._blocks:
+            if not blk.enabled:
                 continue
-            items.append(CalcItem(alias=str(alias), expr=str(expr), symbols=dict(symbols), unit=unit, enabled=enabled))
-        self._items = items
-        self._units = {it.alias: it.unit for it in self._items if it.enabled}
+            for o in blk.outputs:
+                self._units[o["alias"]] = o.get("unit", "")
         try:
             hz = float(self.config.get("recording_rate_hz", 10.0))
         except Exception:
@@ -159,7 +286,6 @@ class CalculatedChannelsPlugin(BasePlugin):
         self._worker_period_s = max(0.01, 1.0 / max(1.0, hz))
 
     def validate(self) -> PluginStatus:
-        # Basic structure validation
         chans = self.config.get("channels", []) or []
         if not isinstance(chans, list):
             return PluginStatus(ok=False, message="channels must be a list")
@@ -170,40 +296,101 @@ class CalculatedChannelsPlugin(BasePlugin):
         except Exception:
             return PluginStatus(ok=False, message="recording_rate_hz must be numeric")
         import ast
+        all_aliases: List[str] = []
         for i, c in enumerate(chans):
             if not isinstance(c, dict):
                 continue
-            if not c.get("alias"):
-                return PluginStatus(ok=False, message=f"channels[{i}].alias required")
-            if not c.get("expr"):
-                return PluginStatus(ok=False, message=f"channels[{i}].expr required")
-            symbols = c.get("symbols")
-            if not isinstance(symbols, dict):
-                return PluginStatus(ok=False, message=f"channels[{i}].symbols must be a mapping")
-            try:
-                ast.parse(str(c.get("expr")), mode="eval")
-            except Exception as e:
-                return PluginStatus(ok=False, message=f"channels[{i}].expr syntax error: {e}")
-            for key in symbols.keys():
-                sk = str(key).strip()
-                if not sk:
-                    return PluginStatus(ok=False, message=f"channels[{i}].symbols contains empty key")
-                if not sk.isidentifier():
-                    return PluginStatus(ok=False, message=f"channels[{i}].symbols key '{sk}' is not a valid identifier")
-        # No duplicate output aliases
-        aliases = [str(c.get("alias")) for c in chans if isinstance(c, dict) and c.get("alias")]
-        if len(aliases) != len(set(aliases)):
+            if "body" in c:
+                err = self._validate_block(i, c)
+                if err:
+                    return PluginStatus(ok=False, message=err)
+                for o in (c.get("outputs") or []):
+                    if isinstance(o, dict) and o.get("alias"):
+                        all_aliases.append(str(o["alias"]))
+            elif "expr" in c:
+                if not c.get("alias"):
+                    return PluginStatus(ok=False, message=f"channels[{i}].alias required")
+                if not c.get("expr"):
+                    return PluginStatus(ok=False, message=f"channels[{i}].expr required")
+                symbols = c.get("symbols")
+                if not isinstance(symbols, dict):
+                    return PluginStatus(ok=False, message=f"channels[{i}].symbols must be a mapping")
+                try:
+                    ast.parse(str(c.get("expr")), mode="eval")
+                except Exception as e:
+                    return PluginStatus(ok=False, message=f"channels[{i}].expr syntax error: {e}")
+                all_aliases.append(str(c["alias"]))
+        if len(all_aliases) != len(set(all_aliases)):
             return PluginStatus(ok=False, message="duplicate calculated alias")
         return PluginStatus(ok=True)
 
+    @staticmethod
+    def _validate_block(idx: int, c: dict) -> Optional[str]:
+        import ast
+        body = str(c.get("body", "")).strip()
+        if not body:
+            return f"channels[{idx}]: body is empty"
+        symbols = c.get("symbols")
+        if not isinstance(symbols, dict):
+            return f"channels[{idx}]: symbols must be a mapping"
+        for key in symbols.keys():
+            sk = str(key).strip()
+            if not sk:
+                return f"channels[{idx}]: symbols contains empty key"
+            if not sk.isidentifier():
+                return f"channels[{idx}]: symbols key '{sk}' is not a valid identifier"
+        assigned_vars: set = set()
+        for line_num, line in enumerate(body.splitlines(), 1):
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            varname, sep, rhs = line.partition("=")
+            if not sep:
+                return f"channels[{idx}] line {line_num}: expected 'var = expr' format"
+            varname = varname.strip()
+            rhs = rhs.strip()
+            if not varname:
+                return f"channels[{idx}] line {line_num}: variable name is empty"
+            if not varname.isidentifier():
+                return f"channels[{idx}] line {line_num}: '{varname}' is not a valid identifier"
+            if not rhs:
+                return f"channels[{idx}] line {line_num}: expression is empty"
+            try:
+                ast.parse(rhs, mode="eval")
+            except Exception as e:
+                return f"channels[{idx}] line {line_num}: syntax error: {e}"
+            assigned_vars.add(varname)
+        outputs = c.get("outputs")
+        if not isinstance(outputs, list) or not outputs:
+            return f"channels[{idx}]: at least one output is required"
+        for oi, o in enumerate(outputs):
+            if not isinstance(o, dict):
+                return f"channels[{idx}].outputs[{oi}]: must be a mapping"
+            var = str(o.get("var", "")).strip()
+            alias = str(o.get("alias", "")).strip()
+            if not var:
+                return f"channels[{idx}].outputs[{oi}]: var is required"
+            if not alias:
+                return f"channels[{idx}].outputs[{oi}]: alias is required"
+            if var not in assigned_vars:
+                return f"channels[{idx}].outputs[{oi}]: var '{var}' is not assigned in body"
+        return None
+
     def aliases(self) -> Set[str]:
-        return {it.alias for it in self._items if it.enabled}
+        out: Set[str] = set()
+        for blk in self._blocks:
+            if not blk.enabled:
+                continue
+            for o in blk.outputs:
+                out.add(o["alias"])
+        return out
 
     def units(self) -> Dict[str, str]:
         return dict(self._units)
 
     def start(self) -> None:
         self._worker_stop.clear()
+        self._last_eval_time = 0.0
         self._worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
         self._worker_thread.start()
 
@@ -218,7 +405,6 @@ class CalculatedChannelsPlugin(BasePlugin):
         self._worker_thread = None
 
     def simulate_step(self, source_values: Dict[str, Any]) -> Dict[str, Any]:
-        # Non-blocking on core tick: cache latest source and return latest computed snapshot.
         with self._source_lock:
             self._latest_source_values = dict(source_values)
         with self._snapshot_lock:
@@ -234,18 +420,21 @@ class CalculatedChannelsPlugin(BasePlugin):
             self._worker_stop.wait(self._worker_period_s)
 
     def _compute_step_values(self, source_values: Dict[str, Any]) -> Dict[str, Any]:
-        """Evaluate calculations against provided source values and any prior calcs in order."""
+        """Evaluate all blocks and extract exposed outputs."""
+        now = time.perf_counter()
+        dt = now - self._last_eval_time if self._last_eval_time > 0.0 else 0.0
+        self._last_eval_time = now
+
         out: Dict[str, Any] = {}
-        for it in self._items:
-            if not it.enabled:
+        for bi, blk in enumerate(self._blocks):
+            if not blk.enabled:
                 continue
-            # Build bindings from symbols mapping
-            bindings: Dict[str, Any] = {}
-            for name, mapped in it.symbols.items():
+            history = self._block_histories[bi] if bi < len(self._block_histories) else None
+            bindings: Dict[str, Any] = {"dt": dt}
+            for name, mapped in blk.symbols.items():
                 if isinstance(mapped, (int, float)):
                     bindings[name] = float(mapped)
                 elif isinstance(mapped, str):
-                    # map to source alias or prior calc alias
                     if mapped in out:
                         bindings[name] = out[mapped]
                     else:
@@ -260,10 +449,14 @@ class CalculatedChannelsPlugin(BasePlugin):
                 else:
                     bindings[name] = float('nan')
             try:
-                out[it.alias] = self._evaluator.eval(it.expr, bindings)
+                scope = self._evaluator.evaluate_block(blk.body, bindings, history)
+                if history is not None:
+                    history.push(scope)
+                for o in blk.outputs:
+                    var = o["var"]
+                    alias = o["alias"]
+                    out[alias] = float(scope.get(var, float('nan')))
             except Exception:
-                # On evaluation error, emit NaN to keep schema stable
-                out[it.alias] = float('nan')
+                for o in blk.outputs:
+                    out[o["alias"]] = float('nan')
         return out
-
-

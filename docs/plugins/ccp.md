@@ -86,10 +86,20 @@ DAQ mode uses DAQ security unlock (`seed_resource: 0x02`, `sec_type: DAQ`), stop
 
 A future `acquisition_mode: hybrid` will allow SHORT_UP and DAQ to run concurrently on the same session -- HIGH/LOW channels polled via SHORT_UP while DAQ-assigned channels stream via DTOs. This requires bench validation that the ECU accepts SHORT_UP commands while DAQ lists are active.
 
+**Parallel Worker Threads (v2.x+):**
+
+When multiple devices are configured, the plugin spawns one daemon worker thread per device context (default behavior). Each thread exclusively owns its device's NixnetSession and CcpProto -- no cross-session CCP I/O from other threads. This allows SHORT_UP blocking waits on different CAN buses to overlap, targeting ~2x combined throughput with two ECUs on separate interfaces.
+
+- Config key: `use_parallel_workers: true` (default). Set to `false` to fall back to sequential single-thread behavior.
+- Single-device setups: parallel mode spawns one thread -- functionally identical to sequential.
+- Thread safety: per-device values are written to thread-local dicts (`ctx["_local_values"]`) and merged into the global snapshot under `_state_lock` each iteration.
+- Clean shutdown: `stop()` signals all threads via a shared Event, then joins each within 2 seconds.
+- Connection test: `run_connection_test` rejects while workers are alive (stop the plugin first).
+
 **General notes:**
-- Worker thread performs connect/reconnect and acquisition independently of core tick.
+- Worker thread(s) perform connect/reconnect and acquisition independently of core tick.
 - Core tick samples `_snapshot_values` (latest-value sample-and-hold).
-- SHORT_UP poll timeout honors configured `io_timeout_s` (default 50 ms). Occasional poll fails under CAN bus contention are normal.
+- SHORT_UP poll timeout honors `short_up_timeout_s` (default 30ms, per-device in YAML). Clamped to 5-50ms and never exceeds `io_timeout_s`. Super users can tune per-device if ECU response times differ across buses. Occasional poll fails under CAN bus contention are normal.
 - Freshness telemetry tracks channel age against realistic expected sweep timing.
 
 **Config dialog:**
@@ -142,6 +152,7 @@ File: `configs/ccp.yaml`
 enabled: true
 mode: real
 recording_rate_hz: 10
+use_parallel_workers: true              # one thread per device (default true); false for sequential fallback
 poll_default_priority: low              # "low" (default) or "high" for SHORT_UP; "10ms" etc. for DAQ
 target_poll_hz: 10                      # target update rate per SHORT_UP channel (1-50)
 high_low_ratio: 3                       # HIGH:LOW polling ratio (default 3:1, super-user adjustable 1-20)
@@ -175,6 +186,7 @@ devices:
       sec_type: CAL
     a2l:
       path: C:/path/to/file.a2l
+    short_up_timeout_s: 0.030             # per-device SHORT_UP response timeout (default 30ms, super-user adjustable 5-50ms)
     acquisition_mode: short_up
     acquisition:
       mode: short_up
@@ -404,9 +416,10 @@ This section documents issues encountered during production testing and their re
 
 ### Deferred Optimization Backlog
 - **Hybrid DAQ + SHORT_UP**: within a single device context, stream channels that fit in DAQ lists while simultaneously SHORT_UP-polling overflow channels. Currently, fallback is all-or-nothing per device.
-- Poll fail rate significantly reduced after removing 15 ms timeout cap; residual occasional fails are normal CAN bus behavior and do not affect data quality.
+- Timeout rate reduced to ~0% after parallel workers, queued RX fix, non-blocking predrain, and 30ms default timeout. Residual occasional fails are normal CAN bus behavior and do not affect data quality.
 - Reduce stale data frequency (`CCP/freshness_state_code` warn/stale transitions), especially for high-priority channels.
 - Add rolling CCP health metrics (for example, success-rate window and consecutive-fail counters) to separate transient noise from sustained degradation.
+- **Cold-start grace period**: some ECU measurements (e.g., adaptive/computed values like TIPAdapt) may require a longer initial timeout on first SHORT_UP access after ECU power cycle. A future enhancement could temporarily extend the timeout for channels that have never succeeded.
 
 ### Notes
 - Current scope is read-only measurement polling.

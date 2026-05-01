@@ -1,10 +1,11 @@
 selected_plugins:
-- CCP
-- Channel_Manager
 - EngineTest
+- Calculated_Channels
+- Channel_Manager
+- NI_DAQ
+- CCP
 selected_displays:
-- "AllChannelsTable (grouped by type) \u2014 auto-categorized via alias prefix into\
-  \ side-by-side panels with FlowLayout reflow"
+- All Channels Table
 data_root: C:/Projects/Python/Matrix_v2_retry/runs
 test_cell: '0'
 data_mode: real

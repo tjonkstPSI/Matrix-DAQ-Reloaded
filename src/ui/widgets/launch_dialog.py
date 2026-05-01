@@ -40,60 +40,46 @@ def _project_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
-def _load_plugin_ids_from_context() -> List[str]:
-    ctx = _project_root() / "docs" / "ai_context.yaml"
-    ALWAYS_ON = {"EngineTest", "Channel_Manager"}
-    try:
-        import yaml  # type: ignore
-        data = yaml.safe_load(ctx.read_text(encoding="utf-8"))
-        out: List[str] = []
-        for it in data.get("plugins", []) or []:
-            pid = str(it.get("id", "")).strip()
-            if pid:
-                out.append(pid)
-        # Prefer a stable order with NI_DAQ first if present
-        out = sorted(out, key=lambda s: ("0" if s == "NI_DAQ" else "1") + s)
-        # Exclude plugins that are always-on and not user selectable
-        out = [p for p in out if p not in ALWAYS_ON]
-        return out
-    except Exception:
-        # Fallback list
-        base = [
-            "NI_DAQ",
-            "CAN",
-            "CCP",
-            "Calculated_Channels",
-            "Cycle",
-            "LoadBank",
-            "Modbus",
-            "Omega",
-            "Statistics",
-            "Vaisala",
-        ]
-        return base
+def _app_registry_path() -> Path:
+    return _project_root() / "configs" / "app_registry.yaml"
 
 
-def _load_display_templates_from_context() -> List[str]:
-    ctx = _project_root() / "docs" / "ai_context.yaml"
+def _load_available_plugins() -> List[str]:
     try:
         import yaml  # type: ignore
-        data = yaml.safe_load(ctx.read_text(encoding="utf-8"))
-        ui = data.get("ui", {}) or {}
-        displays = ui.get("displays", {}) or {}
-        templates = displays.get("templates", []) or []
-        # Ensure list of strings
-        out = [str(x) for x in templates if isinstance(x, str)]
-        return out or [
-            "AllChannelsTable (grouped by type)",
-            "PlotsBlank (user selects channels)",
-            "DialsGauges (configurable)",
-        ]
+        data = yaml.safe_load(_app_registry_path().read_text(encoding="utf-8")) or {}
+        out = [str(p) for p in (data.get("available_plugins") or []) if p]
+        if out:
+            return out
     except Exception:
-        return [
-            "AllChannelsTable (grouped by type)",
-            "PlotsBlank (user selects channels)",
-            "DialsGauges (configurable)",
-        ]
+        pass
+    return [
+        "NI_DAQ",
+        "CAN",
+        "CCP",
+        "Calculated_Channels",
+        "Cycle",
+        "LoadBank",
+        "Modbus",
+        "Omega",
+        "Statistics",
+        "Vaisala",
+    ]
+
+
+def _load_available_displays() -> List[str]:
+    try:
+        import yaml  # type: ignore
+        data = yaml.safe_load(_app_registry_path().read_text(encoding="utf-8")) or {}
+        out = [str(d) for d in (data.get("available_displays") or []) if d]
+        if out:
+            return out
+    except Exception:
+        pass
+    return [
+        "All Channels Table",
+        "Main Test Monitor",
+    ]
 
 
 def _plugins_yaml_path() -> Path:
@@ -139,8 +125,8 @@ class LaunchDialog(QDialog):
         self.setWindowTitle("Launch Configuration")
         self.resize(720, 520)
         self._imported: List[str] = []
-        self._plugin_ids = _load_plugin_ids_from_context()
-        self._display_templates = _load_display_templates_from_context()
+        self._plugin_ids = _load_available_plugins()
+        self._display_templates = _load_available_displays()
         self._init_ui()
         self._load_previous()
 

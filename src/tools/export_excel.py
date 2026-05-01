@@ -299,12 +299,7 @@ def export_excel(
                         ae_df.to_excel(writer, sheet_name="AlarmEvents", index=False)
                     except Exception:
                         pass
-                ss_df = read_jsonl(run_dir / "stats_snapshots.jsonl")
-                if ss_df is not None:
-                    try:
-                        ss_df.to_excel(writer, sheet_name="StatsSnapshots", index=False)
-                    except Exception:
-                        pass
+                pass
             created.append(out_path)
 
         for df in iter_rowgroup_dataframes(f, cols):
@@ -326,6 +321,37 @@ def export_excel(
 
         if frames:
             flush_one(part_idx, frames)
+
+    # Export stats snapshots as a separate file, one tab per metric
+    ss_jsonl = run_dir / "stats_snapshots.jsonl"
+    ss_df = read_jsonl(ss_jsonl)
+    if ss_df is not None and not ss_df.empty:
+        ss_path = target_dir / f"Statistics_{run_dir.name}.xlsx"
+        _METRIC_SUFFIXES = [
+            ("mean", "Mean"),
+            ("stdev", "Std Dev"),
+            ("min", "Min"),
+            ("max", "Max"),
+            ("p2p", "Peak-to-Peak"),
+        ]
+        try:
+            with pd.ExcelWriter(ss_path, engine=engine) as sw:
+                for suffix, sheet_name in _METRIC_SUFFIXES:
+                    metric_cols = [c for c in ss_df.columns if c.endswith(f"_{suffix}")]
+                    if not metric_cols:
+                        continue
+                    time_col = ["ts_hms"] if "ts_hms" in ss_df.columns else []
+                    rename_map = {c: c.rsplit(f"_{suffix}", 1)[0] for c in metric_cols}
+                    tab_df = ss_df[time_col + metric_cols].copy()
+                    tab_df.rename(columns=rename_map, inplace=True)
+                    tab_df.to_excel(sw, sheet_name=sheet_name, index=False)
+                    try:
+                        _autosize_and_format_numeric(sw, sheet_name, list(tab_df.columns), engine)
+                    except Exception:
+                        pass
+            created.append(ss_path)
+        except Exception:
+            pass
 
     return created
 

@@ -83,6 +83,31 @@ def apply_scaling(raw: float, scaling: dict) -> float:
     return raw
 
 
+def inverse_scaling(eng: float, scaling: dict) -> float:
+    """Convert an engineering-unit value back to raw voltage (inverse of apply_scaling)."""
+    scale_type = scaling.get("type", "none")
+
+    if scale_type == "none":
+        return eng
+
+    if scale_type == "linear":
+        gain = scaling.get("gain", 1.0)
+        offset = scaling.get("offset", 0.0)
+        if gain == 0.0:
+            return eng
+        return (eng - offset) / gain
+
+    if scale_type == "table":
+        pts = scaling.get("points", [])
+        if len(pts) < 2:
+            return eng
+        swapped = [[p[1], p[0]] for p in pts]
+        swapped.sort(key=lambda p: p[0])
+        return _table_interp(eng, swapped, bool(scaling.get("extrapolate", False)))
+
+    return eng
+
+
 def _table_interp(raw: float, points: list, extrapolate: bool = False) -> float:
     if len(points) < 2:
         return raw

@@ -1,0 +1,23 @@
+plot:
+  time_window: 60s
+  channels:
+  - alias: emasterVbat
+    y_axis: 1
+    color: '#1f77b4'
+  - alias: emasterVsw
+    y_axis: 1
+    color: '#ff7f0e'
+watch_channels:
+- emasterIAT
+- emasterVbat
+- emasterVsw
+- qPR_Amb
+- qPR_Ccs
+standard_overrides:
+  speed_aliases:
+  - cSP_Eng
+  - emasterrpm
+  - eslaverpm
+  power_aliases:
+  - xPO_GenAvg
+  - lPO_LdbAct

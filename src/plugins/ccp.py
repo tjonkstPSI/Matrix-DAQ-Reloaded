@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import collections
 import os
 import sys
 import time
@@ -72,6 +73,7 @@ class CCPPlugin(BasePlugin):
         self._last_connect_attempt_ts: float = 0.0
         self._reconnect_interval_s: float = 2.0
         self._worker_thread: threading.Thread | None = None
+        self._worker_threads: List[threading.Thread] = []
         self._worker_stop = threading.Event()
         self._state_lock = threading.Lock()
         self._snapshot_values: Dict[str, float] = {}
@@ -261,6 +263,23 @@ class CCPPlugin(BasePlugin):
                 result.append(f"{prefix}{name}" if prefix else str(name))
         return result
 
+    def device_aliases(self) -> Dict[str, Set[str]]:
+        """Return aliases grouped by device name for source map construction."""
+        result: Dict[str, Set[str]] = {}
+        for dcfg in self._resolved_device_cfgs():
+            name = str(dcfg.get("name") or "CCP")
+            meas = (dcfg.get("measurements") or {})
+            prefix = str(meas.get("naming_prefix") or "")
+            aliases: Set[str] = set()
+            for item in meas.get("list", []) or []:
+                if not isinstance(item, dict) or not bool(item.get("enabled", True)):
+                    continue
+                ch_name = item.get("name")
+                if ch_name:
+                    aliases.add(f"{prefix}{ch_name}" if prefix else str(ch_name))
+            result[name] = aliases
+        return result
+
     def configure(self) -> None:
         self._theta = 0.0
         self._entries = []
@@ -307,7 +326,7 @@ class CCPPlugin(BasePlugin):
                     "poll_interval_s": poll_s,
                     "poll_channels_per_tick": cpt,
                     "io_timeout_s": io_to,
-                    "short_up_timeout_s": min(io_to, max(0.005, float(dcfg.get("short_up_timeout_s", 0.015)))),
+                    "short_up_timeout_s": min(io_to, max(0.005, float(dcfg.get("short_up_timeout_s", 0.030)))),
                     "reconnect_interval_s": reconn,
                     "poll_default_priority": self._canonical_priority(dcfg.get("poll_default_priority") or dcfg.get("poll_default_tier")),
                     "entries": [],
@@ -358,6 +377,12 @@ class CCPPlugin(BasePlugin):
                     "connected": False,
                     "session": None,
                     "proto": None,
+                    "_local_values": {},
+                    "_local_value_ts": {},
+                    "_worker_alive": False,
+                    "_worker_error": "",
+                    "_last_sup_timing": {},
+                    "_timing_window": collections.deque(maxlen=200),
                 }
             )
         self._freshness_sample_period_s = min_poll_s if min_poll_s < 1.0 else 0.1
@@ -616,11 +641,36 @@ class CCPPlugin(BasePlugin):
             ctx["last_connect_attempt_ts"] = 0.0
             ctx["last_poll_ts"] = 0.0
             ctx["poll_index"] = 0
+            ctx["_local_values"] = {}
+            ctx["_local_value_ts"] = {}
+            ctx["_worker_alive"] = False
+            ctx["_worker_error"] = ""
+            ctx["_last_sup_timing"] = {}
+            ctx["_timing_window"] = collections.deque(maxlen=200)
+            ctx["_rtt_diag_count"] = 0
         self._set_state("starting", 2)
         if self.mode == "real":
             self._worker_stop.clear()
-            self._worker_thread = threading.Thread(target=self._run_real_worker, daemon=True)
-            self._worker_thread.start()
+            use_parallel = bool(self.config.get("use_parallel_workers", True))
+            if use_parallel and len(self._contexts) > 0:
+                self._worker_threads = []
+                for ctx in self._contexts:
+                    ctx["_worker_alive"] = True
+                    t = threading.Thread(
+                        target=self._run_ctx_worker,
+                        args=(ctx,),
+                        daemon=True,
+                        name=f"ccp-{ctx.get('name', '?')}",
+                    )
+                    self._worker_threads.append(t)
+                    t.start()
+                self._worker_thread = None
+            else:
+                self._worker_threads = []
+                self._worker_thread = threading.Thread(
+                    target=self._run_sequential_worker, daemon=True
+                )
+                self._worker_thread.start()
         self._refresh_freshness(time.time())
         self._append_diag_values()
         with self._state_lock:
@@ -628,10 +678,17 @@ class CCPPlugin(BasePlugin):
 
     def stop(self) -> None:
         self._worker_stop.set()
+        for t in self._worker_threads:
+            if t is not None and t.is_alive():
+                try:
+                    t.join(timeout=2.0)
+                except Exception:
+                    pass
+        self._worker_threads = []
         wt = self._worker_thread
         if wt is not None and wt.is_alive():
             try:
-                wt.join(timeout=1.0)
+                wt.join(timeout=2.0)
             except Exception:
                 pass
         self._worker_thread = None
@@ -1396,6 +1453,31 @@ class CCPPlugin(BasePlugin):
             self._diag["connect_ok"] = int(self._diag.get("connect_ok", 0)) + 1
             self._diag["last_error"] = ""
             self._set_state("ready_polling", 60)
+            ctx["_debug_timing"] = bool(
+                self.config.get("debug_timing", False)
+                or os.environ.get("CCP_DEBUG_TIMING", "") == "1"
+            )
+            try:
+                sess_obj = ctx.get("session")
+                rx_m = sess_obj.rx_mode if sess_obj else "?"
+                sup_t = float(ctx.get("short_up_timeout_s", 0.015)) * 1000.0
+                io_t = float(ctx.get("io_timeout_s", 0.05)) * 1000.0
+                cpt_v = int(ctx.get("poll_channels_per_tick", 1))
+                thz = int(ctx.get("target_poll_hz", 10))
+                hlr = int(ctx.get("high_low_ratio", _DEFAULT_HIGH_LOW_RATIO))
+                pc = ctx.get("priority_counts") or {}
+                hc = int(pc.get(_PRIORITY_HIGH, 0))
+                lc = int(pc.get(_PRIORITY_LOW, 0))
+                n_ent = len(ctx.get("entries") or [])
+                dbg = " debug_timing=ON" if ctx.get("_debug_timing") else ""
+                print(
+                    f"[CCP:{ctx.get('name','?')}] Config: short_up_timeout={sup_t:.1f}ms "
+                    f"io_timeout={io_t:.1f}ms rx_mode={rx_m} "
+                    f"cpt={cpt_v} target_hz={thz} high_low_ratio={hlr} "
+                    f"channels={n_ent} ({hc}H/{lc}L){dbg}"
+                )
+            except Exception:
+                pass
         except Exception as e:
             ctx["connected"] = False
             self._diag["last_error"] = f"connect_or_unlock_failed:{ctx.get('name','?')}:{e}"
@@ -1508,7 +1590,47 @@ class CCPPlugin(BasePlugin):
         ctx["high_priority_budget_pct"] = high_budget_pct
         ctx["high_priority_over_budget"] = high_over_budget
 
-    def _run_real_worker(self) -> None:
+    def _run_ctx_worker(self, ctx: Dict[str, Any]) -> None:
+        """Per-device worker thread. Owns ctx's session/proto exclusively."""
+        ctx_name = ctx.get("name", "?")
+        try:
+            while not self._worker_stop.is_set():
+                now = time.time()
+                did_work = False
+                if not bool(ctx.get("connected", False)):
+                    if now - float(ctx.get("last_connect_attempt_ts", 0.0)) >= float(ctx.get("reconnect_interval_s", 2.0)):
+                        self._connect_real_ctx(ctx)
+                else:
+                    if bool(ctx.get("daq_running", False)):
+                        self._poll_daq_ctx(ctx)
+                        did_work = True
+                    elif self._rate_governor_allows(ctx, now):
+                        self._poll_real_ctx(ctx)
+                        did_work = True
+                self._merge_ctx_snapshot(ctx)
+                self._worker_stop.wait(0.001 if did_work else 0.005)
+        except Exception as exc:
+            print(f"[CCP:{ctx_name}] Worker crashed: {exc}")
+            ctx["connected"] = False
+            ctx["_worker_error"] = str(exc)
+        finally:
+            ctx["_worker_alive"] = False
+
+    def _merge_ctx_snapshot(self, ctx: Dict[str, Any]) -> None:
+        """Merge per-ctx local values into global snapshot under lock."""
+        local_vals = ctx.get("_local_values", {})
+        local_ts = ctx.get("_local_value_ts", {})
+        with self._state_lock:
+            self._values.update(local_vals)
+            self._value_ts.update(local_ts)
+            self._connected = any(c.get("connected", False) for c in self._contexts)
+            self._refresh_freshness(time.time())
+            self._refresh_load_diag()
+            self._append_diag_values()
+            self._snapshot_values = dict(self._values)
+
+    def _run_sequential_worker(self) -> None:
+        """Legacy sequential worker (fallback when use_parallel_workers=false)."""
         while not self._worker_stop.is_set():
             now = time.time()
             any_connected = False
@@ -1527,6 +1649,7 @@ class CCPPlugin(BasePlugin):
                         did_work = True
             self._connected = any_connected or any(bool(c.get("connected", False)) for c in self._contexts)
             self._refresh_freshness(now)
+            self._refresh_load_diag()
             self._append_diag_values()
             with self._state_lock:
                 self._snapshot_values = dict(self._values)
@@ -1605,11 +1728,12 @@ class CCPPlugin(BasePlugin):
                 ctx["_pid_hits"] = {}
                 if not ctx.get("_nan_report_done") and dto_total > 0:
                     ctx["_nan_report_done"] = True
+                    local_vals = ctx.get("_local_values", {})
                     nan_channels = [
-                        a for a in self._values
+                        a for a in local_vals
                         if a.startswith(str(ctx.get("_alias_prefix", "")))
                         and not a.startswith("CCP/")
-                        and math.isnan(self._values[a])
+                        and math.isnan(local_vals[a])
                     ]
                     if nan_channels:
                         pid_map_local = ctx.get("daq_pid_map") or {}
@@ -1670,8 +1794,8 @@ class CCPPlugin(BasePlugin):
                             )
                         alias = str(entry.get("alias") or "")
                         if alias:
-                            self._values[alias] = float(value)
-                            self._value_ts[alias] = now
+                            ctx["_local_values"][alias] = float(value)
+                            ctx["_local_value_ts"][alias] = now
                             entry["last_success_ts"] = now
                     except Exception as exc:
                         ctx["daq_decode_errors"] = int(ctx.get("daq_decode_errors", 0)) + 1
@@ -1726,27 +1850,47 @@ class CCPPlugin(BasePlugin):
             sweep_success = 0
             ctx["poll_selected_count"] = len(selected)
             ctx["_rg_window_reads"] = int(ctx.get("_rg_window_reads", 0)) + len(selected)
+            debug_timing = bool(ctx.get("_debug_timing", False))
             for entry in selected:
                 attempt_ts = _pc()
                 entry["last_attempt_ts"] = time.time()
                 val = self._poll_short_up_ctx(ctx, entry)
                 elapsed_ms = (_pc() - attempt_ts) * 1000.0
                 self._record_poll_rtt(ctx, elapsed_ms)
+                timing = ctx.get("_last_sup_timing") or {}
+                tw = ctx.get("_timing_window")
+                if tw is not None and timing:
+                    tw.append(timing)
                 rtt_diag_count = int(ctx.get("_rtt_diag_count", 0))
-                if rtt_diag_count < 10:
-                    ctx["_rtt_diag_count"] = rtt_diag_count + 1
-                    ok = "OK" if val is not None else "FAIL"
+                should_log_startup = rtt_diag_count < 20
+                should_log_debug = debug_timing and (
+                    timing.get("slop_ms", 0.0) > 2.0 or timing.get("outcome") != "ok"
+                )
+                if should_log_startup or should_log_debug:
+                    if should_log_startup:
+                        ctx["_rtt_diag_count"] = rtt_diag_count + 1
+                    ok = timing.get("outcome", "?").upper()
+                    pred = timing.get("predrain_ms", 0.0)
+                    send = timing.get("send_ms", 0.0)
+                    recv_t = timing.get("recv_loop_ms", 0.0)
+                    cap = timing.get("cap_ms", 0.0)
+                    slop = timing.get("slop_ms", 0.0)
+                    iters = timing.get("outer_iterations", 0)
+                    raw = timing.get("recv_raw_frames", 0)
+                    match_ms = timing.get("first_match_offset_ms", -1.0)
+                    match_str = f"match@{match_ms:.1f}ms" if match_ms >= 0.0 else "no_match"
                     print(
                         f"[CCP:{ctx.get('name','?')}] RTT #{rtt_diag_count}: "
                         f"{elapsed_ms:.1f}ms {ok} ch={entry.get('name','?')} "
-                        f"cpt={count} rx_mode={ctx.get('session').rx_mode if ctx.get('session') else '?'}"
+                        f"pred={pred:.1f}ms send={send:.1f}ms recv={recv_t:.1f}ms "
+                        f"cap={cap:.1f}ms slop={slop:+.1f}ms iters={iters} raw={raw} {match_str}"
                     )
                 if val is not None:
                     alias = str(entry["alias"])
                     prev_success_ts = float(entry.get("last_success_ts", 0.0))
                     success_ts = time.time()
-                    self._values[alias] = float(val)
-                    self._value_ts[alias] = success_ts
+                    ctx["_local_values"][alias] = float(val)
+                    ctx["_local_value_ts"][alias] = success_ts
                     entry["last_success_ts"] = success_ts
                     if prev_success_ts > 0.0 and success_ts > prev_success_ts:
                         entry["achieved_hz"] = 1.0 / max(0.001, success_ts - prev_success_ts)
@@ -1820,12 +1964,59 @@ class CCPPlugin(BasePlugin):
                     parts.append(f"LOW: {low_count}ch @ ~{low_hz:.1f} Hz")
                 parts.append(f"Budget: {budget_pct:.0f}%")
                 print(f"[CCP:{ctx.get('name','?')}] {' | '.join(parts)}")
+                self._print_timing_summary(ctx)
             if int(ctx.get("daq_fallback_active", 0)):
                 est_hz = (1.0 / sweep_s) if sweep_s > 0.0 else 0.0
                 print(
                     f"[CCP:{ctx.get('name','?')}] WARNING: SHORT_UP fallback active "
                     f"-- estimated sample rate: ~{est_hz:.1f} Hz ({len(entries)} channels)"
                 )
+
+    @staticmethod
+    def _compute_timing_summary(ctx: Dict[str, Any]) -> Optional[Dict[str, float]]:
+        tw = ctx.get("_timing_window")
+        if not tw or len(tw) < 2:
+            return None
+        samples = list(tw)
+        n = len(samples)
+        rtts = sorted(t.get("total_ms", 0.0) for t in samples)
+        preds = [t.get("predrain_ms", 0.0) for t in samples]
+        ok_matches = [t["first_match_offset_ms"] for t in samples if t.get("outcome") == "ok" and t.get("first_match_offset_ms", -1.0) >= 0.0]
+        slops = [t.get("slop_ms", 0.0) for t in samples]
+        raw_frames = [t.get("recv_raw_frames", 0) for t in samples]
+        iters = [t.get("outer_iterations", 0) for t in samples]
+        caps = [t.get("cap_ms", 0.0) for t in samples]
+        over_cap = sum(1 for t in samples if t.get("recv_loop_ms", 0.0) > t.get("cap_ms", 0.0))
+        timeouts = sum(1 for t in samples if t.get("outcome") == "timeout")
+        med_idx = n // 2
+        p95_idx = min(n - 1, int(math.ceil(n * 0.95)) - 1)
+        return {
+            "n": float(n),
+            "rtt_median_ms": rtts[med_idx],
+            "rtt_p95_ms": rtts[p95_idx],
+            "predrain_avg_ms": sum(preds) / n,
+            "match_avg_ms": (sum(ok_matches) / len(ok_matches)) if ok_matches else -1.0,
+            "slop_avg_ms": sum(slops) / n,
+            "over_cap_pct": (over_cap / n) * 100.0,
+            "timeout_count": float(timeouts),
+            "timeout_rate_pct": (timeouts / n) * 100.0,
+            "avg_outer_iters": sum(iters) / n,
+            "avg_raw_frames": sum(raw_frames) / n,
+        }
+
+    def _print_timing_summary(self, ctx: Dict[str, Any]) -> None:
+        summary = self._compute_timing_summary(ctx)
+        if summary is None:
+            return
+        n = int(summary["n"])
+        to_count = int(summary["timeout_count"])
+        match_str = f"match_avg={summary['match_avg_ms']:.1f}ms" if summary["match_avg_ms"] >= 0.0 else "no_matches"
+        print(
+            f"[CCP:{ctx.get('name','?')}] Timing: "
+            f"med={summary['rtt_median_ms']:.1f}ms p95={summary['rtt_p95_ms']:.1f}ms "
+            f">cap={summary['over_cap_pct']:.0f}% pred_avg={summary['predrain_avg_ms']:.1f}ms "
+            f"{match_str} timeouts={to_count}/{n}"
+        )
 
     def _record_recv_stats(self, ctx: Dict[str, Any], session: Any, pred_ms: float | None = None) -> None:
         stats = getattr(session, "last_recv_stats", None)
@@ -1847,15 +2038,19 @@ class CCPPlugin(BasePlugin):
 
     def _poll_short_up_ctx(self, ctx: Dict[str, Any], entry: Dict[str, Any]) -> Optional[float]:
         _pc = time.perf_counter
+        t0 = _pc()
         session = ctx.get("session")
         proto = ctx.get("proto")
         rx_id = int(ctx.get("rx_id", 0))
         if session is None or proto is None:
             self._diag["last_error"] = "poll_no_session"
+            ctx["_last_sup_timing"] = {"outcome": "no_session", "total_ms": 0.0}
             return None
-        pred_start = _pc()
-        session.recv(timeout_s=0.001, only_id=rx_id)
-        self._record_recv_stats(ctx, session, pred_ms=(_pc() - pred_start) * 1000.0)
+
+        session.recv(timeout_s=0, only_id=rx_id)
+        t1 = _pc()
+        self._record_recv_stats(ctx, session, pred_ms=(t1 - t0) * 1000.0)
+
         req = proto.build_short_up(
             size=int(entry["size"]),
             address=int(entry["address"]),
@@ -1864,14 +2059,33 @@ class CCPPlugin(BasePlugin):
         )
         req_ctr = req.data[1] if req.data else None
         session.send(req)
-        sup_timeout_s = float(ctx.get("short_up_timeout_s", 0.015))
+        t2 = _pc()
+
+        sup_timeout_s = float(ctx.get("short_up_timeout_s", 0.030))
         deadline = _pc() + sup_timeout_s
+        outer_iters = 0
+        agg_read_calls = 0
+        agg_empty = 0
+        agg_raw = 0
+        non_crm_frames = 0
+        ctr_miss_in_attempt = 0
+        first_match_ms = -1.0
+        outcome = "timeout"
+        result_value = None
+
         while _pc() < deadline:
+            outer_iters += 1
             rx = session.recv(timeout_s=min(0.003, sup_timeout_s), only_id=rx_id)
             self._record_recv_stats(ctx, session)
+            stats = getattr(session, "last_recv_stats", None)
+            if isinstance(stats, dict):
+                agg_read_calls += int(stats.get("read_calls", 0))
+                agg_empty += int(stats.get("empty_reads", 0))
+                agg_raw += int(stats.get("raw_frames", 0))
             for fr in rx:
                 data = fr.data.ljust(8, b"\x00")
                 if data[0] != 0xFF:
+                    non_crm_frames += 1
                     continue
                 if req_ctr is not None:
                     ctr_match = (data[1] == 0x00 and data[2] == req_ctr) or (data[2] == 0x00 and data[1] == req_ctr)
@@ -1879,28 +2093,64 @@ class CCPPlugin(BasePlugin):
                     ctr_match = (data[1] == 0x00) or (data[2] == 0x00)
                 if not ctr_match:
                     self._diag["ctr_mismatch"] = int(self._diag.get("ctr_mismatch", 0)) + 1
+                    ctr_miss_in_attempt += 1
                     continue
                 rc = int(data[1]) if data[1] != req_ctr else int(data[2])
                 self._diag["last_rc"] = rc
                 if rc != 0:
                     self._diag["last_error"] = f"crm_rc:{rc}"
                     ctx["crm_error_count"] = int(ctx.get("crm_error_count", 0)) + 1
-                    return None
+                    outcome = "crm_error"
+                    first_match_ms = (_pc() - t2) * 1000.0
+                    result_value = None
+                    break
                 size = int(entry["size"])
                 payload = data[3:3 + size]
                 if len(payload) < size:
                     self._diag["last_error"] = "payload_short"
                     continue
-                return decode_value(
+                first_match_ms = (_pc() - t2) * 1000.0
+                outcome = "ok"
+                result_value = decode_value(
                     dtype=entry.get("dtype"),
                     raw=payload,
                     byteorder=str(entry.get("poll_endian") or "big"),
                     limits=entry.get("limits"),
                     coeffs=entry.get("coeffs"),
                 )
-        self._diag["last_error"] = f"short_up_timeout:{entry.get('name','?')}"
-        ctx["short_up_timeout_count"] = int(ctx.get("short_up_timeout_count", 0)) + 1
-        return None
+                break
+            if outcome != "timeout":
+                break
+
+        if outcome == "timeout":
+            self._diag["last_error"] = f"short_up_timeout:{entry.get('name','?')}"
+            ctx["short_up_timeout_count"] = int(ctx.get("short_up_timeout_count", 0)) + 1
+
+        t3 = _pc()
+        predrain_ms = (t1 - t0) * 1000.0
+        send_ms = (t2 - t1) * 1000.0
+        recv_loop_ms = (t3 - t2) * 1000.0
+        total_ms = (t3 - t0) * 1000.0
+        cap_ms = sup_timeout_s * 1000.0
+
+        ctx["_last_sup_timing"] = {
+            "predrain_ms": predrain_ms,
+            "send_ms": send_ms,
+            "recv_loop_ms": recv_loop_ms,
+            "total_ms": total_ms,
+            "cap_ms": cap_ms,
+            "slop_ms": total_ms - predrain_ms - cap_ms,
+            "outcome": outcome,
+            "outer_iterations": outer_iters,
+            "recv_read_calls": agg_read_calls,
+            "recv_empty_reads": agg_empty,
+            "recv_raw_frames": agg_raw,
+            "non_crm_frames": non_crm_frames,
+            "first_match_offset_ms": first_match_ms,
+            "ctr_mismatch_in_attempt": ctr_miss_in_attempt,
+            "channel": str(entry.get("name", "?")),
+        }
+        return result_value
 
     def _set_state(self, state: str, code: int) -> None:
         self._diag["state"] = str(state)
@@ -1953,6 +2203,25 @@ class CCPPlugin(BasePlugin):
         self._values["CCP/daq_fallback_active"] = float(int(self._diag.get("daq_fallback_active", 0)))
         self._values["CCP/daq_last_pid"] = float(int(self._diag.get("daq_last_pid", -1)))
         self._values["CCP/daq_last_dto_id"] = float(int(self._diag.get("daq_last_dto_id", 0)))
+
+        for ctx in self._contexts:
+            ts = self._compute_timing_summary(ctx)
+            if ts is not None:
+                self._diag["sup_rtt_median_ms"] = ts["rtt_median_ms"]
+                self._diag["sup_rtt_p95_ms"] = ts["rtt_p95_ms"]
+                self._diag["sup_predrain_avg_ms"] = ts["predrain_avg_ms"]
+                self._diag["sup_match_avg_ms"] = ts["match_avg_ms"]
+                self._diag["sup_over_cap_pct"] = ts["over_cap_pct"]
+                self._diag["sup_timeout_rate_pct"] = ts["timeout_rate_pct"]
+                self._diag["sup_avg_raw_frames"] = ts["avg_raw_frames"]
+                break
+        self._values["CCP/sup_rtt_median_ms"] = float(self._diag.get("sup_rtt_median_ms", 0.0))
+        self._values["CCP/sup_rtt_p95_ms"] = float(self._diag.get("sup_rtt_p95_ms", 0.0))
+        self._values["CCP/sup_predrain_avg_ms"] = float(self._diag.get("sup_predrain_avg_ms", 0.0))
+        self._values["CCP/sup_match_avg_ms"] = float(self._diag.get("sup_match_avg_ms", 0.0))
+        self._values["CCP/sup_over_cap_pct"] = float(self._diag.get("sup_over_cap_pct", 0.0))
+        self._values["CCP/sup_timeout_rate_pct"] = float(self._diag.get("sup_timeout_rate_pct", 0.0))
+        self._values["CCP/sup_avg_raw_frames"] = float(self._diag.get("sup_avg_raw_frames", 0.0))
 
         self._values["CCP/conn_ok"] = 1.0 if self._connected else 0.0
         data_flowing = (
@@ -2117,6 +2386,13 @@ class CCPPlugin(BasePlugin):
 
         if self.mode != "real":
             _emit("validate", False, "CCP mode is not real", True)
+            return
+
+        if self._worker_threads and any(t.is_alive() for t in self._worker_threads):
+            _emit("validate", False, "Stop CCP plugin before running connection test", True)
+            return
+        if self._worker_thread is not None and self._worker_thread.is_alive():
+            _emit("validate", False, "Stop CCP plugin before running connection test", True)
             return
 
         try:

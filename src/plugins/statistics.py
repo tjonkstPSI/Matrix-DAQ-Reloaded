@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Dict, Any, List, Deque, Tuple, Optional, Set
 from collections import deque
 import threading
+import time
 
 from .base import BasePlugin, PluginStatus
 
@@ -88,14 +89,25 @@ class StatisticsPlugin(BasePlugin):
             if not chosen:
                 continue
             self._channels.append(ChannelConfig(alias=str(alias), stats=chosen, enabled=enabled))
-        # Snapshot window
+        # Snapshot window (supports new window_type/window_value and legacy window.seconds/window.samples)
         snap = (cfg.get("snapshot") or {})
-        size = snap.get("window") or {}
+        wtype = str(snap.get("window_type", "")).lower()
+        wval = snap.get("window_value")
+        if wtype == "seconds" and wval is not None:
+            size_sec = self._opt_float(wval)
+            size_samp = None
+        elif wtype == "samples" and wval is not None:
+            size_sec = None
+            size_samp = self._opt_int(wval)
+        else:
+            size = snap.get("window") or {}
+            size_sec = self._opt_float(size.get("seconds"))
+            size_samp = self._opt_int(size.get("samples"))
         self._win = WindowConfig(
-            size_seconds=self._opt_float(size.get("seconds")),
-            size_samples=self._opt_int(size.get("samples")),
-            capture_mode=str(snap.get("capture_mode", "backward")),
-            notify_on_skip=bool(snap.get("notify_on_skip", True)),
+            size_seconds=size_sec,
+            size_samples=size_samp,
+            capture_mode=str(snap.get("capture_mode", "forward")),
+            notify_on_skip=False,
         )
         # Automatic trigger config
         aut = (cfg.get("automatic_logging") or {})
@@ -105,7 +117,7 @@ class StatisticsPlugin(BasePlugin):
         self._trig_comparator = str(trig.get("comparator", ">"))
         self._trig_threshold = float(trig.get("threshold", 0.0))
         self._trig_edge = str(trig.get("edge", "rising"))
-        self._trig_holdoff_s = float(trig.get("holdoff_s", 0.0))
+        self._trig_holdoff_s = 0.0
         self._armed = self._auto_enabled
         self._last_trig_val = None
         self._last_fire_ts = 0.0
@@ -118,10 +130,19 @@ class StatisticsPlugin(BasePlugin):
         self._ready_vals = {}
         self._ready_units = {}
         self._events = []
-        # Track dynamic aliases when no channels configured
-        self._dynamic_mode = not bool(self._channels)
+        # Channel mode: explicit "all" or "selected", or infer from channel list
+        ch_mode = str(cfg.get("channel_mode", "")).lower()
+        if ch_mode == "all":
+            self._dynamic_mode = True
+        elif ch_mode == "selected":
+            self._dynamic_mode = False
+        else:
+            self._dynamic_mode = not bool(self._channels)
+        # Snapshot progress tracking for UI status
+        self._snapshot_active = False
+        self._snapshot_start_ts: float = 0.0
         try:
-            hz = float(self.config.get("recording_rate_hz", 10.0))
+            hz = float(cfg.get("recording_rate_hz", 10.0))
         except Exception:
             hz = 10.0
         self._worker_period_s = max(0.005, 1.0 / max(10.0, hz * 2.0))
@@ -245,6 +266,8 @@ class StatisticsPlugin(BasePlugin):
         with self._state_lock:
             mode = capture_mode or self._win.capture_mode
             self._pending_request = (mode, now_ts)
+            self._snapshot_active = True
+            self._snapshot_start_ts = now_ts
             if mode == "forward":
                 self._forward_start_ts = now_ts
 
@@ -276,14 +299,18 @@ class StatisticsPlugin(BasePlugin):
         return out
 
     def _trim_trailing(self, now_ts: float) -> None:
+        # During a forward capture, keep data back to the start timestamp
+        fwd_floor = self._forward_start_ts if self._forward_start_ts is not None else None
         # Trim by seconds
         if self._win.size_seconds is not None:
             cutoff = now_ts - max(0.0, float(self._win.size_seconds))
+            if fwd_floor is not None:
+                cutoff = min(cutoff, fwd_floor)
             for buf in self._buffers.values():
                 while buf and buf[0][0] < cutoff:
                     buf.popleft()
-        # Trim by samples
-        if self._win.size_samples is not None:
+        # Trim by samples (skip during forward capture to preserve full window)
+        if self._win.size_samples is not None and fwd_floor is None:
             maxlen = max(1, int(self._win.size_samples))
             for buf in self._buffers.values():
                 while len(buf) > maxlen:
@@ -308,6 +335,8 @@ class StatisticsPlugin(BasePlugin):
         if fired and self._armed and (now_ts - self._last_fire_ts >= max(0.0, self._trig_holdoff_s)):
             mode = self._win.capture_mode
             self._pending_request = (mode, now_ts)
+            self._snapshot_active = True
+            self._snapshot_start_ts = now_ts
             if mode == "forward":
                 self._forward_start_ts = now_ts
             self._last_fire_ts = now_ts
@@ -402,14 +431,15 @@ class StatisticsPlugin(BasePlugin):
                 out_alias = f"{alias}_{key}"
                 vals[out_alias] = val
                 u[out_alias] = self._source_units.get(alias, "")
+        skipped = [a for a in aliases if not any(k.startswith(f"{a}_") for k in vals)]
         if not vals:
-            if self._win.notify_on_skip:
-                reason = "insufficient_window"
-                self._events.append({"type": "stats_skip", "reason": reason, "ts": now_ts})
+            if skipped:
+                self._events.append({"type": "stats_skip", "skipped": skipped, "count": len(skipped), "ts": now_ts})
+            self._snapshot_active = False
             return
         self._ready_vals = vals
         self._ready_units = u
-        # Emit a snapshot event with timestamp
+        self._snapshot_active = False
         self._events.append({"type": "stats_snapshot", "ts": now_ts})
 
     def _find_channel_cfg(self, alias: str) -> Optional[ChannelConfig]:
@@ -442,6 +472,18 @@ class StatisticsPlugin(BasePlugin):
             for s in self._metrics_for_cfg(ch):
                 mapping[f"{ch.alias}_{s}"] = src_unit
         return mapping
+
+    def snapshot_progress(self) -> Optional[Dict[str, Any]]:
+        """Return progress dict for UI status, or None if idle."""
+        if not self._snapshot_active:
+            return None
+        elapsed = time.time() - self._snapshot_start_ts
+        if self._win.size_seconds is not None:
+            total = float(self._win.size_seconds)
+            return {"type": "seconds", "elapsed": elapsed, "total": total}
+        if self._win.size_samples is not None:
+            return {"type": "samples", "total": int(self._win.size_samples), "elapsed": elapsed}
+        return {"type": "unknown", "elapsed": elapsed}
 
     def _compare(self, val: float, thr: float) -> bool:
         cmp = self._trig_comparator

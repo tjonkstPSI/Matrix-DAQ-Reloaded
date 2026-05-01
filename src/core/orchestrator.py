@@ -27,6 +27,7 @@ from .storage.parquet_writer import ParquetWriter, ParquetWriterSettings
 from ..plugins.channel_manager import ChannelManagerPlugin
 from ..plugins.engine_test import EngineTestPlugin
 from .recording import begin_recording, end_recording, kickoff_export, build_parquet_settings
+import json
 
 
 _DEBUG_PREFIXES = ("CAN/", "CCP/", "Core/", "EngineTest/", "NI_DAQ/")
@@ -83,6 +84,8 @@ class Orchestrator:
         self._plugin_enabled: Dict[str, bool] = {}
         self._tick_interval_s: float = 0.1
         self._global_sim_mode: bool = False
+        self._source_map: Dict[str, str] = {}
+        self._source_map_dirty: bool = True
 
     def start(self) -> None:
         # Placeholder: load configs, initialize IPC bus, register simulated plugins
@@ -190,6 +193,49 @@ class Orchestrator:
         self._running = True
         print("[INFO] Core started; recording is idle. Use Start Recording from UI to begin.")
 
+    def _build_source_map(self) -> Dict[str, str]:
+        """Build alias -> source-group mapping from all active plugins."""
+        smap: Dict[str, str] = {}
+
+        def _tag(plugin_id, group, use_device_aliases=False, use_section_aliases=False):
+            p = self.plugins.get(plugin_id) if self._plugin_enabled.get(plugin_id, True) else None
+            if p is None:
+                print(f"[CORE] source_map: {plugin_id} not available (disabled or not registered)")
+                return
+            try:
+                if use_device_aliases:
+                    for dev_name, aliases in p.device_aliases().items():
+                        g = f"CCP {dev_name}" if dev_name else "CCP"
+                        for a in aliases:
+                            smap[a] = g
+                elif use_section_aliases:
+                    for section, aliases in p.section_aliases().items():
+                        for a in aliases:
+                            smap[a] = section
+                else:
+                    for a in p.aliases():
+                        if a not in smap:
+                            smap[a] = group
+            except Exception as exc:
+                print(f"[CORE] source_map: {plugin_id} query FAILED: {exc}")
+
+        _tag("CCP", "CCP", use_device_aliases=True)
+        _tag("NI_DAQ", "NI", use_section_aliases=True)
+        _tag("Vaisala", "Environment")
+        _tag("Omega", "Environment")
+        _tag("CAN", "CAN")
+        _tag("Modbus", "Modbus")
+        _tag("Calculated_Channels", "Calculated")
+        _tag("LoadBank", "System")
+        _tag("Cycle", "System")
+        _tag("EngineTest", "System")
+
+        for key in ("Time_Relative_s", "iOT_Warning", "iOT_Alarm",
+                     "iOT_AlmSftSdn", "iOT_AlmEmgSdn", "iDG_EngRunStp"):
+            smap[key] = "System"
+
+        return smap
+
     def run(self) -> None:
         # Initialize plugins; Modbus is optional (can be disabled)
         modbus = self.plugins.get("Modbus") if self._plugin_enabled.get("Modbus", True) else None
@@ -268,6 +314,16 @@ class Orchestrator:
                 except Exception:
                     return "00:00:00.000"
             _last_cycle_setpoint: Optional[float] = None
+            self._source_map = self._build_source_map()
+            if self._source_map:
+                groups = {}
+                for alias, grp in self._source_map.items():
+                    groups.setdefault(grp, []).append(alias)
+                print(f"[CORE] source_map: {len(self._source_map)} aliases across {len(groups)} groups")
+                for g, aliases in sorted(groups.items()):
+                    print(f"[CORE]   {g}: {len(aliases)} channels")
+            else:
+                print("[CORE] source_map is EMPTY — channels will fall to 'Other'")
             if run_mode == "demo":
                 for _ in range(demo_ticks):
                     if not self._running:
@@ -348,13 +404,16 @@ class Orchestrator:
                                         self._stats_sink.append_snapshot(record)
                                     except Exception:
                                         pass
-                        # Optionally print stat events once
                         for sev in stat_events or []:
                             if sev.get("type") == "stats_skip":
                                 reason = sev.get("reason", "unknown")
                                 print(f"[STATS] Snapshot skipped: {reason}")
                             elif sev.get("type") == "stats_snapshot":
                                 print(f"[STATS] Snapshot taken at { _format_local_hms(now_ts) }")
+                            try:
+                                self.bus.publish_status(json.dumps(sev).encode("utf-8"))
+                            except Exception:
+                                pass
                     # Add relative time channel from core
                     elapsed = time.time() - t0
                     vals["Time_Relative_s"] = elapsed
@@ -452,6 +511,7 @@ class Orchestrator:
                         "alarm_summary": summary,
                         "alarm_events": events,
                         "recording": bool(self._recording),
+                        "source_map": self._source_map,
                     }).encode("utf-8")
                     # One-time NI_DAQ value count diagnostic
                     try:
@@ -560,6 +620,10 @@ class Orchestrator:
                                 print(f"[STATS] Snapshot skipped: {reason}")
                             elif sev.get("type") == "stats_snapshot":
                                 print(f"[STATS] Snapshot taken at { _format_local_hms(now_ts) }")
+                            try:
+                                self.bus.publish_status(json.dumps(sev).encode("utf-8"))
+                            except Exception:
+                                pass
                     # Add relative time channel from core
                     elapsed = time.time() - t0
                     vals["Time_Relative_s"] = elapsed
@@ -657,6 +721,7 @@ class Orchestrator:
                         "alarm_summary": summary,
                         "alarm_events": events,
                         "recording": bool(self._recording),
+                        "source_map": self._source_map,
                     }).encode("utf-8")
                     self.bus.publish_telemetry(payload)
                     # Append to Parquet data stream when recording

@@ -1,26 +1,27 @@
 # Author: T. Onkst | Date: 08182025
-# Updated: 03092026 — grouped category panels with flow layout
+# Updated: 04212026 — fixed 7x3 grid layout with source-group panels
 
 from __future__ import annotations
 
-import re
-from typing import Any, Dict, List, Optional, Tuple
+import json
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 try:
-    from PySide6.QtCore import QPoint, QRect, QSize, Qt
+    from PySide6.QtCore import Qt
     from PySide6.QtWidgets import (
+        QDoubleSpinBox,
+        QGridLayout,
         QGroupBox,
         QHeaderView,
-        QLayout,
-        QLayoutItem,
+        QLabel,
+        QMessageBox,
+        QPushButton,
         QScrollArea,
         QSizePolicy,
-        QStyle,
         QTableWidget,
         QTableWidgetItem,
         QVBoxLayout,
         QWidget,
-        QWidgetItem,
     )
 except Exception:
     raise
@@ -28,130 +29,89 @@ except Exception:
 from .table_alarm_colors import apply_alarm_state_to_row
 
 # ---------------------------------------------------------------------------
-# Category definitions
+# Grid placement spec:  (row, col, rowspan, colspan, source_group_key)
 # ---------------------------------------------------------------------------
 
-CATEGORY_ORDER: List[str] = [
-    "Engine Conditions",
-    "Temperatures",
-    "Pressures",
-    "ECU Data",
-    "Facility",
-    "Other",
+_GRID_SPEC: List[Tuple[int, int, int, int, str]] = [
+    (0, 0, 1, 1, "System"),
+    (0, 1, 1, 1, "Environment"),
+    (0, 2, 2, 1, "NI Pressure"),
+    (0, 3, 3, 1, "NI Temperature"),
+    (0, 4, 3, 1, "CCP Primary"),
+    (0, 5, 3, 1, "CCP Secondary"),
+    (0, 6, 3, 1, "Modbus"),
+    (1, 0, 1, 1, "NI Analog Out"),
+    (1, 1, 1, 1, "Calculated"),
+    (2, 0, 1, 1, "Other"),
+    (2, 1, 1, 1, "CAN"),
+    (2, 2, 1, 1, "NI Digital I/O"),
 ]
 
-_ALIAS_RE = re.compile(r"^([qcemixypvl])([A-Z]{2})_(.+)$")
+# Source map group names expected from orchestrator -> panel key mapping.
+# Allows the orchestrator to emit "CCP Primary" or "CCP Secondary"
+# while matching the panel key exactly.
+_GROUP_ALIASES: Dict[str, str] = {
+    "NI Temperature": "NI Temperature",
+    "NI Pressure": "NI Pressure",
+    "NI Digital I/O": "NI Digital I/O",
+    "NI Analog Out": "NI Analog Out",
+}
 
 
-def _categorize_channel(alias: str) -> str:
-    m = _ALIAS_RE.match(alias)
-    if m:
-        source, code, desc = m.group(1), m.group(2), m.group(3)
-        if code == "TP":
-            return "Temperatures"
-        if code == "PR":
-            return "Pressures"
-        if source in ("c", "e"):
-            return "ECU Data"
-        if "Ldb" in desc or "Alm" in desc or "Fan" in desc:
-            return "Facility"
-        if code == "HM":
-            return "Facility"
-        if source == "m":
-            return "Engine Conditions"
-        return "Other"
-    if alias.startswith("e"):
-        return "ECU Data"
+def _source_to_panel(source_group: str) -> str:
+    """Map a source_map group name to the grid panel key."""
+    if source_group in _GROUP_ALIASES:
+        return _GROUP_ALIASES[source_group]
+    if source_group.startswith("CCP "):
+        role = source_group[4:].strip().lower()
+        if "secondary" in role or role in ("1", "sec"):
+            return "CCP Secondary"
+        return "CCP Primary"
+    for key in ("System", "Environment", "Modbus", "Calculated", "CAN", "Other"):
+        if source_group == key:
+            return key
+    return "Other"
+
+
+_FALLBACK_SYSTEM = {
+    "Time_Relative_s", "iOT_Warning", "iOT_Alarm", "iOT_AlmSftSdn",
+    "iOT_AlmEmgSdn", "iDG_EngRunStp",
+}
+_FALLBACK_PREFIXES = (
+    ("EngineTest/", "System"),
+    ("Cycle/", "System"),
+    ("LoadBank/", "System"),
+    ("CAN/", "CAN"),
+    ("CCP/", "CCP Primary"),
+    ("Modbus/", "Modbus"),
+    ("Vaisala/", "Environment"),
+    ("Omega/", "Environment"),
+)
+
+
+def _fallback_group(alias: str) -> str:
+    """Best-effort grouping for aliases not in the source_map."""
+    if alias in _FALLBACK_SYSTEM:
+        return "System"
+    for prefix, group in _FALLBACK_PREFIXES:
+        if alias.startswith(prefix):
+            return group
     return "Other"
 
 
 # ---------------------------------------------------------------------------
-# FlowLayout — arranges children left-to-right, wrapping on overflow
+# Source-group panel — read-only table with 3 columns
 # ---------------------------------------------------------------------------
 
-class FlowLayout(QLayout):
-    def __init__(self, parent: QWidget | None = None, h_spacing: int = 8, v_spacing: int = 8) -> None:
-        super().__init__(parent)
-        self._h_spacing = h_spacing
-        self._v_spacing = v_spacing
-        self._items: List[QLayoutItem] = []
+class _SourcePanel(QGroupBox):
+    """A fixed group-box containing a 3-column table for one source group."""
 
-    def addItem(self, item: QLayoutItem) -> None:  # noqa: N802
-        self._items.append(item)
-
-    def count(self) -> int:
-        return len(self._items)
-
-    def itemAt(self, index: int) -> Optional[QLayoutItem]:  # noqa: N802
-        if 0 <= index < len(self._items):
-            return self._items[index]
-        return None
-
-    def takeAt(self, index: int) -> Optional[QLayoutItem]:  # noqa: N802
-        if 0 <= index < len(self._items):
-            return self._items.pop(index)
-        return None
-
-    def expandingDirections(self) -> Qt.Orientations:  # noqa: N802
-        return Qt.Orientations()  # type: ignore[return-value]
-
-    def hasHeightForWidth(self) -> bool:  # noqa: N802
-        return True
-
-    def heightForWidth(self, width: int) -> int:  # noqa: N802
-        return self._do_layout(QRect(0, 0, width, 0), test_only=True)
-
-    def setGeometry(self, rect: QRect) -> None:  # noqa: N802
-        super().setGeometry(rect)
-        self._do_layout(rect, test_only=False)
-
-    def sizeHint(self) -> QSize:  # noqa: N802
-        return self.minimumSize()
-
-    def minimumSize(self) -> QSize:  # noqa: N802
-        size = QSize()
-        for item in self._items:
-            size = size.expandedTo(item.minimumSize())
-        m = self.contentsMargins()
-        size += QSize(m.left() + m.right(), m.top() + m.bottom())
-        return size
-
-    def _do_layout(self, rect: QRect, test_only: bool) -> int:
-        m = self.contentsMargins()
-        effective = rect.adjusted(m.left(), m.top(), -m.right(), -m.bottom())
-        x = effective.x()
-        y = effective.y()
-        row_height = 0
-
-        for item in self._items:
-            wid = item.widget()
-            if wid is not None and not wid.isVisible():
-                continue
-            sz = item.sizeHint()
-            next_x = x + sz.width() + self._h_spacing
-            if next_x - self._h_spacing > effective.right() and row_height > 0:
-                x = effective.x()
-                y = y + row_height + self._v_spacing
-                next_x = x + sz.width() + self._h_spacing
-                row_height = 0
-            if not test_only:
-                item.setGeometry(QRect(QPoint(x, y), sz))
-            x = next_x
-            row_height = max(row_height, sz.height())
-
-        return y + row_height - rect.y() + m.bottom()
-
-
-# ---------------------------------------------------------------------------
-# Category panel — one QGroupBox with a compact QTableWidget inside
-# ---------------------------------------------------------------------------
-
-class _CategoryPanel(QGroupBox):
     def __init__(self, title: str, parent: QWidget | None = None) -> None:
         super().__init__(title, parent)
         self._aliases: List[str] = []
         self._prev_texts: List[str] = []
         self._prev_states: List[str] = []
+
         self._table = QTableWidget(0, 3, self)
         self._table.setHorizontalHeaderLabels(["Alias", "Value", "Unit"])
         self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
@@ -161,20 +121,16 @@ class _CategoryPanel(QGroupBox):
         self._table.verticalHeader().setVisible(False)
         self._table.setEditTriggers(QTableWidget.NoEditTriggers)
         self._table.setSelectionBehavior(QTableWidget.SelectRows)
-        self._table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self._table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._columns_sized = False
 
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(4, 4, 4, 4)
+        lay.setContentsMargins(2, 2, 2, 2)
         lay.addWidget(self._table)
 
-        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-        self.setMinimumWidth(260)
-
-    @property
-    def aliases(self) -> List[str]:
-        return list(self._aliases)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setMinimumWidth(220)
 
     def set_channels(
         self,
@@ -184,7 +140,7 @@ class _CategoryPanel(QGroupBox):
         states: Dict[str, str],
     ) -> None:
         if aliases != self._aliases:
-            self._aliases = aliases
+            self._aliases = list(aliases)
             self._prev_texts = [""] * len(aliases)
             self._prev_states = [""] * len(aliases)
             self._table.setRowCount(len(aliases))
@@ -194,7 +150,7 @@ class _CategoryPanel(QGroupBox):
                 self._table.setItem(row, 2, QTableWidgetItem(str(units.get(alias, ""))))
             if not self._columns_sized:
                 fm = self._table.fontMetrics()
-                self._table.setColumnWidth(1, fm.horizontalAdvance("0000000000.00") + 24)
+                self._table.setColumnWidth(1, fm.horizontalAdvance("00000.00") + 16)
                 self._columns_sized = True
 
         for row, alias in enumerate(self._aliases):
@@ -216,92 +172,213 @@ class _CategoryPanel(QGroupBox):
                 self._prev_states[row] = state
                 apply_alarm_state_to_row(self._table, row, state)
 
-        self._resize_to_fit()
 
-    def _resize_to_fit(self) -> None:
-        row_count = self._table.rowCount()
-        if row_count == 0:
-            self.setFixedHeight(60)
+# ---------------------------------------------------------------------------
+# Analog Outputs panel — editable spin boxes with write-back
+# ---------------------------------------------------------------------------
+
+class _AOPanel(QGroupBox):
+    """Displays analog output channels in a table with embedded spin boxes."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__("NI Analog Out", parent)
+        self._aliases: List[str] = []
+        self._widgets: Dict[str, Dict[str, Any]] = {}
+
+        self._table = QTableWidget(0, 4, self)
+        self._table.setHorizontalHeaderLabels(["Alias", "Value", "Unit", ""])
+        self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self._table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Fixed)
+        self._table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self._table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Fixed)
+        self._table.horizontalHeader().setStretchLastSection(False)
+        self._table.verticalHeader().setVisible(False)
+        self._table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self._table.setSelectionBehavior(QTableWidget.SelectRows)
+        self._table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self._table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._columns_sized = False
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(2, 2, 2, 2)
+        lay.addWidget(self._table)
+
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setMinimumWidth(220)
+
+    def configure_channels(self, ao_channels: List[Dict[str, Any]]) -> None:
+        current_aliases = [ch["alias"] for ch in ao_channels]
+        if current_aliases == self._aliases:
             return
-        header_h = self._table.horizontalHeader().height()
-        row_h = self._table.verticalHeader().defaultSectionSize()
-        table_h = header_h + row_h * row_count + 4
-        lay_margins = self.layout().contentsMargins()
-        title_h = self.fontMetrics().height() + 8
-        total = table_h + lay_margins.top() + lay_margins.bottom() + title_h
-        self._table.setFixedHeight(table_h)
-        self.setFixedHeight(total)
 
-    def sizeHint(self) -> QSize:  # noqa: N802
-        return QSize(300, self.height() if self.height() > 0 else 200)
+        self._table.setRowCount(0)
+        self._widgets.clear()
+        self._aliases = current_aliases
+
+        if not ao_channels:
+            return
+
+        self._table.setRowCount(len(ao_channels))
+        for i, ch in enumerate(ao_channels):
+            alias = str(ch["alias"])
+            unit = str(ch.get("unit", "V"))
+            v_min = float(ch.get("min", 0.0))
+            v_max = float(ch.get("max", 10.0))
+
+            self._table.setItem(i, 0, QTableWidgetItem(alias))
+
+            spin = QDoubleSpinBox()
+            spin.setDecimals(3)
+            spin.setSingleStep(0.1)
+            spin.setMinimum(v_min)
+            spin.setMaximum(v_max)
+            spin.setValue(0.0)
+            spin.setFrame(False)
+            spin.setButtonSymbols(QDoubleSpinBox.NoButtons)
+            self._table.setCellWidget(i, 1, spin)
+
+            self._table.setItem(i, 2, QTableWidgetItem(unit if unit else "V"))
+
+            btn = QPushButton("Set")
+            btn.setFixedHeight(20)
+            btn.clicked.connect(self._make_set_handler(alias, spin, unit))  # type: ignore
+            self._table.setCellWidget(i, 3, btn)
+
+            self._widgets[alias] = {"spin": spin, "btn": btn}
+
+        if not self._columns_sized:
+            fm = self._table.fontMetrics()
+            self._table.setColumnWidth(1, fm.horizontalAdvance("00000.000") + 16)
+            self._table.setColumnWidth(3, 36)
+            self._columns_sized = True
+
+    def update_readback(self, values: Dict[str, Any]) -> None:
+        for alias, widgets in self._widgets.items():
+            spin: QDoubleSpinBox = widgets["spin"]
+            if spin.hasFocus():
+                continue
+            val = values.get(alias)
+            if isinstance(val, (int, float)):
+                try:
+                    fval = float(val)
+                    if abs(spin.value() - fval) > 1e-6:
+                        spin.blockSignals(True)
+                        spin.setValue(fval)
+                        spin.blockSignals(False)
+                except Exception:
+                    pass
+
+    def _make_set_handler(self, alias: str, spin: QDoubleSpinBox, unit: str) -> Callable:
+        def _on_set() -> None:
+            value = spin.value()
+            display_unit = unit if unit else "V"
+            reply = QMessageBox.question(
+                self,
+                "Confirm AO Write",
+                f"Set {alias} to {value:.3f} {display_unit}?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if reply != QMessageBox.Yes:
+                return
+            try:
+                from src.core.ipc.bus import create_ui_control_push
+                ctrl = create_ui_control_push()
+                if ctrl is not None:
+                    msg = json.dumps({"type": "ao_write", "alias": alias, "value": value}).encode("utf-8")
+                    ctrl["control_push"].send(msg)
+            except Exception:
+                pass
+        return _on_set
+
+    @property
+    def ao_aliases(self) -> set:
+        return set(self._widgets.keys())
 
 
 # ---------------------------------------------------------------------------
-# Main widget — replaces the old flat ChannelsTable
+# Main widget — fixed 7-column x 3-row grid
 # ---------------------------------------------------------------------------
 
 class ChannelsTable(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._panels: Dict[str, _CategoryPanel] = {}
+        self._panels: Dict[str, _SourcePanel] = {}
+        self._ao_panel: Optional[_AOPanel] = None
         self._prev_buckets: Dict[str, List[str]] = {}
+        self._source_map: Dict[str, str] = {}
         self._init_ui()
 
     def _init_ui(self) -> None:
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
 
-        self._scroll = QScrollArea(self)
-        self._scroll.setWidgetResizable(True)
-        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        grid = QGridLayout()
+        grid.setContentsMargins(4, 4, 4, 4)
+        grid.setHorizontalSpacing(4)
+        grid.setVerticalSpacing(4)
 
-        self._container = QWidget()
-        self._flow = FlowLayout(self._container, h_spacing=6, v_spacing=6)
-        self._container.setLayout(self._flow)
-        self._scroll.setWidget(self._container)
-        outer.addWidget(self._scroll)
+        for r in range(3):
+            grid.setRowStretch(r, 1)
+        for c in range(7):
+            grid.setColumnStretch(c, 1)
 
-        for cat in CATEGORY_ORDER:
-            panel = _CategoryPanel(cat, self._container)
-            panel.setVisible(False)
-            self._flow.addWidget(panel)
-            self._panels[cat] = panel
+        for row, col, rspan, cspan, key in _GRID_SPEC:
+            if key == "NI Analog Out":
+                panel = _AOPanel(self)
+                self._ao_panel = panel
+            else:
+                panel = _SourcePanel(key, self)
+                self._panels[key] = panel
+            grid.addWidget(panel, row, col, rspan, cspan)
+
+        outer.addLayout(grid)
 
     def update_data(
         self,
         values: Dict[str, Any] | None,
         units: Dict[str, Any] | None,
         states: Dict[str, Any] | None = None,
+        ao_channels: List[Dict[str, Any]] | None = None,
+        source_map: Dict[str, str] | None = None,
     ) -> None:
         if not isinstance(values, dict):
             return
         units = units if isinstance(units, dict) else {}
         states = states if isinstance(states, dict) else {}
 
+        if source_map is not None:
+            self._source_map = source_map
+
+        ao_aliases: set = set()
+        if ao_channels and self._ao_panel is not None:
+            self._ao_panel.configure_channels(ao_channels)
+            self._ao_panel.update_readback(values)
+            ao_aliases = self._ao_panel.ao_aliases
+
         keys = set(values.keys())
         if isinstance(units, dict):
             keys |= set(units.keys())
 
-        buckets: Dict[str, List[str]] = {cat: [] for cat in CATEGORY_ORDER}
+        buckets: Dict[str, List[str]] = {spec[4]: [] for spec in _GRID_SPEC}
         for alias in sorted(keys):
             if alias.endswith("/health_ok") or alias.endswith("/conn_ok"):
                 continue
-            cat = _categorize_channel(alias)
-            if cat not in buckets:
-                cat = "Other"
-            buckets[cat].append(alias)
-
-        layout_changed = buckets != self._prev_buckets
-
-        for cat in CATEGORY_ORDER:
-            panel = self._panels[cat]
-            ch_list = buckets[cat]
-            if ch_list:
-                panel.setVisible(True)
-                panel.set_channels(ch_list, values, units, states)
+            if alias in ao_aliases:
+                continue
+            if alias.startswith(("Core/", "NI_DAQ/")):
+                continue
+            group = self._source_map.get(alias)
+            if group:
+                panel_key = _source_to_panel(group)
             else:
-                panel.setVisible(False)
+                panel_key = _fallback_group(alias)
+            if panel_key not in buckets:
+                panel_key = "Other"
+            buckets[panel_key].append(alias)
 
-        if layout_changed:
-            self._prev_buckets = buckets
-            self._container.updateGeometry()
+        for key, panel in self._panels.items():
+            ch_list = buckets.get(key, [])
+            panel.set_channels(ch_list, values, units, states)
+
+        self._prev_buckets = buckets

@@ -1,0 +1,20 @@
+# Author: T. Onkst | Date: 04302026
+#
+# Runtime registry of available plugins and displays for the Launch Configuration dialog.
+# This is the canonical source -- add new plugins or displays here.
+
+available_plugins:
+  - NI_DAQ
+  - CAN
+  - CCP
+  - Calculated_Channels
+  - Cycle
+  - LoadBank
+  - Modbus
+  - Omega
+  - Statistics
+  - Vaisala
+
+available_displays:
+  - "All Channels Table"
+  - "Main Test Monitor"

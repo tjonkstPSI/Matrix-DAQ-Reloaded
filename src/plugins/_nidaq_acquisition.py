@@ -204,7 +204,8 @@ def read_real(p: NiDAQPlugin) -> Dict[str, Any]:
     for alias, state in p._do_states.items():
         vals[alias] = int(state)
     for alias, state in p._ao_states.items():
-        vals[alias] = float(state)
+        sc = p._ao_scaling.get(alias)
+        vals[alias] = apply_scaling(float(state), sc) if sc else float(state)
     return vals
 
 
@@ -455,7 +456,8 @@ def start_snapshot_worker(p: NiDAQPlugin) -> None:
                     for alias, state in p._do_states.items():
                         vals[alias] = int(state)
                     for alias, state in p._ao_states.items():
-                        vals[alias] = float(state)
+                        sc = p._ao_scaling.get(alias)
+                        vals[alias] = apply_scaling(float(state), sc) if sc else float(state)
 
                     p._append_health_channels(vals)
                     with p._snapshot_lock:

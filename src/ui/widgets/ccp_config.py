@@ -318,11 +318,11 @@ class CCPConfigDialog(QDialog):
             "a2l": {"path": ""},
             "poll_interval_ms": 10,
             "poll_default_priority": self._DEFAULT_PRIORITY,
-            "acquisition_mode": "daq",
-            "fallback_short_up": True,
+            "acquisition_mode": "short_up",
+            "fallback_short_up": False,
             "acquisition": {
-                "mode": "daq",
-                "fallback_short_up": True,
+                "mode": "short_up",
+                "fallback_short_up": False,
                 "seed_resource": "0x02",
                 "sec_type": "DAQ",
                 "tier": "100ms",
@@ -354,7 +354,7 @@ class CCPConfigDialog(QDialog):
                 acq = dict(base.get("acquisition") or {})
                 acq.update(cfg.get("acquisition") or {})
                 acq.update(dev.get("acquisition") or {})
-                mode = str(dev.get("acquisition_mode") or acq.get("mode") or cfg.get("acquisition_mode") or "daq").lower()
+                mode = str(dev.get("acquisition_mode") or acq.get("mode") or cfg.get("acquisition_mode") or "short_up").lower()
                 base["acquisition_mode"] = "short_up" if mode in {"short_up", "shortup"} else "daq"
                 base["fallback_short_up"] = bool(dev.get("fallback_short_up", acq.get("fallback_short_up", True)))
                 acq["mode"] = base["acquisition_mode"]
@@ -378,7 +378,7 @@ class CCPConfigDialog(QDialog):
         )
         acq = dict(d.get("acquisition") or {})
         acq.update(cfg.get("acquisition") or {})
-        mode = str(cfg.get("acquisition_mode") or acq.get("mode") or "daq").lower()
+        mode = str(cfg.get("acquisition_mode") or acq.get("mode") or "short_up").lower()
         d["acquisition_mode"] = "short_up" if mode in {"short_up", "shortup"} else "daq"
         d["fallback_short_up"] = bool(cfg.get("fallback_short_up", acq.get("fallback_short_up", True)))
         acq["mode"] = d["acquisition_mode"]
@@ -1179,7 +1179,7 @@ class CCPConfigDialog(QDialog):
         if err:
             QMessageBox.warning(self, "CCP Configuration", err)
             return
-        mode = str(doc.get("acquisition_mode") or "daq").lower()
+        mode = str(doc.get("acquisition_mode") or "short_up").lower()
         if mode == "daq":
             tier_err = self._validate_tier_capacity()
             if tier_err:

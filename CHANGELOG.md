@@ -6,6 +6,68 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased] - 03/09/2026
 
+### CCP SHORT_UP throughput optimization — 05/01/2026
+#### Added
+- **Parallel worker threads**: one daemon thread per device context for concurrent SHORT_UP polling. Config key `use_parallel_workers: true` (default). Per-device values written to thread-local dicts and merged into global snapshot under `_state_lock` each iteration. Clean shutdown joins all threads within 2 seconds.
+- **SHORT_UP timing diagnostics**: detailed per-attempt instrumentation (`predrain_ms`, `send_ms`, `recv_loop_ms`, `total_ms`, `cap_ms`, `slop_ms`, `outcome`) stored in `ctx["_last_sup_timing"]`. Rolling `_timing_window` deque (200 samples) drives periodic median/P95/timeout-rate summaries. Connect-time banner prints resolved config. 7 new `CCP/sup_*` diagnostic telemetry keys (stripped by orchestrator).
+- **`debug_timing` config flag**: enables verbose per-attempt logging for anomalous SHORT_UP attempts (env var `CCP_DEBUG_TIMING=1` also accepted).
+- **`short_up_timeout_s` per-device config**: super-user adjustable SHORT_UP response timeout per device in YAML (clamped 5-50ms, never exceeds `io_timeout_s`).
+#### Changed
+- **Queued RX session fix**: `FrameInQueuedSession` in `_ccp_protocol.py` now uses per-interface unique cluster and frame names (`CCP_Net_{interface}`, `CCP_Rx_{interface}`), fixing NI-XNET `0xBFF63133` name collision that forced all multi-device setups into stream fallback.
+- **Non-blocking predrain**: `NixnetSession.recv()` now supports `timeout_s=0` for truly non-blocking reads. Predrain call changed from 1ms blocking to non-blocking, eliminating ~10ms driver-level wait overhead per SHORT_UP attempt with queued RX sessions.
+- **Default `short_up_timeout_s` raised from 15ms to 30ms**: matches observed ECU response times (P95 ~28-30ms). Eliminates timeout waste for channels that respond in 20-26ms.
+#### Performance
+- Combined throughput: ~30 reads/sec → **100+ reads/sec** (~3.3x improvement).
+- Predrain overhead: 10-12ms → **<0.1ms**.
+- Timeout rate: ~35% → **0%**.
+- All TIPAdapt channels (previously permanent NaN) now streaming after ECU address warm-up at 30ms timeout.
+
+### Main Test Monitor Display — 04/29/2026
+#### Added
+- **Main Test Monitor Display**: New composite display window optimized for 1080p screens, featuring a live rolling plot, AO controls, configurable watch table, standard test info panel, and alarm/warning message terminal.
+- **Live rolling plot** (`_PlotPanel`): Powered by `matplotlib` (`FigureCanvasQTAgg`). Supports up to 4 independent Y axes via `twinx()` with offset right-side spines. Users select channels to plot, assign each to a Y axis (1-4), and pick line colors via a configuration dialog. X axis is a rolling time window with 5 presets (10s, 30s, 60s, 2.5min, 5min). Data stored in per-channel ring buffers. Redraws throttled to 10 Hz for smooth performance.
+- **Standard info table** (`_StandardInfoPanel`): Always displays Engine Speed, Power (live telemetry with alias fallback: `cSP_Eng`/`emasterrpm`/`eslaverpm` for speed, `xPO_GenAvg`/`lPO_LdbAct` for power), plus Engine Type, Engine Serial, Operator, and Test Type from `engine_test.yaml` lock metadata. Speed and Power rows reflect alarm/warning coloring.
+- **User watch table** (`_WatchPanel`): User selects from all enabled telemetry channels via a checkbox picker. Live values update with alarm/warning row coloring via `apply_alarm_state_to_row()`.
+- **AO control panel**: Reuses `_AOPanel` from `channels_table.py` — same spin boxes, Set buttons, confirmation dialogs, and IPC write-back.
+- **Alarm terminal** (`_AlarmTerminal`): Read-only scrolling log (dark theme, monospace) that displays timestamped alarm/warning transitions from the telemetry `alarm_events` payload. Shows WARNING, ALARM, and CLEARED messages. Capped at 500 lines.
+- **Configuration persistence**: Plot channels (alias, Y axis, color), time window, and watch channel selections saved to `configs/test_monitor_display.yaml` and restored on next launch.
+- **Display registration**: Registered as `"MainTestMonitor"` in the console display factory. Available in the Launch Configuration dialog alongside AllChannelsTable. Both displays can run simultaneously (one per monitor).
+- **matplotlib dependency**: Added `matplotlib>=3.8.0` to `requirements.txt` (replaced `pyqtgraph` which had rendering/compatibility issues in the target environment).
+
+### AO cache invalidation and scaling support — 04/29/2026
+#### Added
+- **AO scaling (linear & table)**: Analog output channels now support the same `scaling` configuration as AI voltage channels. Users can configure gain/offset or table-point scaling so the UI accepts engineering units (e.g., valve position %) while the plugin writes the corresponding raw voltage to hardware.
+- **`inverse_scaling()`**: New function in `_nidaq_scaling.py` that inverts `apply_scaling()` — linear: `(eng - offset) / gain`, table: interpolation with swapped axes. Used by `write_ao()` to convert engineering-unit commands to raw voltage.
+- **AO config dialog scaling column**: The NI DAQ config dialog's Analog Output tab now includes a "Scaling" column. Double-clicking opens the same `ScalingEditorDialog` used for AI voltage channels. Full scaling dicts (type, gain, offset, unit, points, extrapolate) are persisted to YAML. Existing `range_v` values are preserved on save instead of being overwritten with defaults.
+#### Changed
+- **AO panel uses engineering ranges**: When scaling is configured, the AO panel spin box min/max reflect engineering-unit limits (computed via `apply_scaling` on the raw `range_v`). Readback telemetry values are displayed in engineering units.
+- **AO cache invalidation**: Closing the NI DAQ config dialog with OK now invalidates the AO metadata cache in the console, so added/removed/changed AO channels are reflected in the All Channels Table without restarting.
+- **`write_ao()` applies inverse scaling**: The NI DAQ plugin stores raw voltage in `_ao_states` after applying `inverse_scaling()` on the engineering-unit value received from the UI. Forward scaling is applied at all readback merge points so telemetry always reports engineering units.
+
+### Analog Outputs panel in All Channels Table — 04/29/2026
+#### Added
+- **Analog Outputs panel**: New `_AOPanel` in the All Channels Table displays enabled AO channels at the top of the display with per-channel `QDoubleSpinBox` controls (min/max clamped to `range_v` from NI DAQ config), unit labels, and Set buttons for writing values to hardware.
+- **AO write confirmation**: Clicking "Set" shows a confirmation dialog ("Set {alias} to {value} {unit}?") before sending the `ao_write` IPC message to the orchestrator.
+- **Readback from telemetry**: AO spin boxes update from live telemetry values, but only when the spin box does not have focus (prevents fighting user input mid-edit).
+- **AO metadata caching**: Console reads AO channel metadata (alias, unit, range) from `ni_daq.yaml` once and caches it; `invalidate_ao_cache()` available for future reload wiring.
+- **AO alias exclusion**: AO channel aliases are excluded from the normal read-only category panels to avoid duplicate display.
+
+### Calculated Channels overhaul — 04/29/2026
+#### Changed
+- **Block-based expression model**: Replaced single-expression-per-row (`alias + expr`) with multiline calculation blocks (`name + body + symbols + outputs`). Each block contains sequential `var = expr` assignment lines evaluated top-to-bottom; later lines can reference earlier intermediates. Only explicitly declared outputs are published as telemetry channels.
+- **`SafeExprEvaluator.evaluate_block()`**: New method that processes multiline bodies line-by-line, building a scope dict so intermediate variables propagate forward. No `eval()` or `exec()` — each RHS is still parsed via `ast.parse(mode="eval")`.
+- **`CalcBlock` dataclass**: Replaces `CalcItem`. Fields: `name`, `body`, `symbols`, `outputs` (list of `{var, alias, unit}`), `enabled`.
+- **Auto-migration**: Legacy `expr`-format configs are auto-converted on load (`body = "result = {expr}"`, single output). No manual migration step needed.
+- **Config dialog redesign**: Replaced flat calculation table with a list+detail layout — left panel shows block list with checkboxes (Add/Remove/Duplicate), right panel shows block editor with name field, enable checkbox, symbol table, multiline `QPlainTextEdit` body editor (monospace), and exposed outputs table.
+- **Recipe import/export**: Export Recipe saves the selected block as a JSON file; Import Recipe loads a JSON file as a new block. JSON schema matches the YAML block schema 1:1 for future server API integration.
+- **YAML migration**: Consolidated 4 separate estop-related calculation rows into a single "Estop Logic" block in `calculated_channels.yaml`.
+- **Validation**: Both plugin and dialog validate body line format (`var = expr`), output variable existence in body, alias uniqueness across blocks, and symbol identifier validity.
+#### Added
+- **`prev(variable, steps)`**: New built-in function for accessing previous evaluation cycle values. Enables delta calculations, running totals, timers, and exponential moving averages. Per-block rolling history buffer stores up to 10 cycles; returns `0.0` when no history exists. First argument must be a variable name, second is the number of steps back.
+- **`dt` built-in variable**: Automatically injected into every block — contains elapsed time in seconds since the last evaluation cycle. Combined with `prev()`, enables time-based integration and rate-of-change patterns.
+- **`BlockHistory` class**: Per-block rolling history buffer backed by a `deque(maxlen=10)`. Pushes scope snapshots after each evaluation; `prev()` queries into the ring.
+- **User guide**: `docs/guides/calculated_channels_help.md` — comprehensive reference covering dialog walkthrough, expression syntax, all operators/functions, `prev()`/`dt` usage, worked examples (unit conversion, estop logic, RPM delta, fuel integration), recipe import/export, and troubleshooting.
+
 ### CCP Console UI cleanup — 04/29/2026
 #### Added
 - **CCP tile health indicators**: CCP plugin tile in the console now reflects runtime health. Green when connected and data flowing, red "Disconnected" when ECU is unreachable, red "Error" when connected but data flow is broken (e.g., unlock failed, all polls timing out). Implemented via `CCP/conn_ok` and `CCP/health_ok` keys published from `_append_diag_values()`.
@@ -412,9 +474,10 @@ All notable changes to this project will be documented in this file.
 
 ### Notes
 - Deferred CCP optimization backlog (tracked in `docs/plugins/ccp.md`):
-  - further reduce `CCP/poll_fail` rate in real mode,
+  - Hybrid DAQ + SHORT_UP within a single device context,
   - reduce stale/freshness warnings while keeping current channel responsiveness,
-  - tune adaptive timeout/backoff and add rolling CCP health metrics.
+  - add rolling CCP health metrics (success-rate window, consecutive-fail counters),
+  - cold-start grace period for ECU measurements that need longer initial timeout.
 
 ## [0.1.0-alpha.1] - 08/11/2025
 ### Added

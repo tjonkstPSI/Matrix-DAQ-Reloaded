@@ -173,8 +173,6 @@ class CcpProto:
 
 
 class NixnetSession:
-    _FRAME_NAME = "CCP_Rx"
-    _CLUSTER_NAME = "CCP_Net"
 
     def __init__(self, interface: str, baudrate: int, force_stream_rx: bool = False) -> None:
         self.interface = interface
@@ -192,12 +190,16 @@ class NixnetSession:
 
         Creates an in-memory XNET database with one CAN frame
         definition so the driver knows which CAN ID to filter.
+        Uses interface-unique names to avoid collisions when multiple
+        sessions are open on different interfaces.
         Returns True on success, False on failure.
         """
+        cluster_name = f"CCP_Net_{self.interface}"
+        frame_name = f"CCP_Rx_{self.interface}"
         try:
             db = nixnet.database.Database(":memory:")
-            cluster = db.clusters.add(self._CLUSTER_NAME)
-            frame = cluster.frames.add(self._FRAME_NAME)
+            cluster = db.clusters.add(cluster_name)
+            frame = cluster.frames.add(frame_name)
             frame.id = int(rx_id)
             frame.payload_len = 8
             try:
@@ -206,10 +208,10 @@ class NixnetSession:
                 pass
             self._db = db
             self._rx = nixnet.FrameInQueuedSession(
-                self.interface, ":memory:", self._CLUSTER_NAME, self._FRAME_NAME,
+                self.interface, ":memory:", cluster_name, frame_name,
             )
             self.rx_mode = "queued"
-            print(f"[NixnetSession] Queued RX session OK (hw filter 0x{rx_id:X})")
+            print(f"[NixnetSession] Queued RX session OK (hw filter 0x{rx_id:X}) on {self.interface}")
             return True
         except Exception as eq:
             print(f"[NixnetSession] FrameInQueuedSession failed ({eq}), using stream fallback")
@@ -289,11 +291,50 @@ class NixnetSession:
         _pc = time.perf_counter
         n = max(1, int(batch_size))
         started = _pc()
-        deadline = _pc() + max(0.001, float(timeout_s))
+        timeout_f = float(timeout_s)
         out: List[CanFrame] = []
         read_calls = 0
         empty_reads = 0
         raw_frames = 0
+
+        if timeout_f <= 0.0:
+            try:
+                read_calls += 1
+                frames = list(
+                    self._rx.frames.read(
+                        num_frames=n,
+                        timeout=0,
+                        frame_type=nixnet.types.CanFrame,
+                    )
+                )  # type: ignore[call-arg]
+            except Exception:
+                frames = []
+            if not frames:
+                empty_reads += 1
+            else:
+                raw_frames += len(frames)
+                for fr in frames:
+                    cid = int(fr.identifier.identifier)
+                    if only_id is not None and cid != int(only_id):
+                        continue
+                    out.append(
+                        CanFrame(
+                            arbitration_id=cid,
+                            data=bytes(fr.payload),
+                            is_extended=bool(fr.identifier.extended),
+                        )
+                    )
+            self.last_recv_stats = {
+                "duration_ms": (_pc() - started) * 1000.0,
+                "read_calls": float(read_calls),
+                "empty_reads": float(empty_reads),
+                "raw_frames": float(raw_frames),
+                "returned_frames": float(len(out)),
+                "rx_mode_code": 1.0 if self.rx_mode == "queued" else (2.0 if self.rx_mode == "stream" else 0.0),
+            }
+            return out
+
+        deadline = _pc() + max(0.001, timeout_f)
         while _pc() < deadline:
             remaining = max(0.0, deadline - _pc())
             step_timeout = min(max(remaining, 0.0), 0.003)

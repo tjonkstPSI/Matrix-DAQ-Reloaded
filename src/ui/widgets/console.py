@@ -40,6 +40,8 @@ class ConsoleWindow(QMainWindow):
         # Run state
         self._locked: bool = False
         self._prev_rec: bool = False
+        # AO metadata cache
+        self._ao_meta_cache: Optional[List[Dict[str, Any]]] = None
         # UI
         self._init_ui()
         # Telemetry
@@ -120,6 +122,16 @@ class ConsoleWindow(QMainWindow):
         self.btn_unlock.clicked.connect(self._on_unlock_clicked)  # type: ignore
         self.btn_stats = QPushButton("Log Statistics"); self.btn_stats.setEnabled(False)
         self.btn_stats.clicked.connect(self._on_stats_clicked)  # type: ignore
+        self._stats_logging = False
+        self._stats_log_start: float = 0.0
+        self._stats_win_sec: float = 5.0
+        self._stats_win_type: str = "seconds"
+        self._stats_capture_mode_cached: str = "forward"
+        self._stats_buffer_ready = False
+        self._stats_first_telem_ts: float = 0.0
+        self._stats_timer = QTimer(self)
+        self._stats_timer.setInterval(200)
+        self._stats_timer.timeout.connect(self._update_stats_button_text)  # type: ignore
         self.btn_restore_displays = QPushButton("Restore Displays")
         self.btn_restore_displays.clicked.connect(self._on_restore_displays_clicked)  # type: ignore
         for b in (self.btn_primary, self.btn_unlock, self.btn_stats, self.btn_restore_displays):
@@ -274,7 +286,8 @@ class ConsoleWindow(QMainWindow):
             if NiDaqConfigDialog is None:
                 return
             dlg = NiDaqConfigDialog(self)
-            dlg.exec()
+            if dlg.exec() == QDialog.Accepted:
+                self.invalidate_ao_cache()
 
     def _show_ccp_menu(self, pos) -> None:
         # Context menu for CCP tile: Configure
@@ -448,7 +461,14 @@ class ConsoleWindow(QMainWindow):
                     pass
                 return
             try:
-                dlg = StatisticsConfigDialog(self)
+                aliases = []
+                try:
+                    vals = self._last_payload.get("values")
+                    if isinstance(vals, dict):
+                        aliases = sorted(vals.keys())
+                except Exception:
+                    pass
+                dlg = StatisticsConfigDialog(self, telemetry_aliases=aliases)
                 dlg.exec()
             except Exception as e:
                 try:
@@ -740,7 +760,16 @@ class ConsoleWindow(QMainWindow):
         self.btn_unlock.setVisible(bool(self._locked) and not rec)
         # Log Statistics allowed only when connected, recording, and Statistics plugin selected
         has_stats = "Statistics" in self._tiles
-        self.btn_stats.setEnabled(connected and rec and has_stats)
+        stats_enabled = connected and rec and has_stats
+        self.btn_stats.setEnabled(stats_enabled and not self._stats_logging)
+        if stats_enabled and not self._stats_logging:
+            self._update_stats_buffer_status()
+        elif not stats_enabled:
+            self._stats_buffer_ready = False
+            self._stats_first_telem_ts = 0.0
+            if not self._stats_logging:
+                self.btn_stats.setStyleSheet("")
+                self.btn_stats.setText("Log Statistics")
         # Toggle label based on recording flag and an internal lock flag
         label = "Start Recording" if self._locked and not rec else ("Stop Recording" if self._locked and rec else "Lock Test")
         if self.btn_primary.text() != label:
@@ -768,10 +797,22 @@ class ConsoleWindow(QMainWindow):
             vals = self._last_payload.get("values") if isinstance(self._last_payload, dict) else None
             units = self._last_payload.get("units") if isinstance(self._last_payload, dict) else None
             states = self._last_payload.get("states") if isinstance(self._last_payload, dict) else None
+            source_map = self._last_payload.get("source_map") if isinstance(self._last_payload, dict) else None
+            ao_meta = self._get_ao_metadata()
             if self._display_alive("AllChannelsTable"):
                 table = self._display_windows["AllChannelsTable"].centralWidget()
                 if hasattr(table, "update_data"):
-                    table.update_data(vals, units, states)
+                    table.update_data(vals, units, states, ao_channels=ao_meta if ao_meta else None,
+                                      source_map=source_map)
+            if self._display_alive("MainTestMonitor"):
+                monitor = self._display_windows["MainTestMonitor"].centralWidget()
+                if hasattr(monitor, "update_data"):
+                    alarm_events = self._last_payload.get("alarm_events") if isinstance(self._last_payload, dict) else None
+                    monitor.update_data(
+                        vals, units, states,
+                        alarm_events=alarm_events,
+                        ao_channels=ao_meta if ao_meta else None,
+                    )
             if isinstance(vals, dict):
                 self._refresh_loadbank_panels(vals)
         except Exception:
@@ -832,6 +873,18 @@ class ConsoleWindow(QMainWindow):
                     self.txt_messages.append(f"[WARN] Excel export failed: {msg.get('error','unknown')}")
             except Exception:
                 pass
+        elif t == "stats_snapshot":
+            try:
+                self.txt_messages.append("[STATS] Snapshot complete.")
+            except Exception:
+                pass
+            self._finish_stats_logging(success=True)
+        elif t == "stats_skip":
+            try:
+                self.txt_messages.append("[STATS] Snapshot skipped — no channels had sufficient data in the window.")
+            except Exception:
+                pass
+            self._finish_stats_logging(success=False)
         elif t == "plugin_message":
             try:
                 text = str(msg.get("text", ""))
@@ -841,7 +894,8 @@ class ConsoleWindow(QMainWindow):
                 pass
 
     def _on_stats_clicked(self) -> None:
-        # Request manual stats snapshot from Core
+        if self._stats_logging:
+            return
         ctrl = None
         try:
             from src.core.ipc.bus import create_ui_control_push
@@ -853,12 +907,98 @@ class ConsoleWindow(QMainWindow):
         try:
             msg = json.dumps({"type": "stats_snapshot"}).encode("utf-8")
             ctrl["control_push"].send(msg)
-            try:
-                self.txt_messages.append("[INFO] Manual statistics snapshot requested.")
-            except Exception:
-                pass
+        except Exception:
+            return
+        self._read_stats_window_config()
+        self._stats_logging = True
+        self._stats_log_start = time.time()
+        self.btn_stats.setStyleSheet("")
+        if self._stats_capture_mode_cached == "backward":
+            self.btn_stats.setText("Snapshot complete")
+            self.btn_stats.setEnabled(False)
+            QTimer.singleShot(1200, self._reset_stats_button)
+        else:
+            self._stats_timer.start()
+            self._update_stats_button_text()
+        try:
+            self.txt_messages.append("[STATS] Manual statistics snapshot requested.")
         except Exception:
             pass
+
+    def _read_stats_window_config(self) -> None:
+        try:
+            import yaml
+            p = Path(__file__).resolve().parents[3] / "configs" / "statistics.yaml"
+            if p.exists():
+                doc = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+                snap = doc.get("snapshot") or {}
+                self._stats_win_type = str(snap.get("window_type", "seconds")).lower()
+                self._stats_capture_mode_cached = str(snap.get("capture_mode", "forward")).lower()
+                try:
+                    self._stats_win_sec = float(snap.get("window_value", 5.0))
+                except Exception:
+                    self._stats_win_sec = 5.0
+        except Exception:
+            pass
+
+    def _update_stats_buffer_status(self) -> None:
+        now = time.time()
+        if self._stats_first_telem_ts <= 0.0:
+            self._stats_first_telem_ts = now
+            self._read_stats_window_config()
+        if self._stats_capture_mode_cached != "backward":
+            if not self._stats_buffer_ready:
+                self._stats_buffer_ready = True
+                self.btn_stats.setText("Log Statistics")
+                self.btn_stats.setStyleSheet("background-color: #2ecc71; color: white; font-weight: bold;")
+            return
+        elapsed = now - self._stats_first_telem_ts
+        needed = self._stats_win_sec
+        if elapsed >= needed:
+            if not self._stats_buffer_ready:
+                self._stats_buffer_ready = True
+                self.btn_stats.setText("Log Statistics")
+                self.btn_stats.setStyleSheet("background-color: #2ecc71; color: white; font-weight: bold;")
+        else:
+            self._stats_buffer_ready = False
+            remaining = needed - elapsed
+            self.btn_stats.setText(f"Buffer filling... ({remaining:.0f}s)")
+            self.btn_stats.setStyleSheet("background-color: #f39c12; color: white; font-weight: bold;")
+
+    def _update_stats_button_text(self) -> None:
+        if not self._stats_logging:
+            self._stats_timer.stop()
+            return
+        elapsed = time.time() - self._stats_log_start
+        timeout = (self._stats_win_sec + 10.0) if self._stats_win_type == "seconds" else 60.0
+        if elapsed > timeout:
+            self.txt_messages.append("[STATS] Snapshot timed out — resetting.")
+            self._finish_stats_logging(success=False)
+            return
+        if self._stats_win_type == "seconds":
+            total = max(0.1, self._stats_win_sec)
+            self.btn_stats.setText(f"Logging... ({elapsed:.1f}s / {total:.1f}s)")
+        else:
+            total = int(self._stats_win_sec)
+            self.btn_stats.setText(f"Logging... ({elapsed:.1f}s / {total} samples)")
+
+    def _finish_stats_logging(self, success: bool = True) -> None:
+        self._stats_logging = False
+        self._stats_timer.stop()
+        if success:
+            self.btn_stats.setText("Snapshot complete")
+            QTimer.singleShot(1500, self._reset_stats_button)
+        else:
+            self._reset_stats_button()
+
+    def _reset_stats_button(self) -> None:
+        self._stats_logging = False
+        self.btn_stats.setText("Log Statistics")
+        self.btn_stats.setEnabled(True)
+        if self._stats_buffer_ready:
+            self.btn_stats.setStyleSheet("background-color: #2ecc71; color: white; font-weight: bold;")
+        else:
+            self.btn_stats.setStyleSheet("")
 
     def _on_primary_clicked(self) -> None:
         # Three-state behavior: Lock → Start → Stop
@@ -1012,6 +1152,62 @@ class ConsoleWindow(QMainWindow):
             pass
         return None
 
+    def _get_ao_metadata(self) -> List[Dict[str, Any]]:
+        """Load AO channel metadata from ni_daq.yaml (cached after first read).
+
+        When scaling is configured, min/max are expressed in engineering units
+        so the AO panel spin box reflects the user-facing range.
+        """
+        if self._ao_meta_cache is not None:
+            return self._ao_meta_cache
+        self._ao_meta_cache = []
+        try:
+            import yaml  # type: ignore
+            from src.plugins._nidaq_scaling import apply_scaling
+            cfg_path = Path(__file__).resolve().parents[3] / "configs" / "ni_daq.yaml"
+            if not cfg_path.exists():
+                return self._ao_meta_cache
+            data = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                return self._ao_meta_cache
+            channels = data.get("channels") or {}
+            ao_list = channels.get("ao") or []
+            for ch in ao_list:
+                if not isinstance(ch, dict):
+                    continue
+                if not bool(ch.get("enabled", True)):
+                    continue
+                alias = str(ch.get("alias", "")).strip()
+                if not alias:
+                    continue
+                scaling = ch.get("scaling") or {}
+                unit = str(scaling.get("unit", "")) or "V"
+                range_v = ch.get("range_v") or {}
+                raw_min = float(range_v.get("min", 0.0))
+                raw_max = float(range_v.get("max", 10.0))
+                scale_type = scaling.get("type", "none")
+                if scale_type and scale_type != "none":
+                    eng_min = apply_scaling(raw_min, scaling)
+                    eng_max = apply_scaling(raw_max, scaling)
+                    if eng_min > eng_max:
+                        eng_min, eng_max = eng_max, eng_min
+                else:
+                    eng_min, eng_max = raw_min, raw_max
+                self._ao_meta_cache.append({
+                    "alias": alias,
+                    "unit": unit,
+                    "min": eng_min,
+                    "max": eng_max,
+                    "scaling": dict(scaling),
+                })
+        except Exception:
+            pass
+        return self._ao_meta_cache
+
+    def invalidate_ao_cache(self) -> None:
+        """Force re-read of AO metadata on next refresh (call after NI DAQ reload)."""
+        self._ao_meta_cache = None
+
     def _plugin_config_ok(self, plugin_id: str) -> bool:
         cfg_map = {
             "NI_DAQ": "ni_daq.yaml",
@@ -1069,15 +1265,15 @@ class ConsoleWindow(QMainWindow):
 
     _DISPLAY_REGISTRY: Dict[str, str] = {
         "allchannels": "AllChannelsTable",
-        # future: "plot": "PlotDisplay", etc.
+        "maintestmonitor": "MainTestMonitor",
     }
 
     @staticmethod
     def _resolve_display_key(config_name: str) -> Optional[str]:
         """Map a selected_displays config string to its canonical key."""
-        lower = config_name.strip().lower()
+        normalized = config_name.strip().lower().replace(" ", "").replace("_", "")
         for prefix, key in ConsoleWindow._DISPLAY_REGISTRY.items():
-            if lower.startswith(prefix):
+            if normalized.startswith(prefix):
                 return key
         return None
 
@@ -1104,6 +1300,22 @@ class ConsoleWindow(QMainWindow):
                 self._display_windows[key] = win
                 return True
             except Exception:
+                return False
+        if key == "MainTestMonitor":
+            try:
+                from .test_monitor_display import TestMonitorDisplay
+                win = _QMainWindow(self)
+                win.setWindowTitle("Main Test Monitor Display")
+                display = TestMonitorDisplay(win)
+                win.setCentralWidget(display)
+                win.resize(1920, 1020)
+                win.show()
+                self._display_windows[key] = win
+                return True
+            except Exception as exc:
+                import traceback
+                print(f"[Console] Failed to create MainTestMonitor: {exc}")
+                traceback.print_exc()
                 return False
         return False
 

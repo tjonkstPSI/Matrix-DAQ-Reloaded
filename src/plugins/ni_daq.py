@@ -27,7 +27,7 @@ from ._nidaq_acquisition import (
     start_snapshot_worker,
     stop_snapshot_worker,
 )
-from ._nidaq_scaling import presort_scaling_points
+from ._nidaq_scaling import apply_scaling, inverse_scaling, presort_scaling_points
 
 
 class NiDAQPlugin(BasePlugin):
@@ -44,6 +44,7 @@ class NiDAQPlugin(BasePlugin):
         self._theta: float = 0.0
         self._do_states: Dict[str, int] = {}
         self._ao_states: Dict[str, float] = {}
+        self._ao_scaling: Dict[str, dict] = {}
         self._oversample_factor: int = 10
         self._oversample_applies_to: str = "voltage"
         self._filter_type: str = "butterworth"
@@ -246,6 +247,18 @@ class NiDAQPlugin(BasePlugin):
                 mapping[str(alias)] = str(unit)
         return mapping
 
+    def section_aliases(self) -> Dict[str, Set[str]]:
+        """Return aliases grouped by hardware section for source map construction."""
+        def _enabled(section):
+            return {str(ch["alias"]) for ch in section if ch.get("alias") and bool(ch.get("enabled", True))}
+        pressure = {a for a in _enabled(self._ai_voltage) if a.startswith("qPR")}
+        return {
+            "NI Temperature": _enabled(self._ai_temp),
+            "NI Pressure": pressure,
+            "NI Digital I/O": _enabled(self._di) | _enabled(self._do),
+            "NI Analog Out": _enabled(self._ao),
+        }
+
     def inventory(self) -> Dict[str, Any]:
         return dict(self._inventory)
 
@@ -297,7 +310,8 @@ class NiDAQPlugin(BasePlugin):
         for alias, state in self._do_states.items():
             initial[alias] = int(state)
         for alias, state in self._ao_states.items():
-            initial[alias] = float(state)
+            sc = self._ao_scaling.get(alias)
+            initial[alias] = apply_scaling(float(state), sc) if sc else float(state)
         self._append_health_channels(initial)
         with self._snapshot_lock:
             self._snapshot_values = dict(initial)
@@ -413,6 +427,16 @@ class NiDAQPlugin(BasePlugin):
                         "operator": operator,
                         "threshold": threshold,
                     })
+
+            self._ao_scaling = {}
+            for ch in self._ao:
+                if not ch.get("enabled", False):
+                    continue
+                a = str(ch.get("alias", "")).strip()
+                sc = ch.get("scaling")
+                if a and sc and isinstance(sc, dict):
+                    ch["scaling"] = presort_scaling_points(sc)
+                    self._ao_scaling[a] = ch["scaling"]
             return
 
     def do_conditions(self) -> List[Dict[str, Any]]:
@@ -438,7 +462,11 @@ class NiDAQPlugin(BasePlugin):
 
     def write_ao(self, alias: str, value: float) -> None:
         try:
-            self._ao_states[str(alias)] = float(value)
+            raw = float(value)
+            sc = self._ao_scaling.get(str(alias))
+            if sc:
+                raw = inverse_scaling(raw, sc)
+            self._ao_states[str(alias)] = raw
             if self.mode == "real" and self._ao_tasks:
                 self._write_ao_hardware()
         except Exception:

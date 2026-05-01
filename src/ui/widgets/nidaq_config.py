@@ -49,7 +49,7 @@ class NiDaqConfigDialog(QDialog):
 	AI_COLS: List[str] = ["Enabled", "Hardware", "Alias", "Unit", "Measurement", "Scaling"]
 	DIG_COLS: List[str] = ["Enabled", "Hardware", "Alias"]
 	DO_COLS: List[str] = ["Enabled", "Hardware", "Source Channel", "Condition"]
-	AO_COLS: List[str] = ["Enabled", "Hardware", "Alias", "Unit"]
+	AO_COLS: List[str] = ["Enabled", "Hardware", "Alias", "Unit", "Scaling"]
 
 	def __init__(self, parent=None) -> None:
 		super().__init__(parent)
@@ -63,6 +63,7 @@ class NiDaqConfigDialog(QDialog):
 		self._inventory: Dict[str, List[str]] = {"ai": [], "di": [], "do": [], "ao": []}
 		self._inv_raw: Dict[str, Any] = {"devices": []}
 		self._ai_scaling: Dict[int, Dict[str, Any]] = {}
+		self._ao_scaling: Dict[int, Dict[str, Any]] = {}
 		self._telemetry_getter = None
 		try:
 			from src.core.ipc.bus import create_ui_subscriber  # type: ignore
@@ -97,6 +98,7 @@ class NiDaqConfigDialog(QDialog):
 		self.tbl_di = self._make_table(self.DIG_COLS)
 		self.tbl_do = self._make_table(self.DO_COLS)
 		self.tbl_ao = self._make_table(self.AO_COLS)
+		self._apply_column_sizing()
 		self.tabs.addTab(self._wrap(self.tbl_ai), "Analog Input")
 		self.tabs.addTab(self._wrap(self.tbl_di), "Digital Input")
 		self.tabs.addTab(self._wrap(self.tbl_do), "Digital Output")
@@ -133,6 +135,46 @@ class NiDaqConfigDialog(QDialog):
 		tbl.setEditTriggers(QAbstractItemView.NoEditTriggers)
 		tbl.cellDoubleClicked.connect(lambda r, c, t=tbl: self._on_cell_double_click(t, r, c))  # type: ignore
 		return tbl
+
+	def _apply_column_sizing(self) -> None:
+		_ALIAS_WIDTH = 160  # ~20 characters
+		_ENABLED_WIDTH = 55
+
+		# AI: Enabled(fixed) | Hardware(auto) | Alias(fixed 20ch) | Unit(auto) | Measurement(auto) | Scaling(auto)
+		h = self.tbl_ai.horizontalHeader()
+		h.setSectionResizeMode(0, QHeaderView.Fixed)
+		self.tbl_ai.setColumnWidth(0, _ENABLED_WIDTH)
+		h.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+		h.setSectionResizeMode(2, QHeaderView.Fixed)
+		self.tbl_ai.setColumnWidth(2, _ALIAS_WIDTH)
+		h.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+		h.setSectionResizeMode(4, QHeaderView.ResizeToContents)
+		h.setSectionResizeMode(5, QHeaderView.Stretch)
+
+		# AO: Enabled(fixed) | Hardware(auto) | Alias(fixed 20ch) | Unit(auto) | Scaling(stretch)
+		h = self.tbl_ao.horizontalHeader()
+		h.setSectionResizeMode(0, QHeaderView.Fixed)
+		self.tbl_ao.setColumnWidth(0, _ENABLED_WIDTH)
+		h.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+		h.setSectionResizeMode(2, QHeaderView.Fixed)
+		self.tbl_ao.setColumnWidth(2, _ALIAS_WIDTH)
+		h.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+		h.setSectionResizeMode(4, QHeaderView.Stretch)
+
+		# DI: Enabled(fixed) | Hardware(stretch) | Alias(stretch)
+		h = self.tbl_di.horizontalHeader()
+		h.setSectionResizeMode(0, QHeaderView.Fixed)
+		self.tbl_di.setColumnWidth(0, _ENABLED_WIDTH)
+		h.setSectionResizeMode(1, QHeaderView.Stretch)
+		h.setSectionResizeMode(2, QHeaderView.Stretch)
+
+		# DO: Enabled(fixed) | Hardware(stretch) | Source Channel(stretch) | Condition(stretch)
+		h = self.tbl_do.horizontalHeader()
+		h.setSectionResizeMode(0, QHeaderView.Fixed)
+		self.tbl_do.setColumnWidth(0, _ENABLED_WIDTH)
+		h.setSectionResizeMode(1, QHeaderView.Stretch)
+		h.setSectionResizeMode(2, QHeaderView.Stretch)
+		h.setSectionResizeMode(3, QHeaderView.Stretch)
 
 	# Data I/O
 	def _load(self) -> None:
@@ -294,16 +336,24 @@ class NiDaqConfigDialog(QDialog):
 			self.tbl_do.setItem(row, 2, QTableWidgetItem(alias))
 			self.tbl_do.setItem(row, 3, QTableWidgetItem(cond_str))
 		# AO
+		self._ao_scaling.clear()
 		self.tbl_ao.setRowCount(len(self._inventory["ao"]))
 		for row, phys in enumerate(self._inventory["ao"]):
 			cfg = ao_cfg.get(phys, {})
 			enabled = bool(cfg.get("enabled", False))
 			alias = str(cfg.get("alias", "")) if enabled else ""
-			unit = ((cfg.get("scaling") or {}).get("unit") or cfg.get("unit", "")) if enabled else ""
+			sc = dict(cfg.get("scaling") or {})
+			unit = (sc.get("unit") or cfg.get("unit", "")) if enabled else ""
+			if not sc.get("type"):
+				sc["type"] = "none"
+			self._ao_scaling[row] = sc
 			self._set_checkbox(self.tbl_ao, row, 0, enabled)
 			self.tbl_ao.setItem(row, 1, QTableWidgetItem(phys)); self.tbl_ao.item(row, 1).setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
 			self.tbl_ao.setItem(row, 2, QTableWidgetItem(alias))
 			self.tbl_ao.setItem(row, 3, QTableWidgetItem(unit))
+			scale_item = QTableWidgetItem(scaling_summary(sc))
+			scale_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
+			self.tbl_ao.setItem(row, 4, scale_item)
 
 	def _on_cell_double_click(self, table: QTableWidget, row: int, col: int) -> None:
 		if table is self.tbl_ai:
@@ -318,7 +368,12 @@ class NiDaqConfigDialog(QDialog):
 				self._open_do_source_picker(row)
 			elif col == 3:
 				self._open_do_condition_editor(row)
-		elif table in (self.tbl_di, self.tbl_ao):
+		elif table is self.tbl_ao:
+			if col == 2:
+				self._open_alias_picker(table, row, col)
+			elif col == 4:
+				self._open_ao_scaling_editor(row)
+		elif table is self.tbl_di:
 			if col == 2:
 				self._open_alias_picker(table, row, col)
 
@@ -355,6 +410,23 @@ class NiDaqConfigDialog(QDialog):
 				scale_item = QTableWidgetItem(scaling_summary(sc))
 				scale_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
 				self.tbl_ai.setItem(row, 5, scale_item)
+
+	def _open_ao_scaling_editor(self, row: int) -> None:
+		alias = self.tbl_ao.item(row, 2).text().strip() if self.tbl_ao.item(row, 2) else ""
+		current_sc = dict(self._ao_scaling.get(row) or {"type": "none", "unit": "V"})
+		dlg = ScalingEditorDialog(
+			parent=self,
+			current_scaling=current_sc,
+			channel_alias=alias,
+			telemetry_getter=self._telemetry_getter,
+		)
+		if dlg.exec() == QDialog.Accepted and dlg.result_scaling:
+			sc = dlg.result_scaling
+			self._ao_scaling[row] = sc
+			self.tbl_ao.setItem(row, 3, QTableWidgetItem(sc.get("unit", "")))
+			scale_item = QTableWidgetItem(scaling_summary(sc))
+			scale_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
+			self.tbl_ao.setItem(row, 4, scale_item)
 
 	def _open_do_source_picker(self, row: int) -> None:
 		current = self.tbl_do.item(row, 2).text().strip() if self.tbl_do.item(row, 2) else ""
@@ -709,8 +781,16 @@ class NiDaqConfigDialog(QDialog):
 						parsed["source"] = alias
 					entry["condition"] = parsed
 			chs["do"].append(entry)
-		for phys, alias, en, unit, _ in ao_rows:
-			chs["ao"].append({"phys": phys, "alias": alias, "enabled": en, "scaling": {"unit": unit}, "range_v": {"min": 0.0, "max": 10.0}})
+		old_ao = {str(c.get("phys")): c for c in (old_ch.get("ao") or []) if c.get("phys")}
+		for ao_row_idx, (phys, alias, en, unit, _) in enumerate(ao_rows):
+			sc = dict(self._ao_scaling.get(ao_row_idx) or {})
+			if unit and not sc.get("unit"):
+				sc["unit"] = unit
+			if not sc.get("type"):
+				sc["type"] = "none"
+			old_entry = old_ao.get(phys, {})
+			range_v = dict(old_entry.get("range_v") or {"min": 0.0, "max": 10.0})
+			chs["ao"].append({"phys": phys, "alias": alias, "enabled": en, "scaling": sc, "range_v": range_v})
 		updated["channels"] = chs
 		# Watchdog (merge with existing so optional keys like expir_states persist)
 		wd: Dict[str, Any] = {"enabled": bool(self.chk_wd.isChecked()), "mode": self.cmb_wd_mode.currentText()}
