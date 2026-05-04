@@ -2,42 +2,44 @@
 
 # Engine Test Data Recorder
 
-Stream, visualize, and record engine test data from NI cDAQ, CAN/CCP, and Modbus devices. Stores data in Parquet with YAML metadata and supports Excel export.
+Stream, visualize, and record engine test data from NI cDAQ, CAN/CCP, and Modbus devices. Stores primary run data in SQLite with YAML metadata and supports automatic Excel export.
 
 ## Overview
 - Desktop application for Windows 10/11
 - Python 3.x with PySide6 UI
 - Modular plugin architecture (NI DAQ, CAN, CCP, Calculated Channels, Cycle, LoadBank, Modbus, Statistics, Vaisala, Omega, EngineTest, Channel Manager)
 - Live visualization at up to 20 Hz; recording up to 100 Hz (per run)
-- Crash-safe, append-only chunked writes with < 1 s worst-case data loss
+- Crash-safe SQLite WAL writes with configurable commit interval (default 2 s)
 - Segmentation by time (default 4 h, configurable) or size; suffix “_1, _2, …” only when segmentation occurs
 - Excel export with automatic multi-file split “.1, .2, …” when row limit exceeded
 
 ## Architecture
-- Two-process bundle:
+- Two-process bundle with supervised launcher:
   - Core: acquisition, plugins, writers
   - UI: PySide6-only renderer(s)
   - IPC: ZeroMQ (local-only)
+- `python -m src.ui.app` is the current development entrypoint: splash → launch configuration → supervised core subprocess → console/displays after `core_ready`.
 - Plugin lifecycle: configure → validate → arm → start → stop → teardown → status
 - Per-plugin YAML configs; per-run config snapshots bundled for reproducibility
 - Acquisition model: plugin-side latest-value buffering with core tick sample-and-hold (core reads cached snapshots rather than blocking on plugin I/O)
-- Core recording: `src/core/orchestrator.py` coordinates the run loop; recording session setup/teardown and Excel export kickoff live in `src/core/recording.py` (`begin_recording`, `end_recording`, `kickoff_export`, Parquet settings helpers).
+- Core recording: `src/core/orchestrator.py` coordinates the run loop; recording session setup/teardown and Excel export kickoff live in `src/core/recording.py` (`begin_recording`, `end_recording`, `kickoff_export`, storage settings helpers).
 - Plugin source layout (selected large plugins are split for maintainability):
   - **NI DAQ:** `src/plugins/ni_daq.py` plus `_nidaq_discovery.py`, `_nidaq_simulation.py`, `_nidaq_tasks.py`, `_nidaq_acquisition.py`
   - **CCP:** `src/plugins/ccp.py` plus `_ccp_a2l.py`, `_ccp_protocol.py`
   - **Channel Manager / Engine Test:** `src/plugins/channel_manager.py` and `src/plugins/engine_test.py` (dedicated plugin modules, not stubs inside the orchestrator)
 
 ## Storage and Naming
-- Primary storage: Parquet (.parquet) + sidecar YAML (.yaml)
+- Primary storage: SQLite segment database(s) (`seg_*.db`) + YAML metadata
+- Legacy Parquet export support remains for old runs.
 - Base filename: `MMDDYY_HHMMSS_EngineType_TestType`
 - Segments: apply `_1, _2, …` only if segmentation occurs
 - Excel row split: apply `.1, .2, …` only if row limit exceeded
 - Run folder structure (example):
-  - `data/*.parquet`
+  - `data/seg_*.db`
   - `metadata.yaml`
   - `config_snapshot/*.yaml`
   - `logs/*.log`
-  - `exports/*.xlsx`
+  - `data/Data_<run>.xlsx`
 
 ## Configuration
 - Canonical format: YAML
@@ -57,6 +59,7 @@ Stream, visualize, and record engine test data from NI cDAQ, CAN/CCP, and Modbus
 - Channel Manager supports right-click configuration for:
   - core sample rate (tick/log cadence),
   - segmentation limits (time + size),
+  - SQLite commit interval,
   - two-tier warning/alarm setup with per-limit latch delays and actions.
 
 ## CCP Diagnostics

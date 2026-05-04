@@ -5,7 +5,7 @@
 ### Acceptance Criteria
 - Feature parity with prior system or better
 - All FR/NFR mapped to tests (see RTM)
-- 4 h sustained run with segmentation; < 1 s worst-case loss on forced crash
+- 4 h sustained run with segmentation; forced-crash loss bounded by configured SQLite commit interval
 - Excel export correctness including row-limit split
 
 ### Test Areas
@@ -26,7 +26,7 @@
    - Default size-based limit = 100 MB; override respected
    - `_1, _2, …` only when segmented; examples validated
 4. Crash Safety
-   - Append-only chunks (1 s); recovery after simulated crash; data loss < 1 s
+   - SQLite WAL recovery after simulated crash; data loss bounded by commit interval
 5. Excel Export
    - Metadata + Data sheets; time columns (relative, absolute)
    - Row-limit split with `.1, .2, …` naming

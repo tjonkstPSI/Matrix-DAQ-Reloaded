@@ -47,6 +47,47 @@ class ConsoleWindow(QMainWindow):
         # Telemetry
         self._init_telemetry()
 
+    def closeEvent(self, event) -> None:  # type: ignore[override]
+        try:
+            for timer_name in ("_poll_timer", "_ui_timer", "_stats_timer"):
+                timer = getattr(self, timer_name, None)
+                if timer is not None:
+                    timer.stop()
+        except Exception:
+            pass
+        try:
+            sub = getattr(self, "_sub", None)
+            if sub is not None:
+                sub.close(0)
+                self._sub = None
+        except Exception:
+            pass
+        try:
+            for w in list(getattr(self, "_display_windows", {}).values()):
+                try:
+                    w.close()
+                except Exception:
+                    pass
+            self._display_windows = {}
+        except Exception:
+            pass
+        try:
+            dock = getattr(self, "_lb_dock", None)
+            if dock is not None:
+                dock.hide()
+            for w in list(getattr(self, "_lb_operator_windows", []) or []):
+                try:
+                    w.close()
+                except Exception:
+                    pass
+            self._lb_operator_windows = []
+        except Exception:
+            pass
+        try:
+            super().closeEvent(event)
+        except Exception:
+            event.accept()
+
     def _init_ui(self) -> None:
         root = QWidget(self)
         self.setCentralWidget(root)
@@ -696,8 +737,6 @@ class ConsoleWindow(QMainWindow):
                 _sync_bus["control_push"].send(_msg)
         except Exception:
             pass
-        # Progress dialog placeholder
-        self._merge_dlg = None
 
     def _poll_telemetry(self) -> None:
         if self._sub is None:
@@ -820,39 +859,7 @@ class ConsoleWindow(QMainWindow):
 
     def _handle_status_msg(self, msg: Dict[str, Any]) -> None:
         t = str(msg.get("type", ""))
-        if t == "merge_progress":
-            try:
-                from PySide6.QtWidgets import QProgressDialog
-            except Exception:
-                QProgressDialog = None  # type: ignore
-            if QProgressDialog is None:
-                return
-            pct = float(msg.get("percent", 0.0))
-            detail = str(msg.get("detail", ""))
-            if self._merge_dlg is None:
-                self._merge_dlg = QProgressDialog("Combining files…", None, 0, 100, self)
-                self._merge_dlg.setWindowTitle("Finalizing Data")
-                self._merge_dlg.setAutoClose(False)
-                self._merge_dlg.setAutoReset(False)
-                self._merge_dlg.setModal(False)
-                self._merge_dlg.show()
-            self._merge_dlg.setValue(int(max(0, min(100, pct*100))))
-            if detail:
-                self._merge_dlg.setLabelText(f"Combining files… {int(pct*100)}%\n{detail}")
-        elif t == "merge_done":
-            ok = bool(msg.get("ok", True))
-            if self._merge_dlg is not None:
-                self._merge_dlg.setValue(100 if ok else 0)
-                self._merge_dlg.close()
-                self._merge_dlg = None
-            try:
-                if ok:
-                    self.txt_messages.append("[INFO] Data combine complete.")
-                else:
-                    self.txt_messages.append(f"[WARN] Data combine failed: {msg.get('error','unknown')}")
-            except Exception:
-                pass
-        elif t == "export_progress":
+        if t == "export_progress":
             try:
                 stage = str(msg.get("stage", ""))
                 if stage == "started":

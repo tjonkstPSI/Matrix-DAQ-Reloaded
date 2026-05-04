@@ -9,7 +9,7 @@
 
 ### Data I/O
 - Recording grid at rate R (≤ 100 Hz); fast channels oversampled 10×R then decimated
-- Parquet + YAML metadata; segmentation by time/size
+- SQLite segment database(s) + YAML metadata; segmentation by time/size
 - Excel export: Metadata, Data sheets; row-limit split with `.1, .2, …`
 
 ### IPC (Core ↔ UI)

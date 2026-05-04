@@ -13,7 +13,7 @@ code_layout:
       contains:
         - "begin_recording / end_recording session wiring"
         - "kickoff_export (Excel export kickoff from orchestrator state)"
-        - "build_parquet_settings and related recording helpers"
+        - "build_storage_settings and related recording helpers"
   plugins:
     ni_daq:
       primary: "src/plugins/ni_daq.py"
@@ -72,7 +72,7 @@ environment:
     - "cantools"
     - "pyzmq (ZeroMQ)"
     - "numpy, scipy (filters/decimation)"
-    - "pandas, pyarrow (Parquet)"
+    - "pandas, sqlite3, pyarrow (legacy Parquet export support)"
     - "openpyxl or xlsxwriter (Excel export)"
 
 constraints:
@@ -136,7 +136,8 @@ workflows:
     steps:
       - "Show splash screen with version and logo while loading"
       - "Launch configuration dialog: select plugins, choose data root folder, enter Test Cell name, toggle Offline Mode (global sim for all selected plugins), optional: import previous configuration"
-      - "On 'Launch': apply selections, write data_mode to plugins.yaml, open Console"
+      - "On 'Launch': apply selections, write data_mode to plugins.yaml, start the core subprocess from the UI launcher"
+      - "Launcher waits for core_ready status over ZeroMQ before opening Console; core_ready means IPC/status loop is alive and plugins have been configured/started as far as possible, not that external hardware is connected"
       - "Orchestrator reads data_mode at startup and on reload; when offline, forces every plugin.mode=sim and restarts plugins dynamically if the global toggle changes mid-session"
       - "Console shows plugin health (green/red)"
       - "Streaming starts (not recording)"
@@ -169,11 +170,11 @@ inputs:
 
 outputs:
   - id: "OUT-DATA"
-    type: "Parquet time-series + YAML metadata"
+    type: "SQLite time-series segment database(s) + YAML metadata"
     schema: "Recording grid at R; plugin values sampled from each plugin's latest snapshot at tick time (sample-and-hold); includes Time_Relative_s (s) and internal boolean channels (iOT_Warning, iOT_Alarm, iOT_AlmSftSdn, iOT_AlmEmgSdn, iDG_EngRunStp); statistics outputs separate. Debug channels (CAN/, CCP/, Core/, EngineTest/, NI_DAQ/ prefixes) are stripped at publish boundary via _strip_debug_keys() but */health_ok and */conn_ok are preserved for console health display."
   - id: "OUT-EXCEL"
     type: "Excel export"
-    schema: "Per-Parquet workbook(s) with sheets: Metadata (includes units matrix), Data (autosize, 2-decimal display), AlarmEvents, StatsSnapshots; split a single file into .1, .2 if exceeding Excel row limit"
+    schema: "Per-data-segment workbook(s) with sheets: Metadata (includes units matrix), Data (autosize, 2-decimal display), AlarmEvents, StatsSnapshots; split a single file into .1, .2 if exceeding Excel row limit"
   - id: "OUT-LOGS"
     type: "Run logs"
     schema: "Structured text with rotation; per-run directory"
@@ -312,7 +313,7 @@ logging:
     plugin_error_context_menu: ["Configure", "Show Error", "Reset Error"]
 
 storage:
-  format: "Parquet (.parquet) + sidecar YAML metadata (.yaml)"
+  format: "SQLite segment database(s) (.db) + run-level YAML metadata (.yaml)"
   segmentation:
     enabled: true
     by: ["time", "size"]
@@ -324,23 +325,21 @@ storage:
   run_folder_structure:
     folder_name: "MMDDYY_HHMMSS_EngineType_TestType"
     contents:
-      - "data/*.parquet (and segments if any)"
+      - "data/seg_*.db (one per segment)"
       - "metadata.yaml (run-level)"
       - "config_snapshot/*.yaml (copies of per-plugin configs used)"
       - "logs/*.log"
-      - "exports/*.xlsx (if user exported)"
+      - "data/Data_<run>*.xlsx (automatic export)"
   crash_safety:
-    write_mode: "Append-only chunked writes (1 s) during run; coalesce to single file per segment on stop"
-    chunk_duration_s: 1
-    coalesce_on_finalize: true
-    keep_chunk_files: false
-    worst_case_loss_s: "< 1"
-    recovery: "Recover last committed chunks on restart"
+    write_mode: "SQLite WAL append with buffered commits; no post-run Parquet coalesce for current runs"
+    commit_interval_s: 2
+    worst_case_loss_s: "Approximately the configured commit interval"
+    recovery: "Recover last committed SQLite rows on restart"
   excel_export:
     enabled: true
     sheets: ["Metadata", "Data", "AlarmEvents", "StatsSnapshots"]
     time_columns: ["Time_Relative_s", "Time_Absolute_iso8601"]
-    row_limit_behavior: "One workbook per Parquet file; split a single file into .1, .2, … when exceeding Excel row limit (~1,048,576)"
+    row_limit_behavior: "One workbook per SQLite segment database; split a single file into .1, .2, … when exceeding Excel row limit (~1,048,576)"
     naming_examples:
       no_seg: "MMDDYY_HHMMSS_EngineType_TestType.xlsx"
       seg2_split: "MMDDYY_HHMMSS_EngineType_TestType_2.1.xlsx"
@@ -353,11 +352,11 @@ tools:
     - name: "inspect_parquet"
       path: "src/tools/inspect_parquet.py"
       usage: "py -m src.tools.inspect_parquet [--run runs/...] [--show-head N]"
-      purpose: "Summarize Parquet segments, verify time ranges/monotonicity, display head rows, preview units metadata"
+      purpose: "Legacy utility for old Parquet-format runs"
     - name: "export_excel"
       path: "src/tools/export_excel.py"
       usage: "py -m src.tools.export_excel [--run runs/...] [--engine openpyxl|xlsxwriter] [--rows-per-file N] [--output-dir PATH]"
-      purpose: "Create Excel workbook(s) with sheets: Metadata, Data, AlarmEvents, StatsSnapshots; auto-split when exceeding row limits. Default output is <run>/data (next to the combined Parquet). Automatically kicked off by the orchestrator after the Parquet merge completes at end of recording; the console no longer exposes a manual Export button."
+      purpose: "Create Excel workbook(s) with sheets: Metadata, Data, AlarmEvents, StatsSnapshots; auto-split when exceeding row limits. Default output is <run>/data next to the SQLite segment database(s). Automatically kicked off by the orchestrator after recording stops; the console no longer exposes a manual Export button."
 
 filenaming:
   base: "MMDDYY_HHMMSS_EngineType_TestType"
@@ -496,7 +495,7 @@ ui:
     primary: ["Lock Test", "Start Recording", "Stop Recording", "Unlock Test (pre-recording escape hatch)", "Log Statistics (manual)"]
     primary_button: "Stateful: Lock Test → Start Recording → Stop Recording"
     unlock_button: "Visible only when locked-and-not-recording; confirms via dialog, then sends unlock_test and returns primary to 'Lock Test' so metadata can be re-entered"
-    export_workbook: "Removed from UI; Excel export runs automatically after Stop Recording → Parquet merge → export_excel writes to <run>/data alongside the combined Parquet"
+    export_workbook: "Removed from UI; Excel export runs automatically after Stop Recording → SQLite finalize → export_excel writes to <run>/data alongside the SQLite segment database(s)"
     restore_displays: "Always-enabled button; re-reads selected_displays from plugins.yaml, recreates any closed display windows via _create_display(key) factory, brings already-open ones to front; Messages pane confirms action"
     status_bar: "Connected/Disconnected | Locked/Unlocked | Recording: On/Off — same green/grey colour pattern (green = active, grey = idle)"
     console_actions:

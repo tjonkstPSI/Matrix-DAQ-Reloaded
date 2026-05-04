@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, TYPE_CHECKING
 
-from .storage.parquet_writer import ParquetWriter, ParquetWriterSettings
+from .storage.sqlite_writer import SqliteWriter, SqliteWriterSettings
 from .storage.alarm_events import AlarmEventsSink
 from .storage.stats_snapshots import StatsSnapshotsSink
 
@@ -58,10 +58,10 @@ def begin_recording(orch: Orchestrator) -> None:
         orch._last_run_dir = run_dir
         orch._events_sink = AlarmEventsSink(run_dir)
         orch._stats_sink = StatsSnapshotsSink(run_dir)
-        settings = build_parquet_settings(orch.channel_cfg)
-        orch._parquet = ParquetWriter(run_dir, settings)
+        settings = build_storage_settings(orch.channel_cfg)
+        orch._db_writer = SqliteWriter(run_dir, settings)
         try:
-            orch._parquet.snapshot_configs(orch.configs_dir)
+            orch._db_writer.snapshot_configs(orch.configs_dir)
         except Exception:
             pass
         meta = {
@@ -90,8 +90,8 @@ def end_recording(orch: Orchestrator) -> None:
         return
     try:
         try:
-            if orch._parquet is not None:
-                orch._parquet._flush_chunk(orch._parquet._buf_second_key)  # type: ignore[attr-defined]
+            if orch._db_writer is not None:
+                orch._db_writer.finalize()
         except Exception:
             pass
         try:
@@ -102,46 +102,17 @@ def end_recording(orch: Orchestrator) -> None:
         print("[INFO] Recording stopped and files finalized")
     finally:
         orch._recording = False
-        pw = orch._parquet
-        orch._parquet = None
+        orch._db_writer = None
         orch._events_sink = None
         orch._stats_sink = None
         orch._run_dir = None
-        if pw is not None:
-            run_dir = pw.run_dir
-
-            def _on_progress(pct: float, detail: str) -> None:
-                try:
-                    import json
-                    msg = json.dumps({"type": "merge_progress", "run": str(run_dir), "percent": float(pct), "detail": detail}).encode("utf-8")
-                    orch.bus.publish_status(msg)
-                except Exception:
-                    pass
-
-            def _on_done(ok: bool, error: str | None) -> None:
-                try:
-                    import json
-                    msg = json.dumps({"type": "merge_done", "run": str(run_dir), "ok": bool(ok), "error": error}).encode("utf-8")
-                    orch.bus.publish_status(msg)
-                except Exception:
-                    pass
-                # Auto-kickoff Excel export once the Parquet merge finished cleanly.
-                # Any failure is surfaced via the export_done status message; we do
-                # not block the orchestrator or bubble exceptions back to merge.
-                if ok:
-                    try:
-                        kickoff_export(orch)
-                    except Exception as ex:
-                        try:
-                            print(f"[WARN] Auto Excel export failed to start: {ex}")
-                        except Exception:
-                            pass
-
+        try:
+            kickoff_export(orch)
+        except Exception as ex:
             try:
-                pw.merge_async(_on_progress, _on_done)
-                print("[INFO] Started parquet merge in background")
-            except Exception as e:
-                print(f"[WARN] Failed to start background merge: {e}")
+                print(f"[WARN] Auto Excel export failed to start: {ex}")
+            except Exception:
+                pass
 
 
 def kickoff_export(orch: Orchestrator) -> None:
@@ -218,10 +189,10 @@ def kickoff_export(orch: Orchestrator) -> None:
             pass
 
 
-def build_parquet_settings(channel_cfg: Dict[str, Any]) -> ParquetWriterSettings:
+def build_storage_settings(channel_cfg: Dict[str, Any]) -> SqliteWriterSettings:
     cfg = channel_cfg or {}
     storage_cfg = cfg.get("storage", {}) or {}
-    defaults = ParquetWriterSettings()
+    defaults = SqliteWriterSettings()
 
     def _get_float(key: str, default: float) -> float:
         try:
@@ -230,17 +201,8 @@ def build_parquet_settings(channel_cfg: Dict[str, Any]) -> ParquetWriterSettings
         except Exception:
             return default
 
-    def _get_bool(key: str, default: bool) -> bool:
-        try:
-            v = storage_cfg.get(key)
-            return bool(v) if v is not None else default
-        except Exception:
-            return default
-
-    return ParquetWriterSettings(
-        chunk_duration_s=_get_float("chunk_duration_s", defaults.chunk_duration_s),
+    return SqliteWriterSettings(
+        commit_interval_s=_get_float("commit_interval_s", defaults.commit_interval_s),
         segment_time_limit_s=_get_float("segment_time_limit_s", defaults.segment_time_limit_s),
         segment_size_limit_mb=_get_float("segment_size_limit_mb", defaults.segment_size_limit_mb),
-        coalesce_on_finalize=_get_bool("coalesce_on_finalize", defaults.coalesce_on_finalize),
-        keep_chunk_files=_get_bool("keep_chunk_files", defaults.keep_chunk_files),
     )

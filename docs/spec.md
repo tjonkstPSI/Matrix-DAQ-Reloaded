@@ -6,7 +6,7 @@ This document summarizes functional and non-functional requirements for the Engi
 
 ### Scope
 - Record and visualize engine test data from NI cDAQ, CAN/CCP, and Modbus devices
-- Store data in Parquet with YAML metadata; support Excel export
+- Store data in SQLite segment database(s) with YAML metadata; support Excel export
 - Plugin-based configuration; per-run config snapshots for reproducibility
 // Channel discovery & aliasing
 - Discover all cDAQ channels; operator selects via checkboxes
@@ -19,7 +19,7 @@ This document summarizes functional and non-functional requirements for the Engi
 - Segmentation by time (default 4 h, configurable) or size; suffix “_1, _2, …” only when segmented
 - Default size-based segment limit: 100 MB (user-configurable)
 - Excel export with multi-file split “.1, .2, …” if row limit exceeded; includes relative and absolute time columns
-- Crash-safe writes with < 1 s worst-case data loss; recovery on restart
+- Crash-safe writes with configurable commit interval; recovery on restart
 - NI cDAQ watchdog: driver-mode on supported network cDAQ (arm/refresh device watchdog), with digital-loopback fallback; mark plugin red on expiration/misses
 - Start blocked until all selected plugins are green
 - Disk free-space warning at < 5 GB (warn only)
@@ -35,7 +35,7 @@ This document summarizes functional and non-functional requirements for the Engi
 - Calculated Channels: restricted Python expressions at R, rolling helpers, boolean latching, dependency ordering, NaN guards
 - Channel Manager: select recording rate R and configure per-channel alarms (warning/shutdown) with latching and bulk edits; optional summary outputs
 - Vaisala: specialized Modbus with model maps, IP config, connection test, polling at ≤ R with calibration offsets
-- UI: separate process with Console (plugin tiles) and two Display windows (Table/Plots/Gauges), alarm UX, controls panel; IPC topics defined
+- UI: separate process with Console (plugin tiles) and Display windows; supervised launcher starts the core subprocess, waits for `core_ready`, and shuts the core down when the UI exits.
 - Lifecycle: configure → validate → arm → start → stop → teardown → status
 - Per-plugin YAML configs; INI import/export optional (compat)
 

@@ -87,15 +87,12 @@ class ChannelManagerConfigDialog(QDialog):
         self.cmb_rate.addItems(["1", "5", "10", "20", "50", "100"])
         self.txt_seg_time = QLineEdit(self)
         self.txt_seg_size = QLineEdit(self)
-        self.cmb_coalesce = QComboBox(self)
-        self.cmb_coalesce.addItems(["True", "False"])
-        self.cmb_keep_chunks = QComboBox(self)
-        self.cmb_keep_chunks.addItems(["False", "True"])
+        self.txt_commit_interval = QLineEdit(self)
+        self.txt_commit_interval.setToolTip("How often (seconds) buffered data is committed to disk. Lower = less data lost on crash, higher = less disk I/O.")
         form.addRow("Sample rate (Hz)", self.cmb_rate)
         form.addRow("Log size by time (s)", self.txt_seg_time)
         form.addRow("Log size by file size (MB)", self.txt_seg_size)
-        form.addRow("Coalesce on finalize", self.cmb_coalesce)
-        form.addRow("Keep chunk files", self.cmb_keep_chunks)
+        form.addRow("Commit interval (s)", self.txt_commit_interval)
         root.addWidget(top)
 
         # Engine-running controls.
@@ -155,8 +152,7 @@ class ChannelManagerConfigDialog(QDialog):
         storage = doc.get("storage") or {}
         self.txt_seg_time.setText(str(storage.get("segment_time_limit_s", 14400)))
         self.txt_seg_size.setText(str(storage.get("segment_size_limit_mb", 100)))
-        self.cmb_coalesce.setCurrentText("True" if bool(storage.get("coalesce_on_finalize", True)) else "False")
-        self.cmb_keep_chunks.setCurrentText("True" if bool(storage.get("keep_chunk_files", False)) else "False")
+        self.txt_commit_interval.setText(str(storage.get("commit_interval_s", 2)))
         er = doc.get("engine_running") or {}
         self.txt_engine_rpm_threshold.setText(str(er.get("rpm_threshold", 0)))
         src_alias = str(er.get("source_alias", "")).strip()
@@ -414,11 +410,9 @@ class ChannelManagerConfigDialog(QDialog):
         doc["enabled"] = bool(doc.get("enabled", True))
         doc["recording_rate_hz"] = float(self.cmb_rate.currentText().strip())
         doc["storage"] = {
-            "chunk_duration_s": float((doc.get("storage") or {}).get("chunk_duration_s", 1)),
+            "commit_interval_s": float(self.txt_commit_interval.text().strip() or "2"),
             "segment_time_limit_s": float(self.txt_seg_time.text().strip() or "14400"),
             "segment_size_limit_mb": float(self.txt_seg_size.text().strip() or "100"),
-            "coalesce_on_finalize": self.cmb_coalesce.currentText() == "True",
-            "keep_chunk_files": self.cmb_keep_chunks.currentText() == "True",
         }
         doc["engine_running"] = {
             "source_alias": self.cmb_engine_alias.currentText().strip(),
@@ -497,12 +491,16 @@ class ChannelManagerConfigDialog(QDialog):
         except Exception:
             return "Sample rate must be numeric."
         try:
-            seg_t = float((doc.get("storage") or {}).get("segment_time_limit_s", 0))
-            seg_mb = float((doc.get("storage") or {}).get("segment_size_limit_mb", 0))
+            stor = doc.get("storage") or {}
+            seg_t = float(stor.get("segment_time_limit_s", 0))
+            seg_mb = float(stor.get("segment_size_limit_mb", 0))
+            commit_s = float(stor.get("commit_interval_s", 2))
             if seg_t <= 0.0:
                 return "Log time limit must be > 0."
             if seg_mb <= 0.0:
                 return "Log size limit must be > 0."
+            if commit_s < 0.1:
+                return "Commit interval must be >= 0.1 s."
         except Exception:
             return "Invalid storage settings."
         aliases = [str(c.get("alias")) for c in (doc.get("channels") or []) if isinstance(c, dict) and c.get("alias")]

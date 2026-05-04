@@ -12,7 +12,7 @@ Configure core logging cadence and segmentation settings, and manage two-tier pe
     - sample rate (Hz),
     - segment time limit (s),
     - segment size limit (MB),
-    - coalesce/keep chunk options.
+    - SQLite commit interval (s).
   - Alarm table for active runtime channel aliases.
   - Two-tier alarm setup:
   - warning tier and alarm tier,
@@ -65,11 +65,9 @@ File: `configs/channel_manager.yaml`
 enabled: true
 recording_rate_hz: 10
 storage:
-  chunk_duration_s: 1
+  commit_interval_s: 2
   segment_time_limit_s: 3600
   segment_size_limit_mb: 100
-  coalesce_on_finalize: true
-  keep_chunk_files: false
 engine_running:
   source_alias: cSP_Eng
   rpm_threshold: 0
@@ -100,6 +98,7 @@ channels:
 - `recording_rate_hz > 0`
 - `storage.segment_time_limit_s > 0`
 - `storage.segment_size_limit_mb > 0`
+- `storage.commit_interval_s >= 0.1`
 - Channel aliases in table must be unique.
 - Alarm thresholds are optional; blank disables that threshold.
 

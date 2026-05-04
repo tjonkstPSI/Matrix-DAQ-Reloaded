@@ -6,6 +6,23 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased] - 03/09/2026
 
+### SQLite recording backend, launcher supervision, and splash refresh — 05/04/2026
+#### Added
+- **SQLite WAL recording backend**: new `SqliteWriter` writes run data to append-safe `seg_*.db` files with configurable commit interval and existing time/size segmentation rules. This removes the long post-stop Parquet combine step for current runs.
+- **SQLite-to-Excel export path**: `export_excel.py` now discovers SQLite segment databases, streams rows in chunks, reads units metadata from SQLite, and writes one workbook per segment when segmentation occurs. Legacy Parquet reading remains available for old runs.
+- **Supervised UI launcher**: `src/ui/app.py` now launches the core process after the launch dialog, waits for a `core_ready` IPC handshake, then opens the console and displays while preserving the separate core/UI process model.
+- **Graceful launcher shutdown**: closing the UI sends a core `shutdown` control message, waits for plugin cleanup, and falls back to process terminate/kill only if the core does not exit.
+- **Custom splash image support**: the startup splash now uses `assets/splash.png` when present, overlays the discovered app version, and scales to a typical splash size.
+#### Changed
+- **Channel Manager storage settings**: replaced Parquet coalesce/keep-chunks controls with a SQLite commit interval setting.
+- **Recording stop flow**: stop now finalizes the SQLite writer and starts background Excel export directly; merge progress UI was removed because the merge stage no longer exists for SQLite runs.
+- **Plugin startup semantics**: plugin validation/startup failures no longer mutate `_plugin_enabled`; selected/config-enabled plugins still participate in source-map grouping and UI status. Modbus keeps its local validation-failure behavior without changing global enablement state.
+#### Fixed
+- **Launcher readiness**: the launcher actively requests `core_ready`, and the core republishes readiness until the UI acknowledges it. This prevents the UI from stalling when an initial readiness message is missed.
+- **Qt shutdown behavior**: the UI no longer quits when the launch dialog closes; `setQuitOnLastWindowClosed` is enabled only after the console is shown.
+- **Developer Ctrl+C handling**: the launcher installs a SIGINT handler and timer so Ctrl+C quits the Qt app during PowerShell development runs.
+- **Console close cleanup**: closing the console now stops UI timers, closes the ZMQ subscriber, and closes child display/load-bank windows.
+
 ### CCP SHORT_UP throughput optimization — 05/01/2026
 #### Added
 - **Parallel worker threads**: one daemon thread per device context for concurrent SHORT_UP polling. Config key `use_parallel_workers: true` (default). Per-device values written to thread-local dicts and merged into global snapshot under `_state_lock` each iteration. Clean shutdown joins all threads within 2 seconds.

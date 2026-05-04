@@ -3,7 +3,7 @@
 ## Statistics Plugin Specification
 
 ### Purpose
-Compute snapshot statistics on demand (manual button) or automatically on a trigger edge. Metrics include mean, stdev, min, max, and peak-to-peak (p2p). A snapshot operates over a configurable window (seconds or samples) and emits one row per fire. Export to storage (Parquet + YAML, optional Excel) will mirror primary data once the recording pipeline is in place.
+Compute snapshot statistics on demand (manual button) or automatically on a trigger edge. Metrics include mean, stdev, min, max, and peak-to-peak (p2p). A snapshot operates over a configurable window (seconds or samples) and emits one row per fire. Statistics snapshots are captured as JSONL during recording and included in the automatic Excel export.
 
 ### Inputs
 - Source channels: any enabled channels from NI DAQ, CAN/CCP, Modbus, etc.
@@ -15,7 +15,7 @@ Compute snapshot statistics on demand (manual button) or automatically on a trig
 - Manual logging: UI provides a "Log Statistics" button that emits one line for the selected stats using the current window content
 
 ### Outputs
-- File naming: `<base>_Statistics[ _segNN ].parquet` (+ sidecar YAML). When primary data coalesces on stop, statistics remain in JSONL (`stats_snapshots.jsonl`) and are included as a sheet in Excel export.
+- File naming: statistics snapshots remain in JSONL (`stats_snapshots.jsonl`) and are included as a `StatsSnapshots` sheet in Excel export.
 - Columns (wide by default):
   - Time_Relative_s, Time_Absolute_iso8601
   - For each selected channel and metric, a column named `<alias>_<metric>` (e.g., `Oil Pressure_mean`)

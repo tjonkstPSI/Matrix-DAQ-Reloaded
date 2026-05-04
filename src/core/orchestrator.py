@@ -23,10 +23,10 @@ from ..plugins.statistics import StatisticsPlugin
 from .storage.stats_snapshots import StatsSnapshotsSink
 from ..plugins.vaisala import VaisalaPlugin
 from ..plugins.omega import OmegaPlugin
-from .storage.parquet_writer import ParquetWriter, ParquetWriterSettings
+from .storage.sqlite_writer import SqliteWriter, SqliteWriterSettings
 from ..plugins.channel_manager import ChannelManagerPlugin
 from ..plugins.engine_test import EngineTestPlugin
-from .recording import begin_recording, end_recording, kickoff_export, build_parquet_settings
+from .recording import begin_recording, end_recording, kickoff_export, build_storage_settings
 import json
 
 
@@ -76,7 +76,7 @@ class Orchestrator:
         self._alarm_tick_logged: bool = False
         self._events_sink: AlarmEventsSink | None = None
         self._stats_sink: StatsSnapshotsSink | None = None
-        self._parquet: ParquetWriter | None = None
+        self._db_writer: SqliteWriter | None = None
         self._run_dir: Path | None = None
         self._last_run_dir: Path | None = None
         self._recording: bool = False
@@ -86,6 +86,9 @@ class Orchestrator:
         self._global_sim_mode: bool = False
         self._source_map: Dict[str, str] = {}
         self._source_map_dirty: bool = True
+        self._ready_acknowledged: bool = False
+        self._last_ready_publish_mono: float = 0.0
+        self._ready_request_logged: bool = False
 
     def start(self) -> None:
         # Placeholder: load configs, initialize IPC bus, register simulated plugins
@@ -191,6 +194,7 @@ class Orchestrator:
             raise
         self.bus.start()
         self._running = True
+        self._publish_core_ready(force=True)
         print("[INFO] Core started; recording is idle. Use Start Recording from UI to begin.")
 
     def _build_source_map(self) -> Dict[str, str]:
@@ -240,18 +244,12 @@ class Orchestrator:
         # Initialize plugins; Modbus is optional (can be disabled)
         modbus = self.plugins.get("Modbus") if self._plugin_enabled.get("Modbus", True) else None
         if modbus is not None:
-            try:
-                modbus.configure()
-                status = modbus.validate()
-                if not status.ok:
-                    print(f"[ERROR] Modbus validate failed in run(): {status.message}")
-                    modbus = None
-                else:
-                    modbus.arm()
-                    modbus.start()
-            except Exception as e:
-                print(f"[WARN] Modbus initialization failed: {e}")
-                modbus = None
+            modbus = self._start_plugin_runtime(
+                "Modbus",
+                modbus,
+                arm=True,
+                continue_on_validate_error=False,
+            )
         try:
             # Generate ticks per run_mode, publish telemetry merging plugins
             import time, json
@@ -269,24 +267,17 @@ class Orchestrator:
                     engine_test.configure()
                 except Exception:
                     pass
-            if can:
-                can.configure(); can.validate(); can.start()
-            if ccp:
-                ccp.configure(); ccp.validate(); ccp.start()
-            if lb:
-                lb.configure(); lb.validate(); lb.start()
-            if stats:
-                stats.configure(); stats.validate(); stats.start()
-            if vaisala:
-                vaisala.configure(); vaisala.validate(); vaisala.start()
+            can = self._start_plugin_runtime("CAN", can) if can else None
+            ccp = self._start_plugin_runtime("CCP", ccp) if ccp else None
+            lb = self._start_plugin_runtime("LoadBank", lb) if lb else None
+            stats = self._start_plugin_runtime("Statistics", stats) if stats else None
+            vaisala = self._start_plugin_runtime("Vaisala", vaisala) if vaisala else None
             if nidaq:
                 nidaq._core_tick_rate_hz = self.settings.recording_rate_hz
-                nidaq.configure(); nidaq.validate(); nidaq.start()
-            if cycle:
-                cycle.configure(); cycle.validate(); cycle.start()
+                nidaq = self._start_plugin_runtime("NI_DAQ", nidaq)
+            cycle = self._start_plugin_runtime("Cycle", cycle) if cycle else None
             calc = self.plugins.get("Calculated_Channels") if self._plugin_enabled.get("Calculated_Channels", True) else None
-            if calc:
-                calc.configure(); calc.validate(); calc.start()
+            calc = self._start_plugin_runtime("Calculated_Channels", calc) if calc else None
             run_mode = str(self.core_cfg.get("run_mode", "demo")).lower()
             demo_ticks = int(self.core_cfg.get("demo_ticks", 50))
             interval = float(self.core_cfg.get("tick_interval_s", 0.1))
@@ -324,10 +315,12 @@ class Orchestrator:
                     print(f"[CORE]   {g}: {len(aliases)} channels")
             else:
                 print("[CORE] source_map is EMPTY — channels will fall to 'Other'")
+            self._publish_core_ready(force=True)
             if run_mode == "demo":
                 for _ in range(demo_ticks):
                     if not self._running:
                         break
+                    self._publish_core_ready()
                     interval = max(0.001, float(self._tick_interval_s))
                     tick_start_mono = time.monotonic()
                     tick_dt_s = interval if last_tick_start_mono is None else max(0.0, tick_start_mono - last_tick_start_mono)
@@ -428,7 +421,13 @@ class Orchestrator:
                                 print(f"[CTRL] Received: {ctrl_msg}")
                             except Exception:
                                 pass
-                            if ctrl_msg.get("type") == "stats_snapshot" and stats:
+                            if ctrl_msg.get("type") == "shutdown":
+                                self.request_stop()
+                            elif ctrl_msg.get("type") == "core_ready_request":
+                                self._publish_core_ready(force=True, reason="request")
+                            elif ctrl_msg.get("type") == "ui_ready_ack":
+                                self._ready_acknowledged = True
+                            elif ctrl_msg.get("type") == "stats_snapshot" and stats:
                                 getattr(stats, "request_manual_snapshot")(now_ts)
                             elif ctrl_msg.get("type") == "lock_test":
                                 self._engine_test_lock()
@@ -522,10 +521,9 @@ class Orchestrator:
                     except Exception:
                         pass
                     self.bus.publish_telemetry(payload)
-                    # Append to Parquet data stream when recording
                     try:
-                        if self._recording and self._parquet is not None:
-                            self._parquet.append(now_ts, pub_vals, pub_units)
+                        if self._recording and self._db_writer is not None:
+                            self._db_writer.append(now_ts, pub_vals, pub_units)
                     except Exception:
                         pass
                     sleep_s = max(0.0, next_tick_deadline - time.monotonic())
@@ -539,6 +537,7 @@ class Orchestrator:
                     i += 1
             else:
                 while self._running:
+                    self._publish_core_ready()
                     interval = max(0.001, float(self._tick_interval_s))
                     tick_start_mono = time.monotonic()
                     tick_dt_s = interval if last_tick_start_mono is None else max(0.0, tick_start_mono - last_tick_start_mono)
@@ -638,7 +637,13 @@ class Orchestrator:
                                 print(f"[CTRL] Received: {ctrl_msg}")
                             except Exception:
                                 pass
-                            if ctrl_msg.get("type") == "stats_snapshot" and stats:
+                            if ctrl_msg.get("type") == "shutdown":
+                                self.request_stop()
+                            elif ctrl_msg.get("type") == "core_ready_request":
+                                self._publish_core_ready(force=True, reason="request")
+                            elif ctrl_msg.get("type") == "ui_ready_ack":
+                                self._ready_acknowledged = True
+                            elif ctrl_msg.get("type") == "stats_snapshot" and stats:
                                 getattr(stats, "request_manual_snapshot")(now_ts)
                             elif ctrl_msg.get("type") == "lock_test":
                                 self._engine_test_lock()
@@ -724,10 +729,9 @@ class Orchestrator:
                         "source_map": self._source_map,
                     }).encode("utf-8")
                     self.bus.publish_telemetry(payload)
-                    # Append to Parquet data stream when recording
                     try:
-                        if self._recording and self._parquet is not None:
-                            self._parquet.append(now_ts, pub_vals, pub_units)
+                        if self._recording and self._db_writer is not None:
+                            self._db_writer.append(now_ts, pub_vals, pub_units)
                     except Exception:
                         pass
                     sleep_s = max(0.0, next_tick_deadline - time.monotonic())
@@ -740,18 +744,7 @@ class Orchestrator:
                         next_tick_deadline += interval
                     i += 1
         finally:
-            # Stop plugins and bus gracefully
-            try:
-                modbus.stop()
-            except Exception:
-                pass
-            for pid in ("CAN", "CCP", "LoadBank", "NI_DAQ", "Vaisala", "Omega", "Statistics", "Calculated_Channels", "Modbus", "Cycle", "EngineTest"):
-                try:
-                    p = self.plugins.get(pid)
-                    if p and self._plugin_enabled.get(pid, True):
-                        p.stop()
-                except Exception:
-                    pass
+            self._shutdown_plugins()
             self.bus.stop()
             # Finalize events sink (JSONL only for now)
             try:
@@ -759,10 +752,9 @@ class Orchestrator:
                     self._events_sink.finalize()
             except Exception:
                 pass
-            # Finalize Parquet writer
             try:
-                if self._parquet is not None:
-                    self._parquet.finalize()
+                if self._db_writer is not None:
+                    self._db_writer.finalize()
             except Exception:
                 pass
 
@@ -1249,6 +1241,91 @@ class Orchestrator:
             except Exception:
                 pass
 
+    def _publish_core_ready(self, force: bool = False, reason: str = "") -> None:
+        if self._ready_acknowledged:
+            return
+        try:
+            import json as _json
+            import time as _time
+            now_mono = _time.monotonic()
+            if not force and (now_mono - self._last_ready_publish_mono) < 0.5:
+                return
+            payload = _json.dumps({
+                "type": "core_ready",
+                "plugins": sorted(list(self.plugins.keys())),
+                "plugin_enabled": dict(self._plugin_enabled),
+            }).encode("utf-8")
+            self.bus.publish_status(payload)
+            self._last_ready_publish_mono = now_mono
+            if reason == "request" and not self._ready_request_logged:
+                print("[INFO] Published core_ready in response to launcher request.")
+                self._ready_request_logged = True
+        except Exception:
+            pass
+
+    def _start_plugin_runtime(
+        self,
+        pid: str,
+        plugin,
+        arm: bool = False,
+        continue_on_validate_error: bool = True,
+    ):
+        if plugin is None:
+            return None
+        try:
+            plugin.configure()
+            status = plugin.validate()
+            if not getattr(status, "ok", True):
+                msg = getattr(status, "message", "")
+                print(f"[WARN] Plugin '{pid}' is not ready: {msg}")
+                if not continue_on_validate_error:
+                    return None
+            if arm:
+                plugin.arm()
+            plugin.start()
+            return plugin
+        except Exception as e:
+            print(f"[WARN] Plugin '{pid}' startup failed: {e}")
+            return None
+
+    def _shutdown_plugins(self) -> None:
+        ordered = (
+            "Cycle",
+            "EngineTest",
+            "Statistics",
+            "Calculated_Channels",
+            "NI_DAQ",
+            "CCP",
+            "CAN",
+            "LoadBank",
+            "Modbus",
+            "Vaisala",
+            "Omega",
+            "Channel_Manager",
+        )
+        seen = set()
+        for pid in list(ordered) + [p for p in self.plugins.keys() if p not in ordered]:
+            if pid in seen:
+                continue
+            seen.add(pid)
+            plugin = self.plugins.get(pid)
+            if plugin is None or not self._plugin_enabled.get(pid, True):
+                continue
+            try:
+                plugin.stop()
+            except Exception as e:
+                try:
+                    print(f"[WARN] Plugin stop failed for {pid}: {e}")
+                except Exception:
+                    pass
+            try:
+                plugin.teardown()
+            except Exception as e:
+                try:
+                    print(f"[WARN] Plugin teardown failed for {pid}: {e}")
+                except Exception:
+                    pass
+
     def request_stop(self) -> None:
         self._running = False
 
@@ -1377,7 +1454,7 @@ class Orchestrator:
                 pass
         end_recording(self)
 
-    def _build_parquet_settings_from_channel_cfg(self) -> ParquetWriterSettings:
-        return build_parquet_settings(self.channel_cfg)
+    def _build_storage_settings_from_channel_cfg(self) -> SqliteWriterSettings:
+        return build_storage_settings(self.channel_cfg)
 
 

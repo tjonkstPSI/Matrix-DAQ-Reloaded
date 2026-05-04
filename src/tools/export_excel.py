@@ -5,9 +5,10 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import sqlite3
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Iterator, List, Optional, Tuple
 
 
 EXCEL_MAX_ROWS: int = 1_048_576
@@ -42,19 +43,101 @@ def load_run_metadata(run_dir: Path) -> Dict[str, object]:
     return data
 
 
+def list_sqlite_files(data_dir: Path) -> List[Path]:
+    """Discover SQLite segment databases produced by SqliteWriter."""
+    files: List[Path] = sorted(data_dir.glob("seg_*.db"))
+    return files
+
+
 def list_parquet_files(data_dir: Path) -> List[Path]:
+    """Legacy: discover Parquet files from old-format runs."""
     files: List[Path] = []
     files.extend(sorted(data_dir.glob("data.parquet")))
     files.extend(sorted(data_dir.glob("data_*.parquet")))
     if files:
         return files
-    # Fallback to any remaining chunk files under seg_*
     for seg in sorted(data_dir.glob("seg_*")):
-        files.extend(sorted(seg.glob("*.parquet")))
+        if seg.is_dir():
+            files.extend(sorted(seg.glob("*.parquet")))
     return files
 
 
-def get_columns_for_file(path: Path) -> List[str]:
+def list_data_files(data_dir: Path) -> List[Path]:
+    """Return SQLite files if present, otherwise fall back to Parquet."""
+    files = list_sqlite_files(data_dir)
+    if files:
+        return files
+    return list_parquet_files(data_dir)
+
+
+def _is_sqlite(path: Path) -> bool:
+    return path.suffix.lower() == ".db"
+
+
+# ------------------------------------------------------------------
+# SQLite readers
+# ------------------------------------------------------------------
+
+def get_columns_for_sqlite(path: Path) -> List[str]:
+    base = ["Time_Relative_s", "Time_Absolute_iso8601"]
+    others: List[str] = []
+    try:
+        conn = sqlite3.connect(str(path))
+        try:
+            for row in conn.execute("PRAGMA table_info(data)"):
+                name = str(row[1])
+                if name in base:
+                    continue
+                if name not in others:
+                    others.append(name)
+        finally:
+            conn.close()
+    except Exception:
+        pass
+    return list(base) + sorted(others)
+
+
+def iter_sqlite_dataframes(
+    path: Path, columns: List[str], chunk_size: int = 50_000
+) -> Iterator:
+    """Yield pandas DataFrames in chunks from a SQLite segment database."""
+    try:
+        import pandas as pd  # type: ignore
+    except Exception as e:
+        raise RuntimeError(f"pandas required to export SQLite: {e}")
+    col_expr = ", ".join(f'"{c}"' for c in columns)
+    conn = sqlite3.connect(str(path))
+    try:
+        for chunk_df in pd.read_sql(
+            f"SELECT {col_expr} FROM data", conn, chunksize=chunk_size
+        ):
+            yield chunk_df
+    finally:
+        conn.close()
+
+
+def read_units_metadata_sqlite(path: Path) -> Dict[str, str]:
+    try:
+        conn = sqlite3.connect(str(path))
+        try:
+            cur = conn.execute(
+                "SELECT value FROM _metadata WHERE key = ?", ("units_json",)
+            )
+            row = cur.fetchone()
+            if row:
+                return json.loads(row[0])
+        finally:
+            conn.close()
+    except Exception:
+        pass
+    return {}
+
+
+# ------------------------------------------------------------------
+# Parquet readers (kept for backward compatibility with old runs)
+# ------------------------------------------------------------------
+
+def get_columns_for_parquet(path: Path) -> List[str]:
     base = ["Time_Relative_s", "Time_Absolute_iso8601"]
     others: List[str] = []
     try:
@@ -79,10 +162,8 @@ def get_columns_for_file(path: Path) -> List[str]:
     return list(base) + sorted(others)
 
 
-def iter_rowgroup_dataframes(path: Path, columns: List[str]):
-    """Yield pandas DataFrames per row group, aligned to the given columns order.
-    Missing columns are filled with NaN; extra columns are dropped.
-    """
+def iter_parquet_dataframes(path: Path, columns: List[str]):
+    """Yield pandas DataFrames per row group from a Parquet file."""
     try:
         import pyarrow as pa  # type: ignore
         import pyarrow.parquet as pq  # type: ignore
@@ -94,15 +175,11 @@ def iter_rowgroup_dataframes(path: Path, columns: List[str]):
         try:
             tbl = pf.read_row_group(rg_index)
         except Exception:
-            # fallback: read entire file once (could be heavy)
             tbl = pf.read()
-        # Normalize columns
-        # Drop unexpected columns
         keep = [c for c in columns if c in set(tbl.column_names)]
         drop = [c for c in tbl.column_names if c not in keep]
         if drop:
             tbl = tbl.drop(drop)
-        # Add missing columns as nulls
         missing = [c for c in columns if c not in set(tbl.column_names)]
         if missing:
             arrays = []
@@ -110,10 +187,26 @@ def iter_rowgroup_dataframes(path: Path, columns: List[str]):
                 arrays.append(pa.nulls(len(tbl)))
             add = pa.table({missing[i]: arrays[i] for i in range(len(missing))})
             tbl = pa.concat_tables([tbl, add], promote=True)
-        # Reorder
         tbl = tbl.select(columns)
         df = tbl.to_pandas(types_mapper=None)
         yield df
+
+
+# ------------------------------------------------------------------
+# Unified dispatch helpers
+# ------------------------------------------------------------------
+
+def get_columns_for_file(path: Path) -> List[str]:
+    if _is_sqlite(path):
+        return get_columns_for_sqlite(path)
+    return get_columns_for_parquet(path)
+
+
+def iter_dataframes(path: Path, columns: List[str]):
+    if _is_sqlite(path):
+        yield from iter_sqlite_dataframes(path, columns)
+    else:
+        yield from iter_parquet_dataframes(path, columns)
 
 
 def write_metadata_sheet(writer, run_meta: Dict[str, object], data_files: List[Path], total_rows: int, units_sample: Dict[str, str]) -> None:
@@ -195,28 +288,25 @@ def _autosize_and_format_numeric(writer, sheet_name: str, df_columns: List[str],
 
 def load_units_merged(files: List[Path]) -> Dict[str, str]:
     merged: Dict[str, str] = {}
-    try:
-        import pyarrow.parquet as pq  # type: ignore
-        for f in files:
-            try:
-                tbl = pq.read_table(f)
-                md = tbl.schema.metadata or {}
-                raw = md.get(b"units_json")
-                if not raw:
-                    continue
-                m = json.loads(raw.decode("utf-8"))
-                if isinstance(m, dict):
-                    for k, v in m.items():
-                        if k not in merged:
-                            merged[k] = v
-            except Exception:
-                continue
-    except Exception:
-        pass
+    for f in files:
+        try:
+            m = read_units_metadata(f)
+            if isinstance(m, dict):
+                for k, v in m.items():
+                    if k not in merged:
+                        merged[k] = v
+        except Exception:
+            continue
     return merged
 
 
-def read_units_metadata(parquet_path: Path) -> Dict[str, str]:
+def read_units_metadata(path: Path) -> Dict[str, str]:
+    if _is_sqlite(path):
+        return read_units_metadata_sqlite(path)
+    return _read_units_metadata_parquet(path)
+
+
+def _read_units_metadata_parquet(parquet_path: Path) -> Dict[str, str]:
     try:
         import pyarrow.parquet as pq  # type: ignore
         table = pq.read_table(parquet_path)
@@ -257,37 +347,37 @@ def export_excel(
     if not data_dir.exists():
         raise FileNotFoundError(f"Data folder missing: {data_dir}")
 
-    files = list_parquet_files(data_dir)
+    files = list_data_files(data_dir)
     if not files:
-        raise FileNotFoundError(f"No Parquet files found under {data_dir}")
+        raise FileNotFoundError(f"No data files found under {data_dir}")
 
     run_meta = load_run_metadata(run_dir)
-    # Default destination is the data folder so the workbook lives beside the
-    # combined Parquet (Data_<run>.xlsx next to Data_<run>.parquet).
     target_dir = Path(output_dir).resolve() if output_dir is not None else (run_dir / "data").resolve()
     target_dir.mkdir(parents=True, exist_ok=True)
 
     created: List[Path] = []
 
-    # One workbook per Parquet file; split a single file into .1, .2 if it exceeds row limit
-    for f in files:
+    multi_seg = len(files) > 1
+    all_units = load_units_merged(files)
+
+    for file_idx, f in enumerate(files, start=1):
         cols = get_columns_for_file(f)
-        units = read_units_metadata(f)
+        units = read_units_metadata(f) or all_units
         total_rows = 0
         part_idx = 1
         remaining = max(1, int(rows_per_file))
         frames: List["pd.DataFrame"] = []
 
         def flush_one(part: int, frames_list: List["pd.DataFrame"]) -> None:
-            # Build Excel base name: Data_<run_folder_name> to match Parquet coalesced stem
             out_stem = f"Data_{run_dir.name}"
+            if multi_seg:
+                out_stem = f"{out_stem}_seg{file_idx}"
             out_name = f"{out_stem}.xlsx" if part == 1 and total_rows <= rows_per_file else f"{out_stem}.{part}.xlsx"
             out_path = target_dir / out_name
             with pd.ExcelWriter(out_path, engine=engine) as writer:
                 if frames_list:
                     df = pd.concat(frames_list, ignore_index=True)
                     df.to_excel(writer, sheet_name="Data", index=False)
-                    # Autosize and apply numeric formats (2 decimals) on Data sheet
                     try:
                         _autosize_and_format_numeric(writer, "Data", list(df.columns), engine)
                     except Exception:
@@ -299,10 +389,9 @@ def export_excel(
                         ae_df.to_excel(writer, sheet_name="AlarmEvents", index=False)
                     except Exception:
                         pass
-                pass
             created.append(out_path)
 
-        for df in iter_rowgroup_dataframes(f, cols):
+        for df in iter_dataframes(f, cols):
             if df.empty:
                 continue
             df_len = int(len(df))

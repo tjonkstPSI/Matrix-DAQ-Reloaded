@@ -95,14 +95,14 @@ Deliver a Windows desktop app that streams, visualizes, and records engine test 
 - Validates required metadata, exposes diagnostic channels
 
 #### Storage and Export
-- Parquet writer: 1 s chunked append, time/size segmentation, coalesce on finalize, units metadata, config snapshotting
-- Excel export tool: Metadata, Data, AlarmEvents, StatsSnapshots tabs; split policy; autosize and 2-decimal display
-- Parquet inspection tool (`src/tools/inspect_parquet.py`)
+- SQLite WAL writer: configurable commit interval, time/size segmentation, units metadata, config snapshotting
+- Excel export tool: SQLite primary path plus legacy Parquet fallback; Metadata, Data, AlarmEvents, StatsSnapshots tabs; split policy; autosize and 2-decimal display
+- Parquet inspection tool (`src/tools/inspect_parquet.py`) remains for old-format runs
 
 #### UI
 - Console window with plugin tiles, status indicators, telemetry table
 - Launch configuration dialog (plugin selection, data root, test cell, data mode, import configs)
-- Start/Stop Recording; Lock / Unlock Test workflow; status bar (Connected, Locked/Unlocked, Recording); Parquet merge followed by automatic Excel export into each run's `data/` folder (no manual export button)
+- Start/Stop Recording; Lock / Unlock Test workflow; status bar (Connected, Locked/Unlocked, Recording); SQLite finalize followed by automatic Excel export into each run's `data/` folder (no manual export button)
 - Plugin enable/disable (all except Channel_Manager and EngineTest)
 - Lock dialog for EngineTest metadata
 - Right-click Configure wired for: NI_DAQ, CCP, CAN, Modbus, LoadBank, Calculated_Channels, Channel_Manager, Statistics, Vaisala, Cycle
