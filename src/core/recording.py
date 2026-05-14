@@ -150,14 +150,50 @@ def kickoff_export(orch: Orchestrator) -> None:
         err: str | None = None
         try:
             _publish({"type": "export_progress", "run": str(run_dir), "stage": "started"})
-            import importlib
-            mod = importlib.import_module("src.tools.export_excel")
-            outputs = mod.export_excel(run_dir, output_dir=(run_dir / "data"))
-            ok = True
+            import subprocess
+            import sys
+
+            project_root = orch.configs_dir.parent.resolve()
+            data_dir = (run_dir / "data").resolve()
+            before_xlsx = {p.resolve() for p in data_dir.glob("*.xlsx")} if data_dir.exists() else set()
+            creationflags = int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            cmd = [
+                sys.executable,
+                "-m",
+                "src.tools.export_excel",
+                "--run",
+                str(run_dir),
+                "--output-dir",
+                str(data_dir),
+            ]
+            completed = subprocess.run(
+                cmd,
+                cwd=str(project_root),
+                capture_output=True,
+                text=True,
+                creationflags=creationflags,
+            )
+            stdout = completed.stdout or ""
+            stderr = completed.stderr or ""
+            for line in stdout.splitlines():
+                s = line.strip()
+                if s.startswith("- "):
+                    outputs.append(Path(s[2:].strip()))
+            if not outputs and data_dir.exists():
+                after_xlsx = sorted(data_dir.glob("*.xlsx"))
+                new_xlsx = [p for p in after_xlsx if p.resolve() not in before_xlsx]
+                outputs = new_xlsx or after_xlsx
+            ok = completed.returncode == 0
+            if not ok:
+                detail = (stderr.strip() or stdout.strip())[-2000:]
+                err = detail or f"export process exited with code {completed.returncode}"
             try:
-                print("[INFO] Excel export completed:")
-                for p in outputs:
-                    print(f"  - {p}")
+                if ok:
+                    print("[INFO] Excel export completed:")
+                    for p in outputs:
+                        print(f"  - {p}")
+                else:
+                    print(f"[WARN] Excel export failed: {err}")
             except Exception:
                 pass
         except Exception as e:
@@ -180,7 +216,7 @@ def kickoff_export(orch: Orchestrator) -> None:
         import threading
         t = threading.Thread(target=_worker, daemon=True)
         t.start()
-        print("[INFO] Started Excel export in background")
+        print("[INFO] Started Excel export process in background")
     except Exception as e:
         orch._export_in_progress = False
         try:
