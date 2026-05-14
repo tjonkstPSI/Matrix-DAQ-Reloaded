@@ -70,6 +70,8 @@ class LoadBankControlPanel(QWidget):
         self._sp_max = 2000.0
         self._cycle_schedule: List[Tuple[float, float]] = []
         self._cycle_duration_s: float = 0.0
+        self._cycle_loops_total: int = 1
+        self._cycle_dwell_s: float = 0.0
         self._load_config_meta()
         self._build_ui()
 
@@ -105,6 +107,8 @@ class LoadBankControlPanel(QWidget):
     def _load_cycle_schedule(self) -> None:
         """Read cycle.yaml to get the schedule CSV for the chart widget."""
         import csv as csv_mod
+        self._cycle_schedule = []
+        self._cycle_duration_s = 0.0
         cyc_path = Path(__file__).resolve().parents[3] / "configs" / "cycle.yaml"
         try:
             import yaml  # type: ignore
@@ -115,16 +119,37 @@ class LoadBankControlPanel(QWidget):
         except Exception:
             cyc_cfg = {}
         csv_rel = (cyc_cfg.get("source") or {}).get("csv_path", "")
+        exec_cfg = (cyc_cfg.get("execution") or {}) if isinstance(cyc_cfg.get("execution"), dict) else {}
+        try:
+            self._cycle_loops_total = max(1, int(exec_cfg.get("loops_total", 1)))
+        except Exception:
+            self._cycle_loops_total = 1
+        try:
+            self._cycle_dwell_s = max(0.0, float(exec_cfg.get("inter_loop_dwell_s", 0)))
+        except Exception:
+            self._cycle_dwell_s = 0.0
         if not csv_rel:
             return
+        source_cfg = (cyc_cfg.get("source") or {}) if isinstance(cyc_cfg.get("source"), dict) else {}
+        cols = (source_cfg.get("columns") or {}) if isinstance(source_cfg.get("columns"), dict) else {}
+        col_time = str(cols.get("time", "Time"))
+        col_load = str(cols.get("load", "Load"))
         configs_dir = Path(__file__).resolve().parents[3] / "configs"
         candidates = [Path(csv_rel), (configs_dir / csv_rel).resolve(), (configs_dir.parent / csv_rel).resolve()]
         rows: List[Tuple[float, float]] = []
         for cp in candidates:
             if cp.exists():
                 try:
-                    with cp.open("r", encoding="utf-8") as f:
-                        for row in csv_mod.reader(f):
+                    text = cp.read_text(encoding="utf-8-sig", errors="replace")
+                    reader = csv_mod.DictReader(text.splitlines())
+                    if reader.fieldnames and col_time in reader.fieldnames and col_load in reader.fieldnames:
+                        for row in reader:
+                            try:
+                                rows.append((float(row.get(col_time, "")), float(row.get(col_load, ""))))
+                            except (ValueError, TypeError):
+                                continue
+                    if not rows:
+                        for row in csv_mod.reader(text.splitlines()):
                             if not row or row[0].startswith("#"):
                                 continue
                             rows.append((float(row[0]), float(row[1])))
@@ -133,7 +158,7 @@ class LoadBankControlPanel(QWidget):
                 break
         rows.sort(key=lambda x: x[0])
         self._cycle_schedule = rows
-        self._cycle_duration_s = max((t for t, _ in rows), default=0.0)
+        self._cycle_duration_s = (rows[-1][0] - rows[0][0]) if len(rows) > 1 else max((t for t, _ in rows), default=0.0)
 
     def reload_config(self) -> None:
         """Re-read loadbank.yaml and refresh model labels and setpoint range."""
@@ -141,8 +166,13 @@ class LoadBankControlPanel(QWidget):
         self._lbl_primary.setText(f"Primary: {self._primary_model}")
         self._lbl_secondary.setText(f"Secondary: {self._secondary_model}")
         self._spin_kw.setRange(0.0, max(1.0, self._sp_max))
-        if self._cycle_schedule and self._cycle_duration_s > 0:
-            self._cycle_chart.set_schedule(self._cycle_schedule, self._cycle_duration_s)
+        if self._cycle_chart is not None and self._cycle_schedule and self._cycle_duration_s > 0:
+            self._cycle_chart.set_schedule(
+                self._cycle_schedule,
+                self._cycle_duration_s,
+                loops=self._cycle_loops_total,
+                dwell_s=self._cycle_dwell_s,
+            )
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
@@ -215,14 +245,14 @@ class LoadBankControlPanel(QWidget):
         self._lbl_fan = QLabel("—")
         grid.addWidget(QLabel("Vab"), 0, 0)
         grid.addWidget(self._lbl_vab, 0, 1)
-        grid.addWidget(QLabel("Vbc"), 0, 2)
-        grid.addWidget(self._lbl_vbc, 0, 3)
-        grid.addWidget(QLabel("Vca"), 1, 0)
-        grid.addWidget(self._lbl_vca, 1, 1)
-        grid.addWidget(QLabel("Ia"), 1, 2)
-        grid.addWidget(self._lbl_ia, 1, 3)
-        grid.addWidget(QLabel("Ib"), 2, 0)
-        grid.addWidget(self._lbl_ib, 2, 1)
+        grid.addWidget(QLabel("Ia"), 0, 2)
+        grid.addWidget(self._lbl_ia, 0, 3)
+        grid.addWidget(QLabel("Vbc"), 1, 0)
+        grid.addWidget(self._lbl_vbc, 1, 1)
+        grid.addWidget(QLabel("Ib"), 1, 2)
+        grid.addWidget(self._lbl_ib, 1, 3)
+        grid.addWidget(QLabel("Vca"), 2, 0)
+        grid.addWidget(self._lbl_vca, 2, 1)
         grid.addWidget(QLabel("Ic"), 2, 2)
         grid.addWidget(self._lbl_ic, 2, 3)
         grid.addWidget(QLabel("Power"), 3, 0)
@@ -270,7 +300,12 @@ class LoadBankControlPanel(QWidget):
             self._cycle_chart = CycleChartWidget()
             self._cycle_chart.setFixedHeight(120)
             if self._cycle_schedule and self._cycle_duration_s > 0:
-                self._cycle_chart.set_schedule(self._cycle_schedule, self._cycle_duration_s)
+                self._cycle_chart.set_schedule(
+                    self._cycle_schedule,
+                    self._cycle_duration_s,
+                    loops=self._cycle_loops_total,
+                    dwell_s=self._cycle_dwell_s,
+                )
             cyc_v.addWidget(self._cycle_chart)
         else:
             self._cycle_chart = None
@@ -408,8 +443,19 @@ class LoadBankControlPanel(QWidget):
         cyc_pos = vals.get("Cycle/position_s")
         if cyc_pos is not None:
             self._lbl_cyc_pos.setText(f"Position: {float(cyc_pos):.1f}s")
-            if self._cycle_chart is not None:
-                self._cycle_chart.set_position(float(cyc_pos))
+        if self._cycle_chart is not None:
+            cyc_elapsed = vals.get("Cycle/elapsed_s")
+            if cyc_elapsed is not None:
+                self._cycle_chart.set_position(float(cyc_elapsed))
+            elif cyc_pos is not None:
+                cyc_loop_for_chart = vals.get("Cycle/loop_current")
+                cyc_len_for_chart = vals.get("Cycle/schedule_len_s")
+                try:
+                    loop_idx = max(0, int(float(cyc_loop_for_chart or 1)) - 1)
+                    elapsed_est = loop_idx * float(cyc_len_for_chart or self._cycle_duration_s) + float(cyc_pos)
+                except Exception:
+                    elapsed_est = float(cyc_pos)
+                self._cycle_chart.set_position(elapsed_est)
 
         cyc_sp = vals.get("Cycle/setpoint_kw")
         if cyc_sp is not None:

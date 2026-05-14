@@ -36,6 +36,8 @@ try:
 except Exception:
     _HAS_CHARTS = False
 
+from .cycle_profile_math import build_expanded_cycle_profile
+
 
 class CycleConfigDialog(QDialog):
     def __init__(self, parent=None) -> None:
@@ -213,29 +215,9 @@ class CycleConfigDialog(QDialog):
         for ax in self._chart.axes():
             self._chart.removeAxis(ax)
 
-        cycle_len = times[-1] - times[0] if len(times) > 1 else 0.0
-
-        step_t: List[float] = []
-        step_v: List[float] = []
-        for i, (t, v) in enumerate(zip(times, loads)):
-            if i > 0:
-                step_t.append(t - times[0])
-                step_v.append(loads[i - 1])
-            step_t.append(t - times[0])
-            step_v.append(v)
-
-        all_t: List[float] = []
-        all_v: List[float] = []
-        for loop_i in range(loops):
-            offset = loop_i * (cycle_len + dwell_s)
-            for t, v in zip(step_t, step_v):
-                all_t.append(t + offset)
-                all_v.append(v)
-            if dwell_s > 0 and loop_i < loops - 1:
-                all_t.append(offset + cycle_len)
-                all_v.append(step_v[-1])
-                all_t.append(offset + cycle_len + dwell_s)
-                all_v.append(step_v[-1])
+        profile = build_expanded_cycle_profile(times, loads, loops, dwell_s)
+        all_t = profile.times
+        all_v = profile.loads
 
         self._series_refs.clear()
 
@@ -258,8 +240,7 @@ class CycleConfigDialog(QDialog):
         self._chart.addSeries(area)
 
         if loops > 1:
-            for li in range(1, loops):
-                x = li * (cycle_len + dwell_s)
+            for x in profile.loop_boundaries_s:
                 vline = QLineSeries()
                 vline.setPen(QPen(QColor("#555555"), 0.8, Qt.PenStyle.DashLine))
                 v_min = min(all_v) if all_v else 0.0

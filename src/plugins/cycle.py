@@ -72,7 +72,7 @@ class CyclePlugin(BasePlugin):
         return {
             "Cycle/state", "Cycle/position_s", "Cycle/setpoint_kw",
             "Cycle/loop_current", "Cycle/loop_total", "Cycle/progress_pct",
-            "Cycle/schedule_len_s",
+            "Cycle/schedule_len_s", "Cycle/elapsed_s",
         }
 
     def units(self) -> Dict[str, str]:
@@ -84,6 +84,7 @@ class CyclePlugin(BasePlugin):
             "Cycle/loop_total": "",
             "Cycle/progress_pct": "%",
             "Cycle/schedule_len_s": "s",
+            "Cycle/elapsed_s": "s",
         }
 
     # ------------------------------------------------------------------
@@ -209,8 +210,16 @@ class CyclePlugin(BasePlugin):
 
     def simulate_step(self, _vals: Dict[str, Any] | None = None) -> Dict[str, Any]:
         elapsed = self._elapsed_s()
-        pos = self._current_loop_pos() if self._state in (_STATE_RUNNING, _STATE_PAUSED) else 0.0
+        # Setpoint must be computed while still running: _current_loop_pos() can set
+        # complete first, which would make current_setpoint_kw() skip _interp_schedule
+        # and leave _last_setpoint stuck on the prior step.
         sp = self.current_setpoint_kw()
+        if self._state in (_STATE_RUNNING, _STATE_PAUSED):
+            pos = self._current_loop_pos()
+        elif self._state == _STATE_COMPLETE:
+            pos = self._loop_len
+        else:
+            pos = 0.0
         loop_cur = self._current_loop_number() if self._state in (_STATE_RUNNING, _STATE_PAUSED, _STATE_COMPLETE) else 0
         total_dur = self._loop_len * max(self._loops_total, 1)
         progress = min(100.0, (elapsed / total_dur * 100.0) if total_dur > 0 else 0.0)
@@ -222,6 +231,7 @@ class CyclePlugin(BasePlugin):
             "Cycle/loop_total": float(self._loops_total),
             "Cycle/progress_pct": round(progress, 1),
             "Cycle/schedule_len_s": round(self._loop_len, 2),
+            "Cycle/elapsed_s": round(elapsed, 2),
         }
 
     # ------------------------------------------------------------------

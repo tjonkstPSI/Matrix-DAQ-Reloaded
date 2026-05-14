@@ -11,19 +11,22 @@ try:
 except Exception:
     raise
 
+from .cycle_profile_math import build_expanded_cycle_profile
+
 
 class CycleChartWidget(QWidget):
     """Lightweight step-schedule chart drawn with QPainter.
 
-    Displays the load profile as a step line with axis labels and a
+    Displays the load profile preview with axis labels and a
     vertical marker showing the current time position.
     """
 
     _BG = QColor(30, 30, 30)
     _GRID = QColor(60, 60, 60)
     _AXIS_TEXT = QColor(180, 180, 180)
-    _STEP_LINE = QColor(52, 152, 219)
-    _STEP_FILL = QColor(52, 152, 219, 40)
+    _STEP_LINE = QColor("#4fc3f7")
+    _STEP_FILL = QColor(79, 195, 247, 35)
+    _LOOP_MARKER = QColor("#555555")
     _MARKER = QColor(231, 76, 60)
     _MARGIN_L = 48
     _MARGIN_R = 12
@@ -33,15 +36,33 @@ class CycleChartWidget(QWidget):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self._schedule: List[Tuple[float, float]] = []
+        self._profile_t: List[float] = []
+        self._profile_v: List[float] = []
+        self._loop_boundaries_s: List[float] = []
         self._max_kw: float = 100.0
         self._duration_s: float = 1.0
         self._position_s: float = 0.0
         self.setMinimumHeight(100)
 
-    def set_schedule(self, schedule: List[Tuple[float, float]], duration_s: float) -> None:
+    def set_schedule(
+        self,
+        schedule: List[Tuple[float, float]],
+        duration_s: float,
+        loops: int = 1,
+        dwell_s: float = 0.0,
+    ) -> None:
         self._schedule = list(schedule)
-        self._duration_s = max(1.0, duration_s)
-        self._max_kw = max((v for _, v in schedule), default=100.0) * 1.1
+        profile = build_expanded_cycle_profile(
+            [t for t, _ in self._schedule],
+            [v for _, v in self._schedule],
+            loops=loops,
+            dwell_s=dwell_s,
+        )
+        self._profile_t = profile.times
+        self._profile_v = profile.loads
+        self._loop_boundaries_s = profile.loop_boundaries_s
+        self._duration_s = max(1.0, profile.total_duration_s, duration_s)
+        self._max_kw = max(self._profile_v or [100.0]) * 1.1
         if self._max_kw < 1.0:
             self._max_kw = 100.0
         self.update()
@@ -51,7 +72,7 @@ class CycleChartWidget(QWidget):
         self.update()
 
     def paintEvent(self, event) -> None:  # noqa: N802
-        if not self._schedule:
+        if not self._profile_t:
             return
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -109,18 +130,13 @@ class CycleChartWidget(QWidget):
         fill_path = QPainterPath()
         baseline_y = ty(0.0)
         first = True
-        for t, v in self._schedule:
+        for t, v in zip(self._profile_t, self._profile_v):
             x = tx(t)
             y = ty(v)
             if first:
-                path.moveTo(ml if t > 0 else x, baseline_y if t > 0 else y)
-                fill_path.moveTo(ml, baseline_y)
-                if t > 0:
-                    path.lineTo(x, baseline_y)
-                    fill_path.lineTo(x, baseline_y)
+                path.moveTo(x, y)
+                fill_path.moveTo(x, baseline_y)
                 fill_path.lineTo(x, y)
-                if t > 0:
-                    path.moveTo(x, y)
                 first = False
             else:
                 path.lineTo(x, path.currentPosition().y())
@@ -129,11 +145,11 @@ class CycleChartWidget(QWidget):
                 fill_path.lineTo(x, y)
 
         end_x = tx(self._duration_s)
-        if self._schedule:
+        if self._profile_t:
             path.lineTo(end_x, path.currentPosition().y())
             fill_path.lineTo(end_x, fill_path.currentPosition().y())
             fill_path.lineTo(end_x, baseline_y)
-            fill_path.lineTo(ml, baseline_y)
+            fill_path.lineTo(tx(self._profile_t[0]), baseline_y)
 
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(QBrush(self._STEP_FILL))
@@ -142,6 +158,13 @@ class CycleChartWidget(QWidget):
         p.setPen(QPen(self._STEP_LINE, 2))
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.drawPath(path)
+
+        # Loop boundaries match the dashed dividers used in the config preview.
+        if self._loop_boundaries_s:
+            p.setPen(QPen(self._LOOP_MARKER, 1, Qt.PenStyle.DashLine))
+            for boundary_s in self._loop_boundaries_s:
+                bx = tx(boundary_s)
+                p.drawLine(int(bx), int(mt), int(bx), int(mt + plot_h))
 
         # Position marker
         mx = tx(min(self._position_s, self._duration_s))
