@@ -33,25 +33,30 @@ except Exception:
 
 from .nidaq_alias_picker import AliasPickerDialog
 from .standard_channels import validate_alias
+from .can_interfaces import discover_can_channels
 
 
 class _BusTab(QWidget):
     """One tab per CAN bus — channel, baudrate, DBC, and signal table."""
 
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, available_channels: Optional[List[str]] = None, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self._dbc_signals: List[Dict[str, Any]] = []
+        self._available_channels = list(available_channels or [])
         root = QVBoxLayout(self)
 
         form = QFormLayout()
         self.txt_name = QLineEdit(self)
         self.txt_name.setPlaceholderText("CAN Bus 1")
-        self.txt_channel = QLineEdit(self)
-        self.txt_channel.setPlaceholderText("CAN channel, e.g. CAN1")
+        self.cmb_channel = QComboBox(self)
+        self.cmb_channel.setEditable(False)
+        self.cmb_channel.addItem("")
+        self.cmb_channel.addItems(self._available_channels)
+        self.cmb_channel.setToolTip("Detected NI-XNET CAN interfaces. Select a discovered channel before saving.")
         self.cmb_baudrate = QComboBox(self)
         self.cmb_baudrate.addItems(["125000", "250000", "500000", "1000000"])
         form.addRow("Bus Name", self.txt_name)
-        form.addRow("CAN Channel", self.txt_channel)
+        form.addRow("CAN Channel", self.cmb_channel)
         form.addRow("Baudrate", self.cmb_baudrate)
         root.addLayout(form)
 
@@ -95,7 +100,8 @@ class _BusTab(QWidget):
 
     def load_bus(self, bus_cfg: Dict[str, Any]) -> None:
         self.txt_name.setText(str(bus_cfg.get("name", "")))
-        self.txt_channel.setText(str(bus_cfg.get("channel", "CAN1")))
+        channel = str(bus_cfg.get("channel", "CAN1")).strip() or "CAN1"
+        self._select_channel(channel)
         baud = str(bus_cfg.get("baudrate", "500000"))
         idx = self.cmb_baudrate.findText(baud)
         self.cmb_baudrate.setCurrentIndex(idx if idx >= 0 else 2)
@@ -112,12 +118,20 @@ class _BusTab(QWidget):
     def to_bus_dict(self) -> Dict[str, Any]:
         return {
             "name": self.txt_name.text().strip() or "CAN Bus",
-            "channel": self.txt_channel.text().strip(),
+            "channel": self.cmb_channel.currentText().strip(),
             "baudrate": int(self.cmb_baudrate.currentText().strip() or "500000"),
             "bustype": "nixnet",
             "dbc_path": self.txt_dbc_path.text().strip(),
             "signals": self._checked_signals(),
         }
+
+    def _select_channel(self, channel: str) -> None:
+        wanted = str(channel or "").strip().upper()
+        for available in self._available_channels:
+            if available.upper() == wanted:
+                self.cmb_channel.setCurrentText(available)
+                return
+        self.cmb_channel.setCurrentIndex(0)
 
     # ------------------------------------------------------------------
     # DBC
@@ -277,6 +291,7 @@ class CANConfigDialog(QDialog):
         self.resize(950, 780)
         self._cfg_path = Path(__file__).resolve().parents[3] / "configs" / "can.yaml"
         self._cfg: Dict[str, Any] = {}
+        self._available_can_channels = discover_can_channels()
         self._init_ui()
         self._load()
 
@@ -325,7 +340,7 @@ class CANConfigDialog(QDialog):
             legacy = self._legacy_to_bus(self._cfg)
             self._create_bus_tab(legacy)
         else:
-            self._create_bus_tab({"name": "CAN Bus 1", "channel": "CAN1", "baudrate": 250000})
+            self._create_bus_tab({"name": "CAN Bus 1", "channel": self._default_channel_for_index(1), "baudrate": 250000})
         self._update_remove_btn()
 
     def _legacy_to_bus(self, cfg: Dict[str, Any]) -> Dict[str, Any]:
@@ -344,7 +359,7 @@ class CANConfigDialog(QDialog):
     # ------------------------------------------------------------------
 
     def _create_bus_tab(self, bus_cfg: Dict[str, Any]) -> _BusTab:
-        tab = _BusTab(self)
+        tab = _BusTab(self._available_can_channels, self)
         tab.load_bus(bus_cfg)
         name = str(bus_cfg.get("name", "")).strip() or f"CAN Bus {self.tab_widget.count() + 1}"
         tab.txt_name.textChanged.connect(self._sync_tab_titles)  # type: ignore
@@ -353,10 +368,27 @@ class CANConfigDialog(QDialog):
 
     def _add_bus(self) -> None:
         idx = self.tab_widget.count() + 1
-        bus_cfg = {"name": f"CAN Bus {idx}", "channel": f"CAN{idx}", "baudrate": 250000}
+        bus_cfg = {"name": f"CAN Bus {idx}", "channel": self._default_channel_for_index(idx), "baudrate": 250000}
         tab = self._create_bus_tab(bus_cfg)
         self.tab_widget.setCurrentWidget(tab)
         self._update_remove_btn()
+
+    def _used_channels(self) -> set[str]:
+        used: set[str] = set()
+        for i in range(self.tab_widget.count()):
+            tab = self.tab_widget.widget(i)
+            if isinstance(tab, _BusTab):
+                channel = tab.cmb_channel.currentText().strip()
+                if channel:
+                    used.add(channel)
+        return used
+
+    def _default_channel_for_index(self, idx: int) -> str:
+        used = self._used_channels()
+        for channel in self._available_can_channels:
+            if channel not in used:
+                return channel
+        return ""
 
     def _remove_bus(self) -> None:
         if self.tab_widget.count() <= 1:
@@ -387,7 +419,7 @@ class CANConfigDialog(QDialog):
             if not isinstance(tab, _BusTab):
                 continue
             bus = tab.to_bus_dict()
-            if not bus.get("channel"):
+            if not bus.get("channel") and self._available_can_channels:
                 QMessageBox.warning(self, "Missing channel", f"Bus tab '{bus.get('name')}': CAN channel is required.")
                 return
             sigs = bus.get("signals", [])

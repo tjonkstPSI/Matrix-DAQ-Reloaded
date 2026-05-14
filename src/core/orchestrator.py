@@ -28,6 +28,7 @@ from ..plugins.channel_manager import ChannelManagerPlugin
 from ..plugins.engine_test import EngineTestPlugin
 from .recording import begin_recording, end_recording, kickoff_export, build_storage_settings
 import json
+import os
 
 
 _DEBUG_PREFIXES = ("CAN/", "CCP/", "Core/", "EngineTest/", "NI_DAQ/")
@@ -85,13 +86,24 @@ class Orchestrator:
         self._tick_interval_s: float = 0.1
         self._global_sim_mode: bool = False
         self._source_map: Dict[str, str] = {}
+        self._display_aliases: Dict[str, str] = {}
         self._source_map_dirty: bool = True
         self._ready_acknowledged: bool = False
         self._last_ready_publish_mono: float = 0.0
         self._ready_request_logged: bool = False
+        self._core_timing_diag: Dict[str, Any] = {}
+        self._perf_diag_enabled = str(os.environ.get("MATRIX_UI_PERF_DIAG", "")).strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        self._publish_perf_diag: Dict[str, Any] = {}
+        self._do_condition_states: Dict[str, int] = {}
 
     def start(self) -> None:
         # Placeholder: load configs, initialize IPC bus, register simulated plugins
+        self._do_condition_states.clear()
         self._register_builtin_specs()
         self.plugins = self.registry.create_all()
         # Load core config
@@ -240,6 +252,248 @@ class Orchestrator:
 
         return smap
 
+    def _build_display_aliases(self) -> Dict[str, str]:
+        """Build UI-only full-alias -> display-label mapping."""
+        labels: Dict[str, str] = {}
+        for plugin_id in ("CCP",):
+            p = self.plugins.get(plugin_id) if self._plugin_enabled.get(plugin_id, True) else None
+            if p is None:
+                continue
+            method = getattr(p, "display_aliases", None)
+            if not callable(method):
+                continue
+            try:
+                for alias, label in method().items():
+                    alias_text = str(alias)
+                    label_text = str(label)
+                    if alias_text and label_text:
+                        labels[alias_text] = label_text
+            except Exception as exc:
+                print(f"[CORE] display_aliases: {plugin_id} query FAILED: {exc}")
+        return labels
+
+    def _refresh_source_map(self, reason: str = "") -> None:
+        """Rebuild cached display metadata used for channel placement/labels."""
+        self._source_map = self._build_source_map()
+        self._display_aliases = self._build_display_aliases()
+        reason_text = f" ({reason})" if reason else ""
+        if self._source_map:
+            groups = {}
+            for alias, grp in self._source_map.items():
+                groups.setdefault(grp, []).append(alias)
+            print(f"[CORE] source_map{reason_text}: {len(self._source_map)} aliases across {len(groups)} groups")
+            for g, aliases in sorted(groups.items()):
+                print(f"[CORE]   {g}: {len(aliases)} channels")
+        else:
+            print(f"[CORE] source_map{reason_text} is EMPTY — channels will fall to 'Other'")
+
+    def _record_core_timing(
+        self,
+        *,
+        tick_ms: float,
+        interval_s: float,
+        ccp_ms: float,
+        nidaq_ms: float,
+        other_plugins_ms: float,
+        stats_ms: float,
+        controls_ms: float,
+        alarms_ms: float,
+        calc_ms: float,
+        outputs_ms: float,
+        do_conditions_ms: float,
+        console_msgs_ms: float,
+        strip_ms: float,
+        json_ms: float,
+        publish_ms: float,
+        db_ms: float,
+        row_appended: bool,
+    ) -> None:
+        """Print low-volume timing summaries while recording."""
+        if not self._recording:
+            self._core_timing_diag = {}
+            return
+        try:
+            import time as _time
+
+            now = _time.monotonic()
+            diag = self._core_timing_diag
+            if not diag:
+                diag.update(
+                    {
+                        "start": now,
+                        "ticks": 0,
+                        "rows": 0,
+                        "overruns": 0,
+                        "tick_ms": [],
+                        "ccp_ms": [],
+                        "nidaq_ms": [],
+                        "other_plugins_ms": [],
+                        "stats_ms": [],
+                        "controls_ms": [],
+                        "alarms_ms": [],
+                        "calc_ms": [],
+                        "outputs_ms": [],
+                        "do_conditions_ms": [],
+                        "console_msgs_ms": [],
+                        "strip_ms": [],
+                        "json_ms": [],
+                        "publish_ms": [],
+                        "db_ms": [],
+                    }
+                )
+
+            diag["ticks"] = int(diag.get("ticks", 0)) + 1
+            if row_appended:
+                diag["rows"] = int(diag.get("rows", 0)) + 1
+            if float(tick_ms) > (float(interval_s) * 1000.0):
+                diag["overruns"] = int(diag.get("overruns", 0)) + 1
+
+            for key, value in (
+                ("tick_ms", tick_ms),
+                ("ccp_ms", ccp_ms),
+                ("nidaq_ms", nidaq_ms),
+                ("other_plugins_ms", other_plugins_ms),
+                ("stats_ms", stats_ms),
+                ("controls_ms", controls_ms),
+                ("alarms_ms", alarms_ms),
+                ("calc_ms", calc_ms),
+                ("outputs_ms", outputs_ms),
+                ("do_conditions_ms", do_conditions_ms),
+                ("console_msgs_ms", console_msgs_ms),
+                ("strip_ms", strip_ms),
+                ("json_ms", json_ms),
+                ("publish_ms", publish_ms),
+                ("db_ms", db_ms),
+            ):
+                vals = diag.setdefault(key, [])
+                if isinstance(vals, list):
+                    vals.append(float(value))
+
+            elapsed = max(0.001, now - float(diag.get("start", now)))
+            if elapsed < 5.0:
+                return
+
+            def _avg(values: Any) -> float:
+                return (sum(values) / float(len(values))) if isinstance(values, list) and values else 0.0
+
+            def _max(values: Any) -> float:
+                return max(values) if isinstance(values, list) and values else 0.0
+
+            def _p95(values: Any) -> float:
+                if not isinstance(values, list) or not values:
+                    return 0.0
+                ordered = sorted(values)
+                idx = min(len(ordered) - 1, max(0, int(round((len(ordered) - 1) * 0.95))))
+                return float(ordered[idx])
+
+            rows = int(diag.get("rows", 0))
+            actual_hz = float(rows) / elapsed
+            target_hz = 1.0 / max(0.001, float(interval_s))
+            print(
+                "[CORE_TIMING] "
+                f"target={target_hz:.2f}Hz actual={actual_hz:.2f}Hz "
+                f"rows={rows}/{elapsed:.2f}s "
+                f"tick_ms avg={_avg(diag.get('tick_ms')):.1f} "
+                f"p95={_p95(diag.get('tick_ms')):.1f} "
+                f"max={_max(diag.get('tick_ms')):.1f} "
+                f"overruns={int(diag.get('overruns', 0))} "
+                f"ccp_ms avg={_avg(diag.get('ccp_ms')):.1f} "
+                f"max={_max(diag.get('ccp_ms')):.1f} "
+                f"nidaq_ms avg={_avg(diag.get('nidaq_ms')):.1f} "
+                f"max={_max(diag.get('nidaq_ms')):.1f} "
+                f"other_plugins_ms avg={_avg(diag.get('other_plugins_ms')):.1f} "
+                f"max={_max(diag.get('other_plugins_ms')):.1f} "
+                f"stats_ms avg={_avg(diag.get('stats_ms')):.1f} "
+                f"max={_max(diag.get('stats_ms')):.1f} "
+                f"controls_ms avg={_avg(diag.get('controls_ms')):.1f} "
+                f"max={_max(diag.get('controls_ms')):.1f} "
+                f"alarms_ms avg={_avg(diag.get('alarms_ms')):.1f} "
+                f"max={_max(diag.get('alarms_ms')):.1f} "
+                f"calc_ms avg={_avg(diag.get('calc_ms')):.1f} "
+                f"max={_max(diag.get('calc_ms')):.1f} "
+                f"outputs_ms avg={_avg(diag.get('outputs_ms')):.1f} "
+                f"max={_max(diag.get('outputs_ms')):.1f} "
+                f"do_conditions_ms avg={_avg(diag.get('do_conditions_ms')):.1f} "
+                f"max={_max(diag.get('do_conditions_ms')):.1f} "
+                f"console_msgs_ms avg={_avg(diag.get('console_msgs_ms')):.1f} "
+                f"max={_max(diag.get('console_msgs_ms')):.1f} "
+                f"strip_ms avg={_avg(diag.get('strip_ms')):.1f} "
+                f"max={_max(diag.get('strip_ms')):.1f} "
+                f"db_ms avg={_avg(diag.get('db_ms')):.1f} "
+                f"max={_max(diag.get('db_ms')):.1f} "
+                f"json_ms avg={_avg(diag.get('json_ms')):.1f} "
+                f"max={_max(diag.get('json_ms')):.1f} "
+                f"publish_ms avg={_avg(diag.get('publish_ms')):.1f} "
+                f"max={_max(diag.get('publish_ms')):.1f}"
+            )
+            self._core_timing_diag = {}
+        except Exception:
+            pass
+
+    def _record_publish_perf(
+        self,
+        *,
+        interval_s: float,
+        payload_len: int,
+        value_count: int,
+        json_ms: float = 0.0,
+        publish_ms: float = 0.0,
+    ) -> None:
+        """Low-volume core/UI rate diagnostics when MATRIX_UI_PERF_DIAG=1."""
+        if not self._perf_diag_enabled:
+            return
+        try:
+            import time as _time
+
+            now = _time.perf_counter()
+            diag = self._publish_perf_diag
+            if not diag:
+                diag.update(
+                    {
+                        "start": now,
+                        "ticks": 0,
+                        "payload_kb": [],
+                        "value_count": [],
+                        "json_ms": [],
+                        "publish_ms": [],
+                        "target_hz": 1.0 / max(0.001, float(interval_s)),
+                    }
+                )
+            diag["ticks"] = int(diag.get("ticks", 0)) + 1
+            for key, value in (
+                ("payload_kb", float(payload_len) / 1024.0),
+                ("value_count", float(value_count)),
+                ("json_ms", float(json_ms)),
+                ("publish_ms", float(publish_ms)),
+            ):
+                vals = diag.setdefault(key, [])
+                if isinstance(vals, list):
+                    vals.append(float(value))
+            elapsed = max(0.001, now - float(diag.get("start", now)))
+            if elapsed < 5.0:
+                return
+
+            def _avg(values: Any) -> float:
+                return (sum(values) / float(len(values))) if isinstance(values, list) and values else 0.0
+
+            def _max(values: Any) -> float:
+                return max(values) if isinstance(values, list) and values else 0.0
+
+            ticks = int(diag.get("ticks", 0))
+            print(
+                "[CORE_PERF] publish "
+                f"target_hz={float(diag.get('target_hz', 0.0)):.2f} actual_hz={ticks / elapsed:.2f} "
+                f"ticks={ticks} "
+                f"payload_kb_avg={_avg(diag.get('payload_kb')):.2f} payload_kb_max={_max(diag.get('payload_kb')):.2f} "
+                f"value_count_max={_max(diag.get('value_count')):.0f} "
+                f"json_ms_avg={_avg(diag.get('json_ms')):.2f} json_ms_max={_max(diag.get('json_ms')):.2f} "
+                f"publish_ms_avg={_avg(diag.get('publish_ms')):.2f} publish_ms_max={_max(diag.get('publish_ms')):.2f}",
+                flush=True,
+            )
+            self._publish_perf_diag = {}
+        except Exception:
+            pass
+
     def run(self) -> None:
         # Initialize plugins; Modbus is optional (can be disabled)
         modbus = self.plugins.get("Modbus") if self._plugin_enabled.get("Modbus", True) else None
@@ -305,16 +559,7 @@ class Orchestrator:
                 except Exception:
                     return "00:00:00.000"
             _last_cycle_setpoint: Optional[float] = None
-            self._source_map = self._build_source_map()
-            if self._source_map:
-                groups = {}
-                for alias, grp in self._source_map.items():
-                    groups.setdefault(grp, []).append(alias)
-                print(f"[CORE] source_map: {len(self._source_map)} aliases across {len(groups)} groups")
-                for g, aliases in sorted(groups.items()):
-                    print(f"[CORE]   {g}: {len(aliases)} channels")
-            else:
-                print("[CORE] source_map is EMPTY — channels will fall to 'Other'")
+            self._refresh_source_map("startup")
             self._publish_core_ready(force=True)
             if run_mode == "demo":
                 for _ in range(demo_ticks):
@@ -364,10 +609,11 @@ class Orchestrator:
                         vals.update(getattr(engine_test, "simulate_step")())
                         units.update(getattr(engine_test, "units")())
                     if cycle:
+                        _cyc_was_running = getattr(cycle, "_state", "idle") == "running"
                         vals.update(getattr(cycle, "simulate_step")())
                         units.update(getattr(cycle, "units")())
                         _cyc_state = getattr(cycle, "_state", "idle")
-                        if _cyc_state == "running" and lb:
+                        if lb and (_cyc_state == "running" or _cyc_was_running):
                             _sp = cycle.current_setpoint_kw()
                             if _sp != _last_cycle_setpoint:
                                 lb.command_setpoint_kw(_sp)
@@ -511,6 +757,7 @@ class Orchestrator:
                         "alarm_events": events,
                         "recording": bool(self._recording),
                         "source_map": self._source_map,
+                        "display_aliases": self._display_aliases,
                     }).encode("utf-8")
                     # One-time NI_DAQ value count diagnostic
                     try:
@@ -521,6 +768,11 @@ class Orchestrator:
                     except Exception:
                         pass
                     self.bus.publish_telemetry(payload)
+                    self._record_publish_perf(
+                        interval_s=interval,
+                        payload_len=len(payload),
+                        value_count=len(pub_vals),
+                    )
                     try:
                         if self._recording and self._db_writer is not None:
                             self._db_writer.append(now_ts, pub_vals, pub_units)
@@ -540,6 +792,22 @@ class Orchestrator:
                     self._publish_core_ready()
                     interval = max(0.001, float(self._tick_interval_s))
                     tick_start_mono = time.monotonic()
+                    tick_body_start = time.perf_counter()
+                    ccp_ms = 0.0
+                    nidaq_ms = 0.0
+                    other_plugins_ms = 0.0
+                    stats_ms = 0.0
+                    controls_ms = 0.0
+                    alarms_ms = 0.0
+                    calc_ms = 0.0
+                    outputs_ms = 0.0
+                    do_conditions_ms = 0.0
+                    console_msgs_ms = 0.0
+                    strip_ms = 0.0
+                    json_ms = 0.0
+                    publish_ms = 0.0
+                    db_ms = 0.0
+                    row_appended = False
                     tick_dt_s = interval if last_tick_start_mono is None else max(0.0, tick_start_mono - last_tick_start_mono)
                     tick_jitter_s = tick_dt_s - interval
                     last_tick_start_mono = tick_start_mono
@@ -557,34 +825,52 @@ class Orchestrator:
                     vals = {}
                     units = {}
                     if modbus is not None:
+                        _phase_start = time.perf_counter()
                         vals.update(getattr(modbus, "simulate_step")())
                         units.update(getattr(modbus, "units")())
+                        other_plugins_ms += (time.perf_counter() - _phase_start) * 1000.0
                     if nidaq:
+                        _phase_start = time.perf_counter()
                         vals.update(getattr(nidaq, "simulate_step")())
                         units.update(getattr(nidaq, "units")())
+                        nidaq_ms += (time.perf_counter() - _phase_start) * 1000.0
                     if can:
+                        _phase_start = time.perf_counter()
                         vals.update(getattr(can, "simulate_step")())
                         units.update(getattr(can, "units")())
+                        other_plugins_ms += (time.perf_counter() - _phase_start) * 1000.0
                     if ccp:
+                        _phase_start = time.perf_counter()
                         vals.update(getattr(ccp, "simulate_step")())
                         units.update(getattr(ccp, "units")())
+                        ccp_ms += (time.perf_counter() - _phase_start) * 1000.0
                     if lb:
+                        _phase_start = time.perf_counter()
                         vals.update(getattr(lb, "simulate_step")())
                         units.update(getattr(lb, "units")())
+                        other_plugins_ms += (time.perf_counter() - _phase_start) * 1000.0
                     if vaisala:
+                        _phase_start = time.perf_counter()
                         vals.update(getattr(vaisala, "simulate_step")())
                         units.update(getattr(vaisala, "units")())
+                        other_plugins_ms += (time.perf_counter() - _phase_start) * 1000.0
                     if omega:
+                        _phase_start = time.perf_counter()
                         vals.update(getattr(omega, "simulate_step")())
                         units.update(getattr(omega, "units")())
+                        other_plugins_ms += (time.perf_counter() - _phase_start) * 1000.0
                     if engine_test:
+                        _phase_start = time.perf_counter()
                         vals.update(getattr(engine_test, "simulate_step")())
                         units.update(getattr(engine_test, "units")())
+                        other_plugins_ms += (time.perf_counter() - _phase_start) * 1000.0
                     if cycle:
+                        _phase_start = time.perf_counter()
+                        _cyc_was_running = getattr(cycle, "_state", "idle") == "running"
                         vals.update(getattr(cycle, "simulate_step")())
                         units.update(getattr(cycle, "units")())
                         _cyc_state = getattr(cycle, "_state", "idle")
-                        if _cyc_state == "running" and lb:
+                        if lb and (_cyc_state == "running" or _cyc_was_running):
                             _sp = cycle.current_setpoint_kw()
                             if _sp != _last_cycle_setpoint:
                                 lb.command_setpoint_kw(_sp)
@@ -594,14 +880,18 @@ class Orchestrator:
                             if _last_cycle_setpoint is not None:
                                 print(f"[CYCLE->LB] Cycle state={_cyc_state}, holding last setpoint ({_last_cycle_setpoint} kW)")
                             _last_cycle_setpoint = None
+                        other_plugins_ms += (time.perf_counter() - _phase_start) * 1000.0
                     now_ts = time.time()
                     if vaisala:
+                        _phase_start = time.perf_counter()
                         try:
                             vaisala.update_telemetry(vals)
                         except Exception:
                             pass
+                        other_plugins_ms += (time.perf_counter() - _phase_start) * 1000.0
                     # Update statistics plugin and handle outputs (persist only)
                     if stats:
+                        _phase_start = time.perf_counter()
                         getattr(stats, "update")(vals, units, now_ts)
                         stat_vals, stat_units, stat_events = getattr(stats, "outputs")(now_ts)
                         if self._stats_sink is not None and stat_vals and stat_events:
@@ -623,6 +913,7 @@ class Orchestrator:
                                 self.bus.publish_status(json.dumps(sev).encode("utf-8"))
                             except Exception:
                                 pass
+                        stats_ms += (time.perf_counter() - _phase_start) * 1000.0
                     # Add relative time channel from core
                     elapsed = time.time() - t0
                     vals["Time_Relative_s"] = elapsed
@@ -630,6 +921,7 @@ class Orchestrator:
                     # Evaluate alarms
                     states, summary, events = ({}, {"any_warning": False, "any_shutdown": False}, [])
                     # Handle control messages
+                    _phase_start = time.perf_counter()
                     for raw in self.bus.recv_controls_nonblocking():
                         try:
                             ctrl_msg = json.loads(raw.decode("utf-8"))
@@ -678,7 +970,9 @@ class Orchestrator:
                                 print(f"[WARN] Control handling error: {e}")
                             except Exception:
                                 pass
+                    controls_ms += (time.perf_counter() - _phase_start) * 1000.0
                     if self.alarm_engine is not None:
+                        _phase_start = time.perf_counter()
                         states, summary, events = self.alarm_engine.evaluate(vals, now_ts)
                         for ev in events:
                             ev_ts = float(ev.get("ts", now_ts))
@@ -695,6 +989,8 @@ class Orchestrator:
                         except Exception:
                             pass
                         self._alarm_tick_logged = True
+                    if self.alarm_engine is not None:
+                        alarms_ms += (time.perf_counter() - _phase_start) * 1000.0
                     # Publish internal alarm/status booleans.
                     vals["iOT_Warning"] = 1.0 if bool(summary.get("any_warning", False)) else 0.0
                     vals["iOT_Alarm"] = 1.0 if bool(summary.get("any_shutdown", False)) else 0.0
@@ -708,16 +1004,26 @@ class Orchestrator:
                     units["iDG_EngRunStp"] = ""
                     # Calculated channels run LAST so all source values (plugins, alarms, iOT) are available
                     if calc is not None:
+                        _phase_start = time.perf_counter()
                         try:
                             calc_vals = getattr(calc, "simulate_step")(vals)
                             vals.update(calc_vals)
                             units.update(getattr(calc, "units")())
                         except Exception:
                             pass
+                        calc_ms += (time.perf_counter() - _phase_start) * 1000.0
+                    _phase_start = time.perf_counter()
                     self._evaluate_do_conditions(vals)
+                    do_conditions_ms = (time.perf_counter() - _phase_start) * 1000.0
+                    _phase_start = time.perf_counter()
                     self._forward_console_msgs(vals)
+                    console_msgs_ms = (time.perf_counter() - _phase_start) * 1000.0
+                    outputs_ms = do_conditions_ms + console_msgs_ms
+                    _phase_start = time.perf_counter()
                     pub_vals = _strip_debug_keys(vals)
                     pub_units = _strip_debug_keys(units)
+                    strip_ms = (time.perf_counter() - _phase_start) * 1000.0
+                    _phase_start = time.perf_counter()
                     payload = json.dumps({
                         "ts": time.time(),
                         "values": pub_vals,
@@ -727,13 +1033,47 @@ class Orchestrator:
                         "alarm_events": events,
                         "recording": bool(self._recording),
                         "source_map": self._source_map,
+                        "display_aliases": self._display_aliases,
                     }).encode("utf-8")
+                    json_ms = (time.perf_counter() - _phase_start) * 1000.0
+                    _phase_start = time.perf_counter()
                     self.bus.publish_telemetry(payload)
+                    publish_ms = (time.perf_counter() - _phase_start) * 1000.0
+                    self._record_publish_perf(
+                        interval_s=interval,
+                        payload_len=len(payload),
+                        value_count=len(pub_vals),
+                        json_ms=json_ms,
+                        publish_ms=publish_ms,
+                    )
                     try:
                         if self._recording and self._db_writer is not None:
+                            _phase_start = time.perf_counter()
                             self._db_writer.append(now_ts, pub_vals, pub_units)
+                            db_ms = (time.perf_counter() - _phase_start) * 1000.0
+                            row_appended = True
                     except Exception:
                         pass
+                    tick_body_ms = (time.perf_counter() - tick_body_start) * 1000.0
+                    self._record_core_timing(
+                        tick_ms=tick_body_ms,
+                        interval_s=interval,
+                        ccp_ms=ccp_ms,
+                        nidaq_ms=nidaq_ms,
+                        other_plugins_ms=other_plugins_ms,
+                        stats_ms=stats_ms,
+                        controls_ms=controls_ms,
+                        alarms_ms=alarms_ms,
+                        calc_ms=calc_ms,
+                        outputs_ms=outputs_ms,
+                        do_conditions_ms=do_conditions_ms,
+                        console_msgs_ms=console_msgs_ms,
+                        strip_ms=strip_ms,
+                        json_ms=json_ms,
+                        publish_ms=publish_ms,
+                        db_ms=db_ms,
+                        row_appended=row_appended,
+                    )
                     sleep_s = max(0.0, next_tick_deadline - time.monotonic())
                     if sleep_s > 0.0:
                         time.sleep(sleep_s)
@@ -775,6 +1115,7 @@ class Orchestrator:
                 print("[WARN] DO write ignored: NI_DAQ not present")
                 return
             getattr(nidaq, "write_do")(alias, state)
+            self._do_condition_states[alias] = state
         except Exception:
             pass
 
@@ -788,6 +1129,13 @@ class Orchestrator:
     }
 
     _do_cond_diag_count: int = 0
+
+    def _write_do_condition_if_changed(self, nidaq: Any, alias: str, state: int) -> None:
+        desired = 1 if bool(state) else 0
+        if self._do_condition_states.get(alias) == desired:
+            return
+        nidaq.write_do(alias, desired)
+        self._do_condition_states[alias] = desired
 
     def _evaluate_do_conditions(self, vals: Dict[str, Any]) -> None:
         """Drive DO outputs based on expression conditions each tick."""
@@ -807,10 +1155,10 @@ class Orchestrator:
                 continue
             try:
                 if operator == "TRUE":
-                    nidaq.write_do(alias, 1)
+                    self._write_do_condition_if_changed(nidaq, alias, 1)
                     continue
                 if operator == "FALSE":
-                    nidaq.write_do(alias, 0)
+                    self._write_do_condition_if_changed(nidaq, alias, 0)
                     continue
                 source = cond.get("source", "")
                 if source not in vals:
@@ -825,7 +1173,7 @@ class Orchestrator:
                 state = 1 if op_fn(src_val, threshold) else 0
                 if self._do_cond_diag_count < 3:
                     print(f"[DO_COND] {alias}: src={source} val={src_val} {operator} {threshold} -> state={state}")
-                nidaq.write_do(alias, state)
+                self._write_do_condition_if_changed(nidaq, alias, state)
             except Exception as exc:
                 if self._do_cond_diag_count < 5:
                     print(f"[DO_COND] ERROR {alias}: {exc}")
@@ -976,6 +1324,8 @@ class Orchestrator:
             if new_enabled and (not old_enabled or mode_changed):
                 action = "mode change" if old_enabled else "newly enabled"
                 print(f"[INFO] Plugin '{pid}' {action}; configuring")
+                if pid == "NI_DAQ":
+                    self._do_condition_states.clear()
                 try:
                     plugin.stop()
                 except Exception:
@@ -996,13 +1346,18 @@ class Orchestrator:
                     print(f"[WARN] Plugin '{pid}' start failed: {e}")
             elif not new_enabled and old_enabled:
                 print(f"[INFO] Plugin '{pid}' disabled; stopping")
+                if pid == "NI_DAQ":
+                    self._do_condition_states.clear()
                 try:
                     plugin.stop()
                 except Exception:
                     pass
+        self._refresh_source_map("plugin selection sync")
 
     def _apply_mode_and_restart(self, pid: str, plugin) -> None:
         """Stop, reload config with global mode override, and restart a plugin."""
+        if pid == "NI_DAQ":
+            self._do_condition_states.clear()
         try:
             plugin.stop()
         except Exception:
@@ -1014,6 +1369,7 @@ class Orchestrator:
             status = plugin.validate()
             if getattr(status, "ok", True):
                 plugin.start()
+                self._refresh_source_map(f"mode restart {pid}")
         except Exception as e:
             print(f"[WARN] Mode restart failed for {pid}: {e}")
 
@@ -1071,12 +1427,15 @@ class Orchestrator:
             if p is None:
                 print(f"[WARN] Reload ignored: plugin not found: {plugin_id}")
                 return
+            if plugin_id == "NI_DAQ":
+                self._do_condition_states.clear()
             try:
                 p.stop()
             except Exception:
                 pass
             if not self._plugin_enabled.get(plugin_id, False):
                 print(f"[INFO] Plugin '{plugin_id}' not enabled; stopped")
+                self._refresh_source_map(f"reload {plugin_id} disabled")
                 return
             try:
                 p.load_config()
@@ -1090,11 +1449,14 @@ class Orchestrator:
                 status = p.validate()
                 if not getattr(status, 'ok', True):
                     print(f"[ERROR] Reload validate failed for {plugin_id}: {getattr(status,'message','')}")
+                    self._refresh_source_map(f"reload {plugin_id} invalid")
                     return
                 p.start()
+                self._refresh_source_map(f"reload {plugin_id}")
                 print(f"[INFO] Reloaded plugin: {plugin_id}")
             except Exception as e:
                 print(f"[WARN] Reload failed for {plugin_id}: {e}")
+                self._refresh_source_map(f"reload {plugin_id} failed")
         except Exception:
             pass
 
@@ -1272,6 +1634,8 @@ class Orchestrator:
     ):
         if plugin is None:
             return None
+        if pid == "NI_DAQ":
+            self._do_condition_states.clear()
         try:
             plugin.configure()
             status = plugin.validate()
@@ -1311,6 +1675,8 @@ class Orchestrator:
             plugin = self.plugins.get(pid)
             if plugin is None or not self._plugin_enabled.get(pid, True):
                 continue
+            if pid == "NI_DAQ":
+                self._do_condition_states.clear()
             try:
                 plugin.stop()
             except Exception as e:

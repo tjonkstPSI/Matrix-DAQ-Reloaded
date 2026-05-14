@@ -58,6 +58,7 @@ class CANPlugin(BasePlugin):
             "last_decode_ts": 0.0,
         }
         self._conn_ok: bool = False
+        self._reported_no_hardware: bool = False
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -70,6 +71,7 @@ class CANPlugin(BasePlugin):
             hz = 10.0
         self._snapshot_period_s = max(0.01, 1.0 / max(1.0, hz))
         self._bus_contexts = self._build_bus_contexts()
+        self._reported_no_hardware = False
         n_buses = len(self._bus_contexts)
         n_sigs = sum(len(bc.signal_map) for bc in self._bus_contexts)
         print(f"[INFO] CAN: {n_buses} bus(es), {n_sigs} signal(s) resolved")
@@ -137,14 +139,17 @@ class CANPlugin(BasePlugin):
         if self.mode == "real":
             any_open = False
             for bc in self._bus_contexts:
+                if not bc.channel:
+                    continue
                 self._open_bus(bc)
                 self._load_dbc(bc)
                 self._build_decode_specs(bc)
                 if bc.bus is not None:
                     any_open = True
             self._conn_ok = any_open
-            if not any_open and self._bus_contexts:
+            if not any_open:
                 print("[CAN] WARNING: no buses could be opened; plugin will report disconnected")
+                self._report_no_hardware()
         else:
             self._conn_ok = True
         with self._snapshot_lock:
@@ -154,7 +159,20 @@ class CANPlugin(BasePlugin):
 
     def simulate_step(self) -> Dict[str, Any]:
         with self._snapshot_lock:
-            return dict(self._snapshot_values)
+            vals = dict(self._snapshot_values)
+        msgs = self._drain_console_msgs()
+        if msgs:
+            vals["__console_msgs__"] = msgs
+        return vals
+
+    def _report_no_hardware(self) -> None:
+        if self._reported_no_hardware:
+            return
+        self._reported_no_hardware = True
+        self._console_msg(
+            "[CAN] No CAN hardware/interface configured or available. "
+            "Open CAN config and select a detected CAN channel."
+        )
 
     def stop(self) -> None:
         self._snapshot_stop.set()

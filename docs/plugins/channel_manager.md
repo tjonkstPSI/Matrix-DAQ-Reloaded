@@ -1,4 +1,4 @@
-<!-- Author: T. Onkst | Date: 03092026 -->
+<!-- Author: T. Onkst | Date: 05142026 -->
 
 ## Channel Manager Plugin Specification
 
@@ -11,13 +11,13 @@ Configure core logging cadence and segmentation settings, and manage two-tier pe
   - Logging inputs:
     - sample rate (Hz),
     - segment time limit (s),
-    - segment size limit (MB),
-    - SQLite commit interval (s).
+    - segment size limit (MB).
+  - SQLite commit interval remains available in YAML as a super-user option, but is not exposed in the regular dialog.
   - Alarm table for active runtime channel aliases.
   - Two-tier alarm setup:
-  - warning tier and alarm tier,
+    - warning tier and alarm tier,
     - low/high thresholds,
-    - per-limit latch delays (enter/clear),
+    - per-limit latch delays (enter/clear) edited through a validated dialog,
     - per-tier action.
   - Enabling conditions:
     - Always Enabled
@@ -34,6 +34,7 @@ Configure core logging cadence and segmentation settings, and manage two-tier pe
 - Each tier action can be:
   - `Visible Alert`
   - `Visible Alert + Shutdown`
+- New warning and alarm actions default to `Visible Alert`; operators must explicitly choose `Visible Alert + Shutdown` when a warning/alarm should request shutdown.
 - Aggregated shutdown request is action-driven (a tier must be in active alarm state and configured with `Visible Alert + Shutdown`).
 - Per-limit debounce is supported for each of:
   - warning low/high
@@ -65,7 +66,7 @@ File: `configs/channel_manager.yaml`
 enabled: true
 recording_rate_hz: 10
 storage:
-  commit_interval_s: 2
+  commit_interval_s: 2        # YAML-only super-user setting
   segment_time_limit_s: 3600
   segment_size_limit_mb: 100
 engine_running:
@@ -98,9 +99,11 @@ channels:
 - `recording_rate_hz > 0`
 - `storage.segment_time_limit_s > 0`
 - `storage.segment_size_limit_mb > 0`
-- `storage.commit_interval_s >= 0.1`
+- `storage.commit_interval_s >= 0.1` when edited directly in YAML.
 - Channel aliases in table must be unique.
 - Alarm thresholds are optional; blank disables that threshold.
+- Non-empty alarm threshold cells and enabling thresholds must be finite numeric values.
+- Latch/unlatch delay pairs are edited through a double-click dialog and must be zero or greater.
 
 ### Execution Model
 - Core tick cadence is derived from `recording_rate_hz` in Channel Manager.
@@ -112,8 +115,10 @@ channels:
   1) Set sample rate and storage segmentation settings.
   2) Select engine speed alias + RPM threshold for engine condition modes.
   3) Add active channels, remove extra rows, and edit alarm table.
-  4) Set per-channel **Shutdown Type** (Hard/Soft dropdown) to control which internal boolean is raised on SHUT.
-  5) Save (writes YAML + reloads Channel Manager runtime behavior).
+  4) Double-click any `X / Y` latch column to edit latch time (X) and unlatch time (Y) with numeric validation.
+  5) Set per-channel **Shutdown Type** (Hard/Soft dropdown) to control which internal boolean is raised on SHUT.
+  6) Save (writes YAML + reloads Channel Manager runtime behavior).
+- Alarm table headers are wrapped and the threshold/latch columns are sized compactly so the dialog uses horizontal space more efficiently.
 
 ### Outputs & Metadata
 - Recording cadence and storage segmentation settings are captured in run metadata snapshot.
@@ -123,12 +128,12 @@ channels:
   - Coloring helper is reusable for future table-based displays.
 
 ### Error Conditions (Examples)
-- Invalid thresholds (e.g., high < low) → validation error
-- Non‑numeric channel selected for numeric alarm → validation error
+- Non-numeric threshold text in the alarm table → validation error
+- Negative latch/unlatch times → blocked by the latch editor
 
 ### Test Cases (Channel Manager)
 - CM-Rate-001: Set R to various values ≤ 100 Hz; system uses R for storage timeline
-- CM-Alarms-Validate-001: Threshold relations and non‑negative latch times enforced
+- CM-Alarms-Validate-001: Numeric threshold validation and non-negative latch times enforced
 - CM-Alarms-Latch-001: trigger/unlatch timings perform as specified on synthetic data
 - CM-Precedence-001: Alarm state overrides Warning in UI and summary
 - CM-Aggregation-001: AlarmSummary booleans reflect per‑channel states

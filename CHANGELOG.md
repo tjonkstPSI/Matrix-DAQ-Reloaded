@@ -1,10 +1,48 @@
-<!-- Author: T. Onkst | Date: 03092026 -->
+<!-- Author: T. Onkst | Date: 05142026 -->
 
 # Changelog
 
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased] - 03/09/2026
+
+### CCP All Channels Table display labels — 05/14/2026
+#### Added
+- **Display-only CCP labels**: CCP Primary and Secondary panels in the All Channels Table now show the raw CCP measurement name without the configured `naming_prefix`, while tooltips retain the full telemetry alias used for recording/export/formulas.
+#### Changed
+- **Cached label metadata**: the core publishes cached `display_aliases` metadata alongside `source_map`; it refreshes only when plugin metadata changes and does not add a new UI refresh loop.
+
+### All Channels Table source grouping refresh — 05/14/2026
+#### Fixed
+- **Plugin reload channel placement**: the core now rebuilds the telemetry `source_map` after plugin reloads, plugin selection sync, and mode restarts so newly added channels are placed in the correct All Channels Table panel instead of falling into `Other` until app restart.
+
+### Calculated Channels config wording cleanup — 05/14/2026
+#### Changed
+- **Evaluation rate label**: renamed the config dialog's `Global update rate (Hz)` label to `Calculation Evaluation Rate (Hz)` to clarify that it controls the calculated-channel worker evaluation cadence, while Channel Manager controls the main recording/core tick rate.
+
+### CAN and CCP config hardware discovery cleanup — 05/14/2026
+#### Added
+- **Shared CAN hardware discovery**: CAN and CCP config dialogs now use one shared helper that tries `python-can.detect_available_configs(interfaces=["nixnet"])` first and falls back to NI-XNET system probing.
+- **Runtime no-hardware messages**: CAN and CCP now queue one-time console Messages box notices when no CAN hardware/interface is configured or available.
+#### Changed
+- **CAN/CCP interface dropdowns**: CAN channel and CCP CAN interface fields now use discovered-hardware dropdowns. Saved YAML values are preselected only when they match detected hardware; mismatches start blank while still showing detected options.
+- **No-hardware config exit**: if no CAN hardware is discovered, CAN and CCP config dialogs allow blank interface/channel values so users can close config. Runtime then reports disconnected/red through `CAN/conn_ok` or `CCP/conn_ok`.
+
+### Channel Manager config UI cleanup — 05/14/2026
+#### Changed
+- **Commit interval hidden from regular UI**: Channel Manager no longer exposes `storage.commit_interval_s` in the config dialog. The value remains preserved in `channel_manager.yaml` as a super-user setting and still controls SQLite commit cadence.
+- **Alarm action defaults**: new/missing alarm actions now default to `Visible Alert` instead of `Visible Alert + Shutdown`; existing saved shutdown actions continue to load unchanged.
+- **Alarm table layout**: threshold and latch columns use compact widths, the Channel column takes remaining space, and column headers wrap to two lines to reduce horizontal scrolling.
+#### Fixed
+- **Latch delay editing**: `X / Y` latch columns now open a double-click dialog with validated non-negative latch/unlatch inputs instead of accepting arbitrary inline text.
+- **Threshold validation**: non-empty warning/alarm threshold cells and enabling thresholds must now be finite numeric values before save/export, preventing accidental strings from being silently saved as disabled thresholds.
+
+### CCP SHORT_UP notification handling and diagnostics — 05/14/2026
+#### Added
+- **YAML-driven SHORT_UP timing**: `short_up_timeout_s` is now resolved from top-level or per-device CCP YAML and remains capped by `io_timeout_s`.
+- **SHORT_UP miss diagnostics**: `short_up_debug_misses` enables capped logging of failed SHORT_UP attempts, including channel, address, expected counter, and sampled RX payloads.
+#### Fixed
+- **SHORT_UP notification CRM handling**: SHORT_UP polling now uses the shared notification-aware CRM matcher, accepting `0x30`-`0x33` acknowledgments such as `0x32` when the command counter matches. This prevents valid TIPAdapt responses from being treated as timeouts/NaN.
 
 ### SQLite recording backend, launcher supervision, and splash refresh — 05/04/2026
 #### Added
@@ -14,6 +52,7 @@ All notable changes to this project will be documented in this file.
 - **Graceful launcher shutdown**: closing the UI sends a core `shutdown` control message, waits for plugin cleanup, and falls back to process terminate/kill only if the core does not exit.
 - **Custom splash image support**: the startup splash now uses `assets/splash.png` when present, overlays the discovered app version, and scales to a typical splash size.
 #### Changed
+- **Console window footprint**: plugin tiles use smaller fonts, tighter spacing, and lower fixed heights; red error tiles no longer show redundant `Error` text; the console now opens narrower at the primary monitor's top-left work area, and display windows are no longer Qt-owned by the console so the console can raise above them while remaining minimizable.
 - **Channel Manager storage settings**: replaced Parquet coalesce/keep-chunks controls with a SQLite commit interval setting.
 - **Recording stop flow**: stop now finalizes the SQLite writer and starts background Excel export directly; merge progress UI was removed because the merge stage no longer exists for SQLite runs.
 - **Plugin startup semantics**: plugin validation/startup failures no longer mutate `_plugin_enabled`; selected/config-enabled plugins still participate in source-map grouping and UI status. Modbus keeps its local validation-failure behavior without changing global enablement state.

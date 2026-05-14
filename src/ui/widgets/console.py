@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 import json
 from typing import Any, Dict, List, Optional
@@ -9,6 +10,7 @@ from pathlib import Path
 
 try:
     from PySide6.QtCore import Qt, QTimer
+    from PySide6.QtGui import QGuiApplication
     from PySide6.QtWidgets import (
         QMainWindow,
         QWidget,
@@ -29,10 +31,27 @@ except Exception:
 
 
 class ConsoleWindow(QMainWindow):
+    _PLUGIN_CONFIG_FILES: Dict[str, str] = {
+        "NI_DAQ": "ni_daq.yaml",
+        "CAN": "can.yaml",
+        "CCP": "ccp.yaml",
+        "Calculated_Channels": "calculated_channels.yaml",
+        "Cycle": "cycle.yaml",
+        "LoadBank": "loadbank.yaml",
+        "Modbus": "modbus.yaml",
+        "Statistics": "statistics.yaml",
+        "Vaisala": "vaisala.yaml",
+        "Omega": "omega.yaml",
+        "EngineTest": "engine_test.yaml",
+        "Channel_Manager": "channel_manager.yaml",
+    }
+
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Engine Test Data Recorder — Console")
-        self.resize(420, 900)
+        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+        self.resize(336, 900)
+        self._move_to_primary_screen_top_left()
         # Telemetry state
         self._last_rx_ts: float = 0.0
         self._last_payload: Dict[str, Any] = {}
@@ -40,12 +59,24 @@ class ConsoleWindow(QMainWindow):
         # Run state
         self._locked: bool = False
         self._prev_rec: bool = False
+        self._plugin_config_ok_cache: Dict[str, bool] = {}
+        # Optional Phase 1 UI performance diagnostics (off unless explicitly enabled).
+        self._perf_diag_enabled = str(os.environ.get("MATRIX_UI_PERF_DIAG", "")).strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        self._perf_diag: Dict[str, Any] = {}
+        self._perf_diag_last_print = time.perf_counter()
         # AO metadata cache
         self._ao_meta_cache: Optional[List[Dict[str, Any]]] = None
         # UI
         self._init_ui()
         # Telemetry
         self._init_telemetry()
+        QTimer.singleShot(0, self._bring_console_to_front)  # type: ignore[arg-type]
+        QTimer.singleShot(250, self._bring_console_to_front)  # type: ignore[arg-type]
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
         try:
@@ -88,6 +119,53 @@ class ConsoleWindow(QMainWindow):
         except Exception:
             event.accept()
 
+    def _record_perf_diag(self, bucket: str, **metrics: float) -> None:
+        """Collect low-volume UI timing diagnostics when MATRIX_UI_PERF_DIAG=1."""
+        if not self._perf_diag_enabled:
+            return
+        try:
+            diag = self._perf_diag.setdefault(bucket, {"count": 0})
+            diag["count"] = int(diag.get("count", 0)) + 1
+            for key, value in metrics.items():
+                vals = diag.setdefault(key, [])
+                if isinstance(vals, list):
+                    vals.append(float(value))
+            now = time.perf_counter()
+            if now - self._perf_diag_last_print >= 5.0:
+                self._print_perf_diag(now)
+        except Exception:
+            pass
+
+    def _print_perf_diag(self, now: float) -> None:
+        if not self._perf_diag:
+            self._perf_diag_last_print = now
+            return
+        try:
+            elapsed = max(0.001, now - self._perf_diag_last_print)
+
+            def _avg(values: Any) -> float:
+                return (sum(values) / float(len(values))) if isinstance(values, list) and values else 0.0
+
+            def _max(values: Any) -> float:
+                return max(values) if isinstance(values, list) and values else 0.0
+
+            for bucket, data in sorted(self._perf_diag.items()):
+                if not isinstance(data, dict):
+                    continue
+                count = int(data.get("count", 0))
+                parts = [f"[UI_PERF] {bucket}", f"count={count}", f"rate={count / elapsed:.1f}/s"]
+                for key, values in sorted(data.items()):
+                    if key == "count" or not isinstance(values, list):
+                        continue
+                    parts.append(f"{key}_avg={_avg(values):.2f}")
+                    parts.append(f"{key}_max={_max(values):.2f}")
+                print(" ".join(parts), flush=True)
+        except Exception:
+            pass
+        finally:
+            self._perf_diag = {}
+            self._perf_diag_last_print = now
+
     def _init_ui(self) -> None:
         root = QWidget(self)
         self.setCentralWidget(root)
@@ -110,7 +188,7 @@ class ConsoleWindow(QMainWindow):
         plugins_box = QGroupBox("Plugins")
         pv = QVBoxLayout(plugins_box)
         pv.setContentsMargins(8, 8, 8, 8)
-        pv.setSpacing(8)
+        pv.setSpacing(4)
         self._tiles: Dict[str, QFrame] = {}
         for pid in self._load_selected_plugins():
             tile = self._create_tile(pid, color="#888888", subtitle="Unknown")
@@ -240,6 +318,23 @@ class ConsoleWindow(QMainWindow):
         self._ui_timer.timeout.connect(self._refresh_status)  # type: ignore
         self._ui_timer.start()
 
+    def _move_to_primary_screen_top_left(self) -> None:
+        screen = QGuiApplication.primaryScreen()
+        if screen is None:
+            return
+        ag = screen.availableGeometry()
+        margin = 6
+        self.move(ag.left() + margin, ag.top() + margin)
+
+    def _bring_console_to_front(self) -> None:
+        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+        if not self.isVisible():
+            self.show()
+        if self.isMinimized():
+            return
+        self.raise_()
+        self.activateWindow()
+
     def _reopen_launcher(self) -> None:
         # Fully close this console window, then reopen the launch configuration.
         try:
@@ -292,20 +387,48 @@ class ConsoleWindow(QMainWindow):
         frame.setFrameShape(QFrame.StyledPanel)
         frame.setStyleSheet(f"QFrame {{ background-color: {color}; border-radius: 6px; }}")
         lay = QVBoxLayout(frame)
-        lay.setContentsMargins(10, 8, 10, 8)
+        lay.setContentsMargins(8, 4, 8, 4)
         lay.setSpacing(2)
         lbl_title = QLabel(title)
-        lbl_title.setStyleSheet("QLabel { color: white; font-weight: 600; font-size: 14px; }")
+        lbl_title.setStyleSheet("QLabel { color: white; font-weight: 600; font-size: 12px; }")
         lbl_sub = QLabel(subtitle)
-        lbl_sub.setStyleSheet("QLabel { color: white; font-size: 12px; }")
+        lbl_sub.setStyleSheet("QLabel { color: white; font-size: 11px; }")
         lay.addWidget(lbl_title)
         lay.addWidget(lbl_sub)
         # Default compact height
-        frame.setFixedHeight(48)
+        frame.setFixedHeight(40)
         # Attach refs
         frame._lbl_title = lbl_title  # type: ignore
         frame._lbl_sub = lbl_sub  # type: ignore
         return frame
+
+    def _plugin_configs_editable(self) -> bool:
+        """Configuration dialogs are editable only while the test is fully unlocked."""
+        try:
+            if bool(self._last_payload.get("recording", False)):
+                return False
+        except Exception:
+            pass
+        try:
+            vals = self._last_payload.get("values")
+            if isinstance(vals, dict):
+                locked = vals.get("EngineTest/locked")
+                if locked is not None and bool(int(float(locked))):
+                    return False
+        except Exception:
+            pass
+        return not bool(self._locked)
+
+    def _ensure_plugin_configs_editable(self) -> bool:
+        if self._plugin_configs_editable():
+            return True
+        try:
+            self.txt_messages.append(
+                "[INFO] Configuration is only available when the test is unlocked and not recording."
+            )
+        except Exception:
+            pass
+        return False
 
     def _show_nidaq_menu(self, pos) -> None:
         # Context menu for NI_DAQ tile: Configure
@@ -315,6 +438,8 @@ class ConsoleWindow(QMainWindow):
             return
         sender = self.sender()
         if not sender or not isinstance(sender, QFrame):
+            return
+        if not self._ensure_plugin_configs_editable():
             return
         menu = QMenu(self)
         act_cfg = menu.addAction("Configure…")
@@ -329,6 +454,7 @@ class ConsoleWindow(QMainWindow):
             dlg = NiDaqConfigDialog(self)
             if dlg.exec() == QDialog.Accepted:
                 self.invalidate_ao_cache()
+                self._refresh_plugin_config_ok("NI_DAQ")
 
     def _show_ccp_menu(self, pos) -> None:
         # Context menu for CCP tile: Configure
@@ -338,6 +464,8 @@ class ConsoleWindow(QMainWindow):
             return
         sender = self.sender()
         if not sender or not isinstance(sender, QFrame):
+            return
+        if not self._ensure_plugin_configs_editable():
             return
         menu = QMenu(self)
         act_cfg = menu.addAction("Configure…")
@@ -351,6 +479,7 @@ class ConsoleWindow(QMainWindow):
                 return
             dlg = CCPConfigDialog(self)
             dlg.exec()
+            self._refresh_plugin_config_ok("CCP")
 
     def _show_can_menu(self, pos) -> None:
         # Context menu for CAN tile: Configure
@@ -360,6 +489,8 @@ class ConsoleWindow(QMainWindow):
             return
         sender = self.sender()
         if not sender or not isinstance(sender, QFrame):
+            return
+        if not self._ensure_plugin_configs_editable():
             return
         menu = QMenu(self)
         act_cfg = menu.addAction("Configure…")
@@ -373,6 +504,7 @@ class ConsoleWindow(QMainWindow):
                 return
             dlg = CANConfigDialog(self)
             dlg.exec()
+            self._refresh_plugin_config_ok("CAN")
 
     def _show_modbus_menu(self, pos) -> None:
         # Context menu for Modbus tile: Configure
@@ -382,6 +514,8 @@ class ConsoleWindow(QMainWindow):
             return
         sender = self.sender()
         if not sender or not isinstance(sender, QFrame):
+            return
+        if not self._ensure_plugin_configs_editable():
             return
         menu = QMenu(self)
         act_cfg = menu.addAction("Configure…")
@@ -395,6 +529,7 @@ class ConsoleWindow(QMainWindow):
                 return
             dlg = ModbusConfigDialog(self)
             dlg.exec()
+            self._refresh_plugin_config_ok("Modbus")
 
     def _show_calculated_menu(self, pos) -> None:
         # Context menu for Calculated_Channels tile: Configure
@@ -404,6 +539,8 @@ class ConsoleWindow(QMainWindow):
             return
         sender = self.sender()
         if not sender or not isinstance(sender, QFrame):
+            return
+        if not self._ensure_plugin_configs_editable():
             return
         menu = QMenu(self)
         act_cfg = menu.addAction("Configure…")
@@ -417,6 +554,7 @@ class ConsoleWindow(QMainWindow):
                 return
             dlg = CalculatedConfigDialog(self)
             dlg.exec()
+            self._refresh_plugin_config_ok("Calculated_Channels")
 
     def _show_loadbank_menu(self, pos) -> None:
         # Context menu for LoadBank tile: Configure
@@ -430,6 +568,7 @@ class ConsoleWindow(QMainWindow):
         anchor = sender if hasattr(sender, "mapToGlobal") else self
         menu = QMenu(self)
         act_cfg = menu.addAction("Configure…")
+        act_cfg.setEnabled(self._plugin_configs_editable())
         act_panel = menu.addAction("Show operator panel…")
         act_win = menu.addAction("Open operator panel in new window…")
         act = menu.exec_(anchor.mapToGlobal(pos))
@@ -440,6 +579,8 @@ class ConsoleWindow(QMainWindow):
             self._open_loadbank_operator_window()
             return
         if act == act_cfg:
+            if not self._ensure_plugin_configs_editable():
+                return
             try:
                 from .loadbank_config import LoadBankConfigDialog
             except Exception as e:
@@ -452,6 +593,7 @@ class ConsoleWindow(QMainWindow):
                 dlg = LoadBankConfigDialog(self)
                 dlg.exec()
                 self._refresh_loadbank_config()
+                self._refresh_plugin_config_ok("LoadBank")
             except Exception as e:
                 try:
                     QMessageBox.critical(self, "LoadBank Configure Error", f"Failed to open LoadBank config dialog:\n{e}")
@@ -467,6 +609,8 @@ class ConsoleWindow(QMainWindow):
         sender = self.sender()
         if not sender or not isinstance(sender, QFrame):
             return
+        if not self._ensure_plugin_configs_editable():
+            return
         menu = QMenu(self)
         act_cfg = menu.addAction("Configure…")
         act = menu.exec_(sender.mapToGlobal(pos))
@@ -479,6 +623,7 @@ class ConsoleWindow(QMainWindow):
                 return
             dlg = ChannelManagerConfigDialog(self)
             dlg.exec()
+            self._refresh_plugin_config_ok("Channel_Manager")
 
     def _show_statistics_menu(self, pos) -> None:
         try:
@@ -487,6 +632,8 @@ class ConsoleWindow(QMainWindow):
             return
         sender = self.sender()
         if sender is None:
+            return
+        if not self._ensure_plugin_configs_editable():
             return
         anchor = sender if hasattr(sender, "mapToGlobal") else self
         menu = QMenu(self)
@@ -511,6 +658,7 @@ class ConsoleWindow(QMainWindow):
                     pass
                 dlg = StatisticsConfigDialog(self, telemetry_aliases=aliases)
                 dlg.exec()
+                self._refresh_plugin_config_ok("Statistics")
             except Exception as e:
                 try:
                     QMessageBox.critical(self, "Statistics Configure Error", f"Failed to open Statistics config dialog:\n{e}")
@@ -524,6 +672,8 @@ class ConsoleWindow(QMainWindow):
             return
         sender = self.sender()
         if sender is None:
+            return
+        if not self._ensure_plugin_configs_editable():
             return
         anchor = sender if hasattr(sender, "mapToGlobal") else self
         menu = QMenu(self)
@@ -541,6 +691,7 @@ class ConsoleWindow(QMainWindow):
             try:
                 dlg = VaisalaConfigDialog(self)
                 dlg.exec()
+                self._refresh_plugin_config_ok("Vaisala")
             except Exception as e:
                 try:
                     QMessageBox.critical(self, "Vaisala Configure Error", f"Failed to open Vaisala config dialog:\n{e}")
@@ -554,6 +705,8 @@ class ConsoleWindow(QMainWindow):
             return
         sender = self.sender()
         if sender is None:
+            return
+        if not self._ensure_plugin_configs_editable():
             return
         anchor = sender if hasattr(sender, "mapToGlobal") else self
         menu = QMenu(self)
@@ -571,6 +724,7 @@ class ConsoleWindow(QMainWindow):
             try:
                 dlg = OmegaConfigDialog(self)
                 dlg.exec()
+                self._refresh_plugin_config_ok("Omega")
             except Exception as e:
                 try:
                     QMessageBox.critical(self, "Omega Configure Error", f"Failed to open Omega config dialog:\n{e}")
@@ -584,6 +738,8 @@ class ConsoleWindow(QMainWindow):
             return
         sender = self.sender()
         if sender is None:
+            return
+        if not self._ensure_plugin_configs_editable():
             return
         anchor = sender if hasattr(sender, "mapToGlobal") else self
         menu = QMenu(self)
@@ -601,6 +757,7 @@ class ConsoleWindow(QMainWindow):
             try:
                 dlg = CycleConfigDialog(self)
                 dlg.exec()
+                self._refresh_plugin_config_ok("Cycle")
             except Exception as e:
                 try:
                     QMessageBox.critical(self, "Cycle Configure Error", f"Failed to open Cycle config dialog:\n{e}")
@@ -613,7 +770,7 @@ class ConsoleWindow(QMainWindow):
         has_sub = bool(subtitle.strip())
         tile._lbl_sub.setText(subtitle if has_sub else "")  # type: ignore
         tile._lbl_sub.setVisible(has_sub)  # type: ignore
-        tile.setFixedHeight(48 if not has_sub else 64)
+        tile.setFixedHeight(40 if not has_sub else 56)
 
     def _on_loadbank_panel_toggled(self, checked: bool) -> None:
         self._show_loadbank_operator_dock(checked)
@@ -643,7 +800,8 @@ class ConsoleWindow(QMainWindow):
             from .loadbank_control import LoadBankControlPanel
         except Exception:
             return
-        win = _QMainWindow(self)
+        # Parentless top-level so minimizing the console does not minimize this window (cf. _create_display).
+        win = _QMainWindow()
         win.setWindowTitle("Load Bank — Operator")
         panel = LoadBankControlPanel(win)
         try:
@@ -694,9 +852,17 @@ class ConsoleWindow(QMainWindow):
                 pass
 
     def _refresh_loadbank_panels(self, vals: Dict[str, Any]) -> None:
+        diag_start = time.perf_counter() if getattr(self, "_perf_diag_enabled", False) else 0.0
+        hidden_main_update = 0.0
         ready = self._loadbank_ready_from_values(vals)
         main = getattr(self, "_lb_panel_main", None)
         if main is not None and hasattr(main, "update_values"):
+            dock = getattr(self, "_lb_dock", None)
+            try:
+                if dock is not None and not dock.isVisible():
+                    hidden_main_update = 1.0
+            except Exception:
+                pass
             main.update_values(vals)
             if hasattr(main, "set_link_status"):
                 main.set_link_status(bool(self._conn_latched), device_ready=ready)
@@ -715,6 +881,13 @@ class ConsoleWindow(QMainWindow):
             self._lb_operator_windows = [w for w in self._lb_operator_windows if w.isVisible()]
         except Exception:
             pass
+        if getattr(self, "_perf_diag_enabled", False):
+            self._record_perf_diag(
+                "loadbank_panels",
+                elapsed_ms=(time.perf_counter() - diag_start) * 1000.0,
+                hidden_main_updates=hidden_main_update,
+                operator_windows=float(len(getattr(self, "_lb_operator_windows", []) or [])),
+            )
 
     def _init_telemetry(self) -> None:
         self._sub = None
@@ -741,6 +914,13 @@ class ConsoleWindow(QMainWindow):
     def _poll_telemetry(self) -> None:
         if self._sub is None:
             return
+        diag_enabled = getattr(self, "_perf_diag_enabled", False)
+        diag_start = time.perf_counter() if diag_enabled else 0.0
+        recv_count = 0
+        telemetry_decode_count = 0
+        status_decode_count = 0
+        decode_error_count = 0
+        payload_bytes = 0
         try:
             import zmq
             while True:
@@ -748,19 +928,46 @@ class ConsoleWindow(QMainWindow):
                     topic, payload = self._sub.recv_multipart(flags=zmq.NOBLOCK)
                 except Exception:
                     break
+                recv_count += 1
+                try:
+                    payload_bytes += len(payload)
+                except Exception:
+                    pass
                 try:
                     msg = json.loads(payload.decode("utf-8"))
                 except Exception:
+                    decode_error_count += 1
                     continue
                 if topic == b"telemetry":
+                    telemetry_decode_count += 1
                     self._last_payload = msg
                     self._last_rx_ts = time.time()
                 elif topic == b"status":
+                    status_decode_count += 1
                     self._handle_status_msg(msg)
         except Exception:
             pass
+        finally:
+            if diag_enabled:
+                self._record_perf_diag(
+                    "poll_telemetry",
+                    elapsed_ms=(time.perf_counter() - diag_start) * 1000.0,
+                    recv_count=float(recv_count),
+                    telemetry_decodes=float(telemetry_decode_count),
+                    status_decodes=float(status_decode_count),
+                    decode_errors=float(decode_error_count),
+                    payload_kb=float(payload_bytes) / 1024.0,
+                    redundant_telemetry_decodes=float(max(0, telemetry_decode_count - 1)),
+                )
 
     def _refresh_status(self) -> None:
+        diag_enabled = getattr(self, "_perf_diag_enabled", False)
+        diag_start = time.perf_counter() if diag_enabled else 0.0
+        tile_ms = 0.0
+        ao_meta_ms = 0.0
+        all_channels_ms = 0.0
+        monitor_ms = 0.0
+        loadbank_ms = 0.0
         now = time.time()
         age = (now - self._last_rx_ts) if self._last_rx_ts > 0 else 1e9
         # Use hysteresis so brief telemetry stalls do not cause UI flicker.
@@ -814,6 +1021,7 @@ class ConsoleWindow(QMainWindow):
         if self.btn_primary.text() != label:
             self.btn_primary.setText(label)
         # Update plugin tiles with health/connection status
+        tile_start = time.perf_counter() if diag_enabled else 0.0
         for pid, tile in self._tiles.items():
             if not connected:
                 self._set_tile(tile, "#888888", "Unknown")
@@ -822,7 +1030,7 @@ class ConsoleWindow(QMainWindow):
             if health_status == "ok":
                 self._set_tile(tile, "#27ae60", "")
             elif health_status == "error":
-                self._set_tile(tile, "#c0392b", "Error")
+                self._set_tile(tile, "#c0392b", "")
             elif health_status == "disconnected":
                 self._set_tile(tile, "#c0392b", "Disconnected")
             else:
@@ -830,6 +1038,8 @@ class ConsoleWindow(QMainWindow):
                     self._set_tile(tile, "#27ae60", "")
                 else:
                     self._set_tile(tile, "#c0392b", "Invalid config")
+        if diag_enabled:
+            tile_ms = (time.perf_counter() - tile_start) * 1000.0
 
         # Push latest values into display windows
         try:
@@ -837,25 +1047,55 @@ class ConsoleWindow(QMainWindow):
             units = self._last_payload.get("units") if isinstance(self._last_payload, dict) else None
             states = self._last_payload.get("states") if isinstance(self._last_payload, dict) else None
             source_map = self._last_payload.get("source_map") if isinstance(self._last_payload, dict) else None
+            display_aliases = self._last_payload.get("display_aliases") if isinstance(self._last_payload, dict) else None
+            meta_start = time.perf_counter() if diag_enabled else 0.0
             ao_meta = self._get_ao_metadata()
+            if diag_enabled:
+                ao_meta_ms = (time.perf_counter() - meta_start) * 1000.0
             if self._display_alive("AllChannelsTable"):
                 table = self._display_windows["AllChannelsTable"].centralWidget()
                 if hasattr(table, "update_data"):
+                    call_start = time.perf_counter() if diag_enabled else 0.0
                     table.update_data(vals, units, states, ao_channels=ao_meta if ao_meta else None,
-                                      source_map=source_map)
+                                      source_map=source_map, display_aliases=display_aliases)
+                    if diag_enabled:
+                        all_channels_ms = (time.perf_counter() - call_start) * 1000.0
             if self._display_alive("MainTestMonitor"):
                 monitor = self._display_windows["MainTestMonitor"].centralWidget()
                 if hasattr(monitor, "update_data"):
                     alarm_events = self._last_payload.get("alarm_events") if isinstance(self._last_payload, dict) else None
+                    call_start = time.perf_counter() if diag_enabled else 0.0
                     monitor.update_data(
                         vals, units, states,
                         alarm_events=alarm_events,
                         ao_channels=ao_meta if ao_meta else None,
                     )
+                    if diag_enabled:
+                        monitor_ms = (time.perf_counter() - call_start) * 1000.0
             if isinstance(vals, dict):
+                call_start = time.perf_counter() if diag_enabled else 0.0
                 self._refresh_loadbank_panels(vals)
+                if diag_enabled:
+                    loadbank_ms = (time.perf_counter() - call_start) * 1000.0
         except Exception:
             pass
+        if diag_enabled:
+            value_count = 0.0
+            try:
+                vals = self._last_payload.get("values") if isinstance(self._last_payload, dict) else None
+                value_count = float(len(vals)) if isinstance(vals, dict) else 0.0
+            except Exception:
+                value_count = 0.0
+            self._record_perf_diag(
+                "refresh_status",
+                elapsed_ms=(time.perf_counter() - diag_start) * 1000.0,
+                tile_ms=tile_ms,
+                ao_meta_ms=ao_meta_ms,
+                all_channels_ms=all_channels_ms,
+                monitor_ms=monitor_ms,
+                loadbank_ms=loadbank_ms,
+                value_count=value_count,
+            )
 
     def _handle_status_msg(self, msg: Dict[str, Any]) -> None:
         t = str(msg.get("type", ""))
@@ -1215,22 +1455,29 @@ class ConsoleWindow(QMainWindow):
         """Force re-read of AO metadata on next refresh (call after NI DAQ reload)."""
         self._ao_meta_cache = None
 
+    def _invalidate_plugin_config_ok(self, plugin_id: str | None = None) -> None:
+        """Invalidate cached plugin config validity after a config/reload flow."""
+        if plugin_id is None:
+            self._plugin_config_ok_cache.clear()
+            return
+        self._plugin_config_ok_cache.pop(str(plugin_id), None)
+
+    def _refresh_plugin_config_ok(self, plugin_id: str) -> bool:
+        """Recompute one plugin config validity immediately after invalidation."""
+        self._invalidate_plugin_config_ok(plugin_id)
+        return self._plugin_config_ok(plugin_id)
+
     def _plugin_config_ok(self, plugin_id: str) -> bool:
-        cfg_map = {
-            "NI_DAQ": "ni_daq.yaml",
-            "CAN": "can.yaml",
-            "CCP": "ccp.yaml",
-            "Calculated_Channels": "calculated_channels.yaml",
-            "Cycle": "cycle.yaml",
-            "LoadBank": "loadbank.yaml",
-            "Modbus": "modbus.yaml",
-            "Statistics": "statistics.yaml",
-            "Vaisala": "vaisala.yaml",
-            "Omega": "omega.yaml",
-            "EngineTest": "engine_test.yaml",
-            "Channel_Manager": "channel_manager.yaml",
-        }
-        fname = cfg_map.get(plugin_id)
+        plugin_id = str(plugin_id)
+        cached = self._plugin_config_ok_cache.get(plugin_id)
+        if cached is not None:
+            return bool(cached)
+        ok = self._compute_plugin_config_ok(plugin_id)
+        self._plugin_config_ok_cache[plugin_id] = ok
+        return ok
+
+    def _compute_plugin_config_ok(self, plugin_id: str) -> bool:
+        fname = self._PLUGIN_CONFIG_FILES.get(plugin_id)
         if not fname:
             return False
         cfg_path = Path(__file__).resolve().parents[3] / "configs" / fname
@@ -1298,7 +1545,8 @@ class ConsoleWindow(QMainWindow):
         if key == "AllChannelsTable":
             try:
                 from .channels_table import ChannelsTable
-                win = _QMainWindow(self)
+                # Keep display windows unowned so they do not stay above the always-on-top console.
+                win = _QMainWindow()
                 win.setWindowTitle("All Channels Table")
                 table = ChannelsTable(win)
                 win.setCentralWidget(table)
@@ -1311,7 +1559,8 @@ class ConsoleWindow(QMainWindow):
         if key == "MainTestMonitor":
             try:
                 from .test_monitor_display import TestMonitorDisplay
-                win = _QMainWindow(self)
+                # Keep display windows unowned so they do not stay above the always-on-top console.
+                win = _QMainWindow()
                 win.setWindowTitle("Main Test Monitor Display")
                 display = TestMonitorDisplay(win)
                 win.setCentralWidget(display)

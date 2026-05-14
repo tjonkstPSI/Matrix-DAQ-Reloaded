@@ -34,6 +34,8 @@ try:
 except Exception:
     raise
 
+from .nidaq_alias_picker import AliasPickerDialog
+
 
 class CalculatedConfigDialog(QDialog):
     def __init__(self, parent=None) -> None:
@@ -114,6 +116,7 @@ class CalculatedConfigDialog(QDialog):
         self.tbl_symbols.setHorizontalHeaderLabels(["Symbol", "Input Channel Alias or Constant"])
         self.tbl_symbols.horizontalHeader().setStretchLastSection(True)
         self.tbl_symbols.setMaximumHeight(160)
+        self.tbl_symbols.cellDoubleClicked.connect(self._on_symbols_alias_dblclick)  # type: ignore
         sv.addWidget(self.tbl_symbols)
         sym_btns = QHBoxLayout()
         btn_add_sym = QPushButton("Add Symbol")
@@ -150,6 +153,7 @@ class CalculatedConfigDialog(QDialog):
         self.tbl_outputs.setHorizontalHeaderLabels(["Variable Name", "Output Alias", "Unit"])
         self.tbl_outputs.horizontalHeader().setStretchLastSection(True)
         self.tbl_outputs.setMaximumHeight(140)
+        self.tbl_outputs.cellDoubleClicked.connect(self._on_outputs_alias_dblclick)  # type: ignore
         ov.addWidget(self.tbl_outputs)
         out_btns = QHBoxLayout()
         btn_add_out = QPushButton("Add Output")
@@ -168,9 +172,9 @@ class CalculatedConfigDialog(QDialog):
 
         root.addWidget(splitter, 1)
 
-        # Bottom: global rate + OK/Cancel
+        # Bottom: evaluation rate + OK/Cancel
         bottom = QHBoxLayout()
-        bottom.addWidget(QLabel("Global update rate (Hz):"))
+        bottom.addWidget(QLabel("Calculation Evaluation Rate (Hz):"))
         self.cmb_rate = QComboBox(self)
         self.cmb_rate.setEditable(True)
         self.cmb_rate.addItems(["1", "5", "10", "20", "50", "100"])
@@ -340,6 +344,21 @@ class CalculatedConfigDialog(QDialog):
         self.tbl_symbols.setItem(r, 0, QTableWidgetItem(sym))
         self.tbl_symbols.setItem(r, 1, QTableWidgetItem(mapped))
 
+    def _on_symbols_alias_dblclick(self, row: int, col: int) -> None:
+        if col != 1:
+            return
+        item = self.tbl_symbols.item(row, 1)
+        current = item.text().strip() if item is not None else ""
+        try:
+            dlg = AliasPickerDialog(parent=self, current_alias=current)
+            if dlg.exec() == QDialog.Accepted and dlg.selected_alias:
+                if item is None:
+                    item = QTableWidgetItem("")
+                    self.tbl_symbols.setItem(row, 1, item)
+                item.setText(dlg.selected_alias)
+        except Exception as exc:
+            QMessageBox.warning(self, "Alias Picker", f"Could not open alias picker: {exc}")
+
     def _remove_selected_symbol_rows(self) -> None:
         rows = sorted({i.row() for i in self.tbl_symbols.selectedIndexes()}, reverse=True)
         for r in rows:
@@ -388,6 +407,21 @@ class CalculatedConfigDialog(QDialog):
         self.tbl_outputs.setItem(r, 0, QTableWidgetItem(var))
         self.tbl_outputs.setItem(r, 1, QTableWidgetItem(alias))
         self.tbl_outputs.setItem(r, 2, QTableWidgetItem(unit))
+
+    def _on_outputs_alias_dblclick(self, row: int, col: int) -> None:
+        if col != 1:
+            return
+        item = self.tbl_outputs.item(row, 1)
+        current = item.text().strip() if item is not None else ""
+        try:
+            dlg = AliasPickerDialog(parent=self, current_alias=current)
+            if dlg.exec() == QDialog.Accepted and dlg.selected_alias:
+                if item is None:
+                    item = QTableWidgetItem("")
+                    self.tbl_outputs.setItem(row, 1, item)
+                item.setText(dlg.selected_alias)
+        except Exception as exc:
+            QMessageBox.warning(self, "Alias Picker", f"Could not open alias picker: {exc}")
 
     def _remove_selected_output_rows(self) -> None:
         rows = sorted({i.row() for i in self.tbl_outputs.selectedIndexes()}, reverse=True)
@@ -525,9 +559,9 @@ class CalculatedConfigDialog(QDialog):
         try:
             hz = float(self.cmb_rate.currentText().strip())
             if hz <= 0.0:
-                return "Global update rate must be > 0."
+                return "Calculation Evaluation Rate must be > 0."
         except Exception:
-            return "Global update rate must be numeric."
+            return "Calculation Evaluation Rate must be numeric."
         return None
 
     # ── Build doc and save ───────────────────────────────────────────

@@ -28,6 +28,8 @@ Desktop UI (PySide6) runs as a separate process from Core. It subscribes to live
 #### All‑Channels Table
 - Rows = enabled channels (physical + calculated + statistics + special like AlarmSummary)
 - Grouping and filters: by Category (Pressure, Temperature, Analog, Digital, ECM, Facility, Other), by Source (DAQ/CAN/CCP/Modbus/Vaisala/LoadBank/Calc/Stats)
+- Source grouping is driven by the core telemetry `source_map` payload. The core rebuilds this map at startup and after plugin reloads/selection changes so newly added aliases move into their correct panels without restarting the app.
+- CCP Primary/Secondary panels may show display-only shortened labels from telemetry `display_aliases`; values, alarms, recording, and exports still use the full alias.
 - Columns:
   - Alias (sortable), Value (latest), Units, Category, Source, Alarm State, Sample Age, Recording Enabled
   - Optional: Min/Max (session), Mean (session), Notes (from config)

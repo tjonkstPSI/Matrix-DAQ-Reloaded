@@ -92,7 +92,7 @@ The JSON schema matches the YAML block schema 1:1 so future server API integrati
 - `simulate_step(source_values)` is non-blocking:
   - stores latest source snapshot
   - returns latest computed calc snapshot
-- Worker thread computes at `recording_rate_hz` period (minimum 10 ms).
+- Worker thread computes at the Calculation Evaluation Rate (`recording_rate_hz`) period (minimum 10 ms).
 - Core tick/log cadence is controlled by Channel Manager; calculated outputs are sampled from this plugin's latest snapshot at tick time.
 - **Orchestrator evaluation order**: Calculated Channels always evaluate **after** all source plugins (NI DAQ, CAN, CCP, Modbus, Vaisala, Omega, LoadBank) have published their values in the tick.
 - **Block evaluation order**: top-to-bottom in `channels` list; later blocks may reference earlier block outputs via symbol mapping.
@@ -134,7 +134,7 @@ The JSON schema matches the YAML block schema 1:1 so future server API integrati
 - In dialog:
   1. Select or add a calculation block from the left list
   2. Edit block name, enable/disable, input symbols, multiline body, and exposed outputs in the right panel
-  3. Set global update rate (Hz) at the bottom
+  3. Set Calculation Evaluation Rate (Hz) at the bottom
   4. Optional: Export Recipe / Import Recipe for server-ready sharing
   5. Save (writes YAML + triggers `reload_plugin` for `Calculated_Channels`)
 

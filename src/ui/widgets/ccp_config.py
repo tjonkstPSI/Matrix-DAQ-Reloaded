@@ -10,6 +10,8 @@ from typing import Any, Dict, List
 
 import sys
 
+from .can_interfaces import discover_can_channels
+
 try:
     from ...plugins._ccp_a2l import parse_a2l_daq_lists, _canonical_poll_tier, is_daq_tier
 except Exception:
@@ -119,6 +121,7 @@ class CCPConfigDialog(QDialog):
         self._devices: List[Dict[str, Any]] = []
         self._active_device_idx: int = -1
         self._test_run_id: str = ""
+        self._available_can_channels = discover_can_channels()
         self._sub = None
         self._init_ui()
         self._load()
@@ -147,7 +150,11 @@ class CCPConfigDialog(QDialog):
         self.txt_device_name.textEdited.connect(self._on_device_name_changed)  # type: ignore
         self.cmb_role = QComboBox(self)
         self.cmb_role.addItems(["Primary", "Secondary"])
-        self.txt_interface = QLineEdit(self)
+        self.cmb_interface = QComboBox(self)
+        self.cmb_interface.setEditable(False)
+        self.cmb_interface.addItem("")
+        self.cmb_interface.addItems(self._available_can_channels)
+        self.cmb_interface.setToolTip("Detected NI-XNET CAN interfaces. Select a discovered interface before saving.")
         self.cmb_baudrate = QComboBox(self)
         self.cmb_baudrate.addItems(["125000", "250000", "500000", "1000000"])
         self.txt_access_key = QLineEdit(self)
@@ -156,7 +163,7 @@ class CCPConfigDialog(QDialog):
         self.txt_prefix = QLineEdit(self)
         form.addRow("Device Name", self.txt_device_name)
         form.addRow("ECM Role", self.cmb_role)
-        form.addRow("CAN interface", self.txt_interface)
+        form.addRow("CAN interface", self.cmb_interface)
         form.addRow("Baudrate", self.cmb_baudrate)
         form.addRow("Access key (hex)", self.txt_access_key)
         form.addRow("Naming prefix", self.txt_prefix)
@@ -295,7 +302,7 @@ class CCPConfigDialog(QDialog):
             "name": f"CCP {role.title()}",
             "role": role,
             "session": {
-                "interface": "CAN1",
+                "interface": self._default_interface_for_device(),
                 "baudrate": 250000,
                 "tx_id": "0x0CFF50F9",
                 "rx_id": "0x0CFF5100",
@@ -389,6 +396,10 @@ class CCPConfigDialog(QDialog):
     def _load(self) -> None:
         self._cfg = self._read_yaml(self._cfg_path)
         self._devices = self._load_devices_from_cfg(self._cfg)
+        for device in self._devices:
+            session = device.get("session") or {}
+            session["interface"] = self._matched_interface(str(session.get("interface") or ""))
+            device["session"] = session
         if hasattr(self, "spn_target_hz"):
             self.spn_target_hz.setValue(int(self._cfg.get("target_poll_hz", 10)))
         self.tabs.blockSignals(True)
@@ -413,7 +424,7 @@ class CCPConfigDialog(QDialog):
         d["role"] = "secondary" if role == "secondary" else "primary"
         d["session"] = {
             **(d.get("session") or {}),
-            "interface": self.txt_interface.text().strip(),
+            "interface": self.cmb_interface.currentText().strip(),
             "baudrate": int(self.cmb_baudrate.currentText().strip() or "250000"),
             "station_address": "0x0" if d["role"] == "primary" else "0x1",
         }
@@ -452,7 +463,7 @@ class CCPConfigDialog(QDialog):
         meas = d.get("measurements") or {}
         self.txt_device_name.setText(str(d.get("name") or f"CCP Device {idx+1}"))
         self.cmb_role.setCurrentText("Secondary" if str(d.get("role") or "").lower() == "secondary" else "Primary")
-        self.txt_interface.setText(str(session.get("interface", "CAN1")))
+        self._select_interface(str(session.get("interface", "")))
         baud = str(session.get("baudrate", "250000"))
         bidx = self.cmb_baudrate.findText(baud)
         self.cmb_baudrate.setCurrentIndex(bidx if bidx >= 0 else 1)
@@ -502,6 +513,41 @@ class CCPConfigDialog(QDialog):
         self.tabs.addTab(str(d.get("name")))
         self.tabs.setCurrentIndex(self.tabs.count() - 1)
         self._update_device_buttons()
+
+    def _matched_interface(self, interface: str) -> str:
+        wanted = str(interface or "").strip().upper()
+        for available in self._available_can_channels:
+            if available.upper() == wanted:
+                return available
+        return ""
+
+    def _select_interface(self, interface: str) -> None:
+        matched = self._matched_interface(interface)
+        if matched:
+            self.cmb_interface.setCurrentText(matched)
+            return
+        self.cmb_interface.setCurrentIndex(0)
+
+    def _used_interfaces(self) -> set[str]:
+        used: set[str] = set()
+        for i, device in enumerate(self._devices):
+            if i == self._active_device_idx:
+                current = self.cmb_interface.currentText().strip()
+                if current:
+                    used.add(current)
+                continue
+            session = device.get("session") or {}
+            interface = str(session.get("interface") or "").strip()
+            if interface:
+                used.add(interface)
+        return used
+
+    def _default_interface_for_device(self) -> str:
+        used = self._used_interfaces()
+        for interface in self._available_can_channels:
+            if interface not in used:
+                return interface
+        return ""
 
     def _remove_device(self) -> None:
         if not self._devices:
@@ -1069,7 +1115,7 @@ class CCPConfigDialog(QDialog):
             return "Primary/Secondary role must be unique per device."
         for d in devices:
             session = d.get("session") or {}
-            if not str(session.get("interface") or "").strip():
+            if not str(session.get("interface") or "").strip() and self._available_can_channels:
                 return f"{d.get('name','CCP device')}: CAN interface is required."
             a2l = d.get("a2l") or {}
             if not str(a2l.get("path") or "").strip():

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Any, Dict, List, Set
 
@@ -13,11 +14,13 @@ try:
         QDialogButtonBox,
         QFileDialog,
         QFormLayout,
+        QHeaderView,
         QHBoxLayout,
         QLabel,
         QLineEdit,
         QMessageBox,
         QPushButton,
+        QDoubleSpinBox,
         QTableWidget,
         QTableWidgetItem,
         QVBoxLayout,
@@ -46,20 +49,70 @@ _SHUTDOWN_TYPE_OPTIONS = [
 
 _COLS = [
     "Channel",
-    "Warn Low",
-    "Warn Low X / Y",
-    "Warn High",
-    "Warn High X / Y",
-    "Warn Action",
-    "Alarm Low",
-    "Alarm Low X / Y",
-    "Alarm High",
-    "Alarm High X / Y",
-    "Alarm Action",
-    "Shutdown Type",
-    "Enabling Cond",
-    "Enable Thres",
+    "Warn\nLow",
+    "Warn Low\nX / Y",
+    "Warn\nHigh",
+    "Warn High\nX / Y",
+    "Warn\nAction",
+    "Alarm\nLow",
+    "Alarm Low\nX / Y",
+    "Alarm\nHigh",
+    "Alarm High\nX / Y",
+    "Alarm\nAction",
+    "Shutdown\nType",
+    "Enabling\nCond",
+    "Enable\nThres",
 ]
+
+_LATCH_COLS = {
+    2: "Warn Low X / Y",
+    4: "Warn High X / Y",
+    7: "Alarm Low X / Y",
+    9: "Alarm High X / Y",
+}
+
+_THRESHOLD_COLS = {
+    1: "Warn Low",
+    3: "Warn High",
+    6: "Alarm Low",
+    8: "Alarm High",
+}
+
+
+class _DelayPairDialog(QDialog):
+    def __init__(self, title: str, enter_s: float, clear_s: float, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(title)
+
+        root = QVBoxLayout(self)
+        root.addWidget(QLabel("Set the latch and unlatch delay in seconds. Values must be zero or greater."))
+
+        form = QFormLayout()
+        self.spn_enter = QDoubleSpinBox(self)
+        self.spn_enter.setRange(0.0, 1_000_000.0)
+        self.spn_enter.setDecimals(3)
+        self.spn_enter.setSingleStep(0.1)
+        self.spn_enter.setValue(max(0.0, float(enter_s)))
+        self.spn_enter.setToolTip("Latch time (X): seconds the condition must be true before the alert activates.")
+
+        self.spn_clear = QDoubleSpinBox(self)
+        self.spn_clear.setRange(0.0, 1_000_000.0)
+        self.spn_clear.setDecimals(3)
+        self.spn_clear.setSingleStep(0.1)
+        self.spn_clear.setValue(max(0.0, float(clear_s)))
+        self.spn_clear.setToolTip("Unlatch time (Y): seconds the condition must be clear before the alert resets.")
+
+        form.addRow("Latch time (X)", self.spn_enter)
+        form.addRow("Unlatch time (Y)", self.spn_clear)
+        root.addLayout(form)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=self)
+        btns.accepted.connect(self.accept)  # type: ignore
+        btns.rejected.connect(self.reject)  # type: ignore
+        root.addWidget(btns)
+
+    def values(self) -> tuple[float, float]:
+        return (float(self.spn_enter.value()), float(self.spn_clear.value()))
 
 
 class ChannelManagerConfigDialog(QDialog):
@@ -87,12 +140,9 @@ class ChannelManagerConfigDialog(QDialog):
         self.cmb_rate.addItems(["1", "5", "10", "20", "50", "100"])
         self.txt_seg_time = QLineEdit(self)
         self.txt_seg_size = QLineEdit(self)
-        self.txt_commit_interval = QLineEdit(self)
-        self.txt_commit_interval.setToolTip("How often (seconds) buffered data is committed to disk. Lower = less data lost on crash, higher = less disk I/O.")
         form.addRow("Sample rate (Hz)", self.cmb_rate)
         form.addRow("Log size by time (s)", self.txt_seg_time)
         form.addRow("Log size by file size (MB)", self.txt_seg_size)
-        form.addRow("Commit interval (s)", self.txt_commit_interval)
         root.addWidget(top)
 
         # Engine-running controls.
@@ -110,7 +160,8 @@ class ChannelManagerConfigDialog(QDialog):
         self.table = QTableWidget(self)
         self.table.setColumnCount(len(_COLS))
         self.table.setHorizontalHeaderLabels(_COLS)
-        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.cellDoubleClicked.connect(self._edit_delay_pair)  # type: ignore
+        self._apply_table_column_layout()
         root.addWidget(self.table, 1)
 
         btn_row = QHBoxLayout()
@@ -152,7 +203,6 @@ class ChannelManagerConfigDialog(QDialog):
         storage = doc.get("storage") or {}
         self.txt_seg_time.setText(str(storage.get("segment_time_limit_s", 14400)))
         self.txt_seg_size.setText(str(storage.get("segment_size_limit_mb", 100)))
-        self.txt_commit_interval.setText(str(storage.get("commit_interval_s", 2)))
         er = doc.get("engine_running") or {}
         self.txt_engine_rpm_threshold.setText(str(er.get("rpm_threshold", 0)))
         src_alias = str(er.get("source_alias", "")).strip()
@@ -165,6 +215,7 @@ class ChannelManagerConfigDialog(QDialog):
         for item in doc.get("channels", []) or []:
             if isinstance(item, dict):
                 self._add_row(self._row_from_item(item))
+        self._apply_table_column_layout()
 
     def _parse_delay_pair(self, text: str) -> tuple[float, float]:
         t = str(text or "").strip()
@@ -213,7 +264,7 @@ class ChannelManagerConfigDialog(QDialog):
             alarm.get("high_clear_delay_s", item.get("clear_delay_s", 0.0)),
         )
         warn_action = str(warn.get("action", "visible_alert")).strip().lower()
-        alarm_action = str(alarm.get("action", "visible_alert_shutdown")).strip().lower()
+        alarm_action = str(alarm.get("action", "visible_alert")).strip().lower()
         raw_stype = str(alarm.get("shutdown_type", item.get("shutdown_type", "hard")) or "hard").strip().lower()
         stype_display = "Soft" if raw_stype == "soft" else "Hard"
         return {
@@ -240,20 +291,20 @@ class ChannelManagerConfigDialog(QDialog):
         channel_item.setFlags(channel_item.flags() & ~Qt.ItemIsEditable)
         self.table.setItem(r, 0, channel_item)
         self.table.setItem(r, 1, QTableWidgetItem(values.get("Warn Low", "")))
-        self.table.setItem(r, 2, QTableWidgetItem(values.get("Warn Low X / Y", "0 / 0")))
+        self.table.setItem(r, 2, self._latch_item(values.get("Warn Low X / Y", "0 / 0")))
         self.table.setItem(r, 3, QTableWidgetItem(values.get("Warn High", "")))
-        self.table.setItem(r, 4, QTableWidgetItem(values.get("Warn High X / Y", "0 / 0")))
+        self.table.setItem(r, 4, self._latch_item(values.get("Warn High X / Y", "0 / 0")))
         warn_act = QComboBox(self.table)
         warn_act.addItems(_ACTION_OPTIONS)
         warn_act.setCurrentText(values.get("Warn Action", _ACTION_OPTIONS[0]))
         self.table.setCellWidget(r, 5, warn_act)
         self.table.setItem(r, 6, QTableWidgetItem(values.get("Alarm Low", "")))
-        self.table.setItem(r, 7, QTableWidgetItem(values.get("Alarm Low X / Y", "0 / 0")))
+        self.table.setItem(r, 7, self._latch_item(values.get("Alarm Low X / Y", "0 / 0")))
         self.table.setItem(r, 8, QTableWidgetItem(values.get("Alarm High", "")))
-        self.table.setItem(r, 9, QTableWidgetItem(values.get("Alarm High X / Y", "0 / 0")))
+        self.table.setItem(r, 9, self._latch_item(values.get("Alarm High X / Y", "0 / 0")))
         alarm_act = QComboBox(self.table)
         alarm_act.addItems(_ACTION_OPTIONS)
-        alarm_act.setCurrentText(values.get("Alarm Action", _ACTION_OPTIONS[1]))
+        alarm_act.setCurrentText(values.get("Alarm Action", _ACTION_OPTIONS[0]))
         self.table.setCellWidget(r, 10, alarm_act)
         stype = QComboBox(self.table)
         stype.addItems(_SHUTDOWN_TYPE_OPTIONS)
@@ -311,12 +362,60 @@ class ChannelManagerConfigDialog(QDialog):
                     "Alarm Low X / Y": "0 / 0",
                     "Alarm High": "",
                     "Alarm High X / Y": "0 / 0",
-                    "Alarm Action": "Visible Alert + Shutdown",
+                    "Alarm Action": "Visible Alert",
                     "Shutdown Type": "Hard",
                     "Enabling Cond": "always_enabled",
                     "Enable Thres": "0",
                 }
             )
+        self._apply_table_column_layout()
+
+    def _latch_item(self, text: str) -> QTableWidgetItem:
+        item = QTableWidgetItem(text)
+        item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+        item.setToolTip("Double-click to set latch time (X) and unlatch time (Y).")
+        return item
+
+    def _apply_table_column_layout(self) -> None:
+        header = self.table.horizontalHeader()
+        header.setStretchLastSection(False)
+        header.setDefaultAlignment(Qt.AlignCenter)
+        header.setMinimumHeight(46)
+        header.setSectionResizeMode(QHeaderView.Interactive)
+        header.setSectionResizeMode(0, QHeaderView.Stretch)
+
+        fixed_widths = {
+            1: 64,
+            2: 72,
+            3: 64,
+            4: 72,
+            5: 125,
+            6: 64,
+            7: 72,
+            8: 64,
+            9: 72,
+            10: 125,
+            11: 90,
+            12: 115,
+            13: 78,
+        }
+        for col, width in fixed_widths.items():
+            header.setSectionResizeMode(col, QHeaderView.Interactive)
+            self.table.setColumnWidth(col, width)
+
+    def _edit_delay_pair(self, row: int, col: int) -> None:
+        if col not in _LATCH_COLS:
+            return
+        item = self.table.item(row, col)
+        if item is None:
+            item = self._latch_item("0 / 0")
+            self.table.setItem(row, col, item)
+        enter_s, clear_s = self._parse_delay_pair(item.text())
+        dialog = _DelayPairDialog(_LATCH_COLS[col], enter_s, clear_s, self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        enter_s, clear_s = dialog.values()
+        item.setText(self._pair_to_text(enter_s, clear_s))
 
     def _remove_extra_channels(self) -> None:
         for r in range(self.table.rowCount() - 1, -1, -1):
@@ -402,6 +501,27 @@ class ChannelManagerConfigDialog(QDialog):
         except Exception:
             return None
 
+    def _cell_text(self, row: int, col: int) -> str:
+        item = self.table.item(row, col)
+        return item.text().strip() if item else ""
+
+    def _validate_table_inputs(self) -> str | None:
+        numeric_cols = dict(_THRESHOLD_COLS)
+        numeric_cols[13] = "Enable Thres"
+        for r in range(self.table.rowCount()):
+            alias = self._cell_text(r, 0) or f"row {r + 1}"
+            for col, label in numeric_cols.items():
+                text = self._cell_text(r, col)
+                if not text:
+                    continue
+                try:
+                    value = float(text)
+                except Exception:
+                    return f"Row {r + 1} ({alias}): {label} must be a number or empty."
+                if not math.isfinite(value):
+                    return f"Row {r + 1} ({alias}): {label} must be a finite number."
+        return None
+
     def _action_key(self, text: str) -> str:
         return "visible_alert_shutdown" if "shutdown" in str(text).lower() else "visible_alert"
 
@@ -409,11 +529,12 @@ class ChannelManagerConfigDialog(QDialog):
         doc: Dict[str, Any] = dict(self._cfg)
         doc["enabled"] = bool(doc.get("enabled", True))
         doc["recording_rate_hz"] = float(self.cmb_rate.currentText().strip())
-        doc["storage"] = {
-            "commit_interval_s": float(self.txt_commit_interval.text().strip() or "2"),
-            "segment_time_limit_s": float(self.txt_seg_time.text().strip() or "14400"),
-            "segment_size_limit_mb": float(self.txt_seg_size.text().strip() or "100"),
-        }
+        storage = dict(doc.get("storage") or {})
+        if "commit_interval_s" not in storage:
+            storage["commit_interval_s"] = 2
+        storage["segment_time_limit_s"] = float(self.txt_seg_time.text().strip() or "14400")
+        storage["segment_size_limit_mb"] = float(self.txt_seg_size.text().strip() or "100")
+        doc["storage"] = storage
         doc["engine_running"] = {
             "source_alias": self.cmb_engine_alias.currentText().strip(),
             "rpm_threshold": float(self.txt_engine_rpm_threshold.text().strip() or "0"),
@@ -436,7 +557,7 @@ class ChannelManagerConfigDialog(QDialog):
             sh = self._float_or_none(self.table.item(r, 8).text() if self.table.item(r, 8) else "")
             sh_en, sh_cl = self._parse_delay_pair(self.table.item(r, 9).text() if self.table.item(r, 9) else "")
             alarm_action_widget = self.table.cellWidget(r, 10)
-            alarm_action_text = alarm_action_widget.currentText() if isinstance(alarm_action_widget, QComboBox) else _ACTION_OPTIONS[1]
+            alarm_action_text = alarm_action_widget.currentText() if isinstance(alarm_action_widget, QComboBox) else _ACTION_OPTIONS[0]
             stype_widget = self.table.cellWidget(r, 11)
             stype_text = stype_widget.currentText() if isinstance(stype_widget, QComboBox) else _SHUTDOWN_TYPE_OPTIONS[0]
             shutdown_type = "soft" if stype_text.strip().lower() == "soft" else "hard"
@@ -530,6 +651,10 @@ class ChannelManagerConfigDialog(QDialog):
         self._load_doc(doc)
 
     def _export_doc(self) -> None:
+        err = self._validate_table_inputs()
+        if err:
+            QMessageBox.warning(self, "Channel Manager", err)
+            return
         doc = self._build_doc()
         err = self._validate_doc(doc)
         if err:
@@ -543,6 +668,10 @@ class ChannelManagerConfigDialog(QDialog):
             QMessageBox.information(self, "Export", "Channel Manager YAML exported.")
 
     def _on_accept(self) -> None:
+        err = self._validate_table_inputs()
+        if err:
+            QMessageBox.warning(self, "Channel Manager", err)
+            return
         doc = self._build_doc()
         err = self._validate_doc(doc)
         if err:

@@ -19,6 +19,8 @@ Configure and communicate with one or two CCP ECUs over NI-XNET/CAN using A2L-ba
   - Console Messages box shows key lifecycle events (connect, unlock, poll start, errors)
   - Runtime diagnostics channels and stage logs
   - Multi-device config model (`devices[*]`) with up to two ECMs
+  - Shared NI-XNET/CAN hardware discovery helper used by CAN and CCP config dialogs
+  - CAN interface dropdown per device, populated from discovered hardware and blanked when saved YAML does not match detected ports
   - Primary/Secondary role mapping to station address (`0x0`/`0x1`)
   - Background acquisition worker + latest-value snapshot reads (non-blocking tick path)
 - Not required for current path:
@@ -60,7 +62,11 @@ Configure and communicate with one or two CCP ECUs over NI-XNET/CAN using A2L-ba
 - CCP Configure dialog opens with shallow A2L `MEASUREMENT` name discovery and uses saved config metadata for already-selected channels.
 - Operator selects channels by checkbox with prefix/wildcard filter.
 - Final alias = `measurements.naming_prefix + measurement.name`.
+- The All Channels Table uses a display-only label for CCP Primary/Secondary rows: it removes the configured `naming_prefix` from the visible Alias cell and keeps the full telemetry/recording alias in the row tooltip.
 - Units come from config override when present, else A2L-resolved units.
+- CAN interfaces are discovered through the shared CAN helper. The dialog attempts `python-can.detect_available_configs(interfaces=["nixnet"])` first and falls back to NI-XNET system probing.
+- Saved `session.interface` values are preselected only when they match discovered hardware. If a saved interface is no longer present, the device tab starts blank while the dropdown still lists detected interfaces.
+- If no CAN hardware is discovered, interface fields remain blank and the dialog can still be saved/closed. Runtime then reports the plugin disconnected/red and emits a console message.
 
 ### Acquisition Model
 
@@ -99,7 +105,9 @@ When multiple devices are configured, the plugin spawns one daemon worker thread
 **General notes:**
 - Worker thread(s) perform connect/reconnect and acquisition independently of core tick.
 - Core tick samples `_snapshot_values` (latest-value sample-and-hold).
-- SHORT_UP poll timeout honors `short_up_timeout_s` (default 30ms, per-device in YAML). Clamped to 5-50ms and never exceeds `io_timeout_s`. Super users can tune per-device if ECU response times differ across buses. Occasional poll fails under CAN bus contention are normal.
+- SHORT_UP poll timeout honors `short_up_timeout_s` (default 30ms, top-level or per-device in YAML). It has a 5ms minimum and never exceeds `io_timeout_s`. Super users can tune per-device if ECU response times differ across buses. Occasional poll fails under CAN bus contention are normal.
+- SHORT_UP CRM handling accepts normal success responses and CCP notification acknowledgments (`0x30`-`0x33`) when the command counter matches. This matches the DAQ/setup command path and prevents notification responses such as `0x32` from being misclassified as timeouts.
+- `short_up_debug_misses: true` enables capped diagnostic logging for failed SHORT_UP attempts, including channel name, address, expected counter, and sampled RX payloads. Use for troubleshooting only; disable after validation.
 - Freshness telemetry tracks channel age against realistic expected sweep timing.
 
 **Config dialog:**
@@ -137,6 +145,7 @@ Key CCP lifecycle events are displayed in the console's Messages box (below the 
 | DAQ streaming started | `[CCP] {name}: DAQ streaming {n} channels` |
 | Connection lost | `[CCP] {name}: Connection lost` |
 | DAQ setup failed | `[CCP] {name}: DAQ setup failed - {reason}` |
+| Missing CAN interface | `[CCP] {name}: No CAN interface configured or available. Open CCP config and select a detected CAN interface.` |
 
 Per-poll failures, RTT diagnostics, and freshness warnings remain terminal-only to avoid message flooding.
 
@@ -156,6 +165,9 @@ use_parallel_workers: true              # one thread per device (default true); 
 poll_default_priority: low              # "low" (default) or "high" for SHORT_UP; "10ms" etc. for DAQ
 target_poll_hz: 10                      # target update rate per SHORT_UP channel (1-50)
 high_low_ratio: 3                       # HIGH:LOW polling ratio (default 3:1, super-user adjustable 1-20)
+io_timeout_s: 0.05                      # base CCP response timeout; caps short_up_timeout_s
+short_up_timeout_s: 0.030               # top-level default SHORT_UP response timeout
+short_up_debug_misses: false            # troubleshooting only; logs failed SHORT_UP payload samples
 acquisition_mode: short_up              # "short_up" (default) or "daq" (opt-in DAQ streaming)
 fallback_short_up: false
 acquisition:
@@ -186,7 +198,8 @@ devices:
       sec_type: CAL
     a2l:
       path: C:/path/to/file.a2l
-    short_up_timeout_s: 0.030             # per-device SHORT_UP response timeout (default 30ms, super-user adjustable 5-50ms)
+    short_up_timeout_s: 0.030             # optional per-device override; min 5ms, capped by io_timeout_s
+    short_up_debug_misses: false          # optional per-device override for SHORT_UP miss diagnostics
     acquisition_mode: short_up
     acquisition:
       mode: short_up
@@ -214,20 +227,28 @@ Compatibility:
 #### Validation Rules
 - Device config must resolve to at least one configured device.
 - Enabled aliases must be unique within CCP plugin.
-- In real mode, each configured device requires:
-  - session interface + tx/rx IDs
+- In real mode, each configured device with a non-blank interface requires:
+  - tx/rx IDs
   - access key (config or env var)
   - existing A2L path
   - selected measurement names resolvable in A2L with valid addresses
+- Config dialog save requires a non-blank CAN interface when hardware discovery returns available interfaces.
+- If no CAN hardware is discovered, the dialog may save blank interfaces so the user can exit config; runtime then reports disconnected/red with a one-time console message.
 
 ### UI Flow
 - Right-click CCP tile → Configure:
   1) Add/remove device tabs (max two)
-  2) Set device role (`Primary`/`Secondary`) and session/security fields
+  2) Set device role (`Primary`/`Secondary`) and session/security fields, including CAN interface dropdown
   3) Select A2L and load channels
   4) Filter + check measurements and assign each selected channel to a DAQ tier (double-click to cycle: `10ms`/`50ms`/`100ms`/`1ms`/`High`/`Low`)
   5) Monitor per-tier capacity bars in the "DAQ Tier Capacity" section
   6) Save (blocked if any tier exceeds capacity) and reload plugin
+- CAN interface dropdown behavior:
+  - Populated from the same shared discovery helper used by the CAN plugin.
+  - Each device tab can select from the discovered CAN interfaces.
+  - Saved YAML interface is preselected only if it matches discovered hardware.
+  - If saved YAML does not match discovered hardware, the dropdown starts blank but still lists discovered interfaces.
+  - If no hardware is discovered, the dropdown remains blank and the dialog can still be saved/closed.
 - Test button sends `ccp_test` control request and shows step status in dialog terminal.
 
 ### Outputs and Metadata
@@ -406,6 +427,16 @@ This section documents issues encountered during production testing and their re
 
 **Fix:** The plugin treats 0x30-0x33 as ACK + warning and continues the setup sequence.
 
+#### SHORT_UP notification CRM treated as timeout
+
+**Symptom:** Some SHORT_UP-polled measurements, observed with v577 TIPAdapt channels, remain `NaN` even though other CCP channels update. Diagnostic logging shows frames like `FF 32 <ctr> ...` arriving during the request window, but the poll attempt ends as `short_up_timeout`.
+
+**Root cause:** The SHORT_UP path had local CRM matching logic that only accepted `rc=0x00`. Notification acknowledgments such as `0x32` were ignored even when the command counter matched. The rest of the plugin already accepted these notification codes through `_crm_match()`.
+
+**Fix:** SHORT_UP polling now uses the same notification-aware `_crm_match()` helper as setup/DAQ commands. Responses with `0x30`-`0x33` and a matching command counter are accepted and decoded from the normal SHORT_UP payload location.
+
+**Diagnostics:** Set `short_up_debug_misses: true` to log a capped set of failed SHORT_UP attempts with channel, address, expected counter, and sampled RX payloads. Disable after troubleshooting to avoid noisy logs.
+
 #### Quick diagnostic checklist
 
 1. **All channels wrong:** Check `session.interface` matches physical CAN port. Check `access_key` is correct.
@@ -413,6 +444,7 @@ This section documents issues encountered during production testing and their re
 3. **Data streams but some tiers are erratic:** Check tier capacity in config dialog. Move channels if any tier exceeds 90%.
 4. **DAQ setup fails with unlock error:** Verify `access_key`, `sec_type`, and `seed_resource` match the ECU version. v577 needs CAL unlock for `CCP_DAQ_ena`; v661 does not.
 5. **DTOs received but all zeros:** For v577, ensure `daq_ena_address` and `daq_ena_value` are configured. Without the DAQ gate enabled, the ECU accepts all setup commands but never transmits.
+6. **SHORT_UP channels stay NaN but logs show `FF 32 <ctr>` frames:** Verify the SHORT_UP notification matcher is active and disable `short_up_debug_misses` after confirming values are updating.
 
 ### Deferred Optimization Backlog
 - **Hybrid DAQ + SHORT_UP**: within a single device context, stream channels that fit in DAQ lists while simultaneously SHORT_UP-polling overflow channels. Currently, fallback is all-or-nothing per device.

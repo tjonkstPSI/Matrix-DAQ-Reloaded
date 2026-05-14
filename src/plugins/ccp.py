@@ -78,6 +78,7 @@ class CCPPlugin(BasePlugin):
         self._state_lock = threading.Lock()
         self._snapshot_values: Dict[str, float] = {}
         self._contexts: List[Dict[str, Any]] = []
+        self._reported_no_interface: Set[str] = set()
         self._freshness_sample_period_s: float = 0.1
         self._diag: Dict[str, Any] = {
             "state": "idle",
@@ -171,6 +172,8 @@ class CCPPlugin(BasePlugin):
         top_target_hz = self.config.get("target_poll_hz", 10)
         top_hl_ratio = self.config.get("high_low_ratio", _DEFAULT_HIGH_LOW_RATIO)
         top_io = self.config.get("io_timeout_s", 0.05)
+        top_short_up_timeout = self.config.get("short_up_timeout_s", 0.030)
+        top_short_up_debug_misses = bool(self.config.get("short_up_debug_misses", False))
         top_reconn = self.config.get("reconnect_interval_s", 2.0)
         top_priority = self._canonical_priority(self.config.get("poll_default_priority") or self.config.get("poll_default_tier"))
         top_acq = dict(self.config.get("acquisition") or {})
@@ -211,6 +214,8 @@ class CCPPlugin(BasePlugin):
                         "target_poll_hz": dev.get("target_poll_hz", top_target_hz),
                         "high_low_ratio": dev.get("high_low_ratio", top_hl_ratio),
                         "io_timeout_s": dev.get("io_timeout_s", top_io),
+                        "short_up_timeout_s": dev.get("short_up_timeout_s", top_short_up_timeout),
+                        "short_up_debug_misses": bool(dev.get("short_up_debug_misses", top_short_up_debug_misses)),
                         "reconnect_interval_s": dev.get("reconnect_interval_s", top_reconn),
                         "poll_default_priority": self._canonical_priority(
                             dev.get("poll_default_priority") or dev.get("poll_default_tier") or top_priority
@@ -238,6 +243,8 @@ class CCPPlugin(BasePlugin):
                 "target_poll_hz": top_target_hz,
                 "high_low_ratio": top_hl_ratio,
                 "io_timeout_s": top_io,
+                "short_up_timeout_s": top_short_up_timeout,
+                "short_up_debug_misses": top_short_up_debug_misses,
                 "reconnect_interval_s": top_reconn,
                 "poll_default_priority": top_priority,
                 "acquisition_mode": "daq" if top_acq_mode in {"daq", "daq_stream", "stream"} else "short_up",
@@ -280,10 +287,28 @@ class CCPPlugin(BasePlugin):
             result[name] = aliases
         return result
 
+    def display_aliases(self) -> Dict[str, str]:
+        """Return UI-only display labels for CCP aliases."""
+        result: Dict[str, str] = {}
+        for dcfg in self._resolved_device_cfgs():
+            meas = (dcfg.get("measurements") or {})
+            prefix = str(meas.get("naming_prefix") or "")
+            for item in meas.get("list", []) or []:
+                if not isinstance(item, dict) or not bool(item.get("enabled", True)):
+                    continue
+                ch_name = item.get("name")
+                if not ch_name:
+                    continue
+                label = str(ch_name)
+                alias = f"{prefix}{label}" if prefix else label
+                result[alias] = label
+        return result
+
     def configure(self) -> None:
         self._theta = 0.0
         self._entries = []
         self._contexts = []
+        self._reported_no_interface.clear()
         self._values = {}
         self._snapshot_values = {}
         self._units = self._build_units_map()
@@ -327,6 +352,9 @@ class CCPPlugin(BasePlugin):
                     "poll_channels_per_tick": cpt,
                     "io_timeout_s": io_to,
                     "short_up_timeout_s": min(io_to, max(0.005, float(dcfg.get("short_up_timeout_s", 0.030)))),
+                    "short_up_debug_misses": bool(dcfg.get("short_up_debug_misses", False)),
+                    "_short_up_debug_misses_remaining": 25,
+                    "_missing_interface_reported": False,
                     "reconnect_interval_s": reconn,
                     "poll_default_priority": self._canonical_priority(dcfg.get("poll_default_priority") or dcfg.get("poll_default_tier")),
                     "entries": [],
@@ -469,7 +497,7 @@ class CCPPlugin(BasePlugin):
             meas = dcfg.get("measurements") or {}
             items = meas.get("list", []) or []
             if not str(session.get("interface") or "").strip():
-                return PluginStatus(ok=False, message="session.interface is required for real CCP mode")
+                continue
             if session.get("tx_id") is None or session.get("rx_id") is None:
                 return PluginStatus(ok=False, message="session.tx_id and session.rx_id are required for real CCP mode")
             access_key = self._resolve_access_key_text(security, dcfg)
@@ -648,6 +676,7 @@ class CCPPlugin(BasePlugin):
             ctx["_last_sup_timing"] = {}
             ctx["_timing_window"] = collections.deque(maxlen=200)
             ctx["_rtt_diag_count"] = 0
+            ctx["_missing_interface_reported"] = False
         self._set_state("starting", 2)
         if self.mode == "real":
             self._worker_stop.clear()
@@ -1259,6 +1288,17 @@ class CCPPlugin(BasePlugin):
         finally:
             ctx["daq_running"] = False
 
+    def _report_missing_interface(self, ctx: Dict[str, Any]) -> None:
+        key = str(ctx.get("name") or ctx.get("device_index") or "CCP")
+        if key in self._reported_no_interface:
+            return
+        self._reported_no_interface.add(key)
+        ctx["_missing_interface_reported"] = True
+        self._console_msg(
+            f"[CCP] {ctx.get('name','CCP device')}: No CAN interface configured or available. "
+            "Open CCP config and select a detected CAN interface."
+        )
+
     def _connect_real_ctx(self, ctx: Dict[str, Any]) -> None:
         ctx["last_connect_attempt_ts"] = time.time()
         self._diag["connect_attempts"] = int(self._diag.get("connect_attempts", 0)) + 1
@@ -1269,6 +1309,12 @@ class CCPPlugin(BasePlugin):
             a2l_cfg = ctx.get("a2l_cfg") or {}
             meas_cfg = ctx.get("meas_cfg") or {}
             interface = str(session_cfg.get("interface") or "").strip()
+            if not interface:
+                ctx["connected"] = False
+                self._diag["last_error"] = f"missing_interface:{ctx.get('name','?')}"
+                self._set_state("error_connect", 90)
+                self._report_missing_interface(ctx)
+                return
             baud = self._parse_int(session_cfg.get("baudrate"), 250000)
             tx_id = self._parse_int(session_cfg.get("tx_id"), 0)
             rx_id = self._parse_int(session_cfg.get("rx_id"), 0)
@@ -2072,6 +2118,7 @@ class CCPPlugin(BasePlugin):
         first_match_ms = -1.0
         outcome = "timeout"
         result_value = None
+        debug_frames: List[Dict[str, Any]] = []
 
         while _pc() < deadline:
             outer_iters += 1
@@ -2086,18 +2133,30 @@ class CCPPlugin(BasePlugin):
                 data = fr.data.ljust(8, b"\x00")
                 if data[0] != 0xFF:
                     non_crm_frames += 1
+                    if len(debug_frames) < 4:
+                        debug_frames.append({
+                            "id": int(fr.arbitration_id),
+                            "data": bytes(data[:8]),
+                            "crm": False,
+                            "ctr_match": False,
+                            "rc": -1,
+                        })
                     continue
-                if req_ctr is not None:
-                    ctr_match = (data[1] == 0x00 and data[2] == req_ctr) or (data[2] == 0x00 and data[1] == req_ctr)
-                else:
-                    ctr_match = (data[1] == 0x00) or (data[2] == 0x00)
-                if not ctr_match:
+                matched, ok, rc = self._crm_match(data, int(req_ctr) if req_ctr is not None else -1)
+                if len(debug_frames) < 4:
+                    debug_frames.append({
+                        "id": int(fr.arbitration_id),
+                        "data": bytes(data[:8]),
+                        "crm": True,
+                        "ctr_match": bool(matched),
+                        "rc": int(rc),
+                    })
+                if not matched:
                     self._diag["ctr_mismatch"] = int(self._diag.get("ctr_mismatch", 0)) + 1
                     ctr_miss_in_attempt += 1
                     continue
-                rc = int(data[1]) if data[1] != req_ctr else int(data[2])
                 self._diag["last_rc"] = rc
-                if rc != 0:
+                if not ok:
                     self._diag["last_error"] = f"crm_rc:{rc}"
                     ctx["crm_error_count"] = int(ctx.get("crm_error_count", 0)) + 1
                     outcome = "crm_error"
@@ -2150,6 +2209,29 @@ class CCPPlugin(BasePlugin):
             "ctr_mismatch_in_attempt": ctr_miss_in_attempt,
             "channel": str(entry.get("name", "?")),
         }
+        debug_remaining = int(ctx.get("_short_up_debug_misses_remaining", 0))
+        if (ctx.get("short_up_debug_misses") or ctx.get("_debug_timing")) and outcome != "ok" and debug_remaining > 0:
+            ctx["_short_up_debug_misses_remaining"] = debug_remaining - 1
+            name = ctx.get("name", "?")
+            ch_name = entry.get("name", "?")
+            req_ctr_text = f"0x{int(req_ctr):02X}" if req_ctr is not None else "?"
+            print(
+                f"[CCP:{name}] SHORT_UP MISS ch={ch_name} "
+                f"addr=0x{int(entry.get('address', 0)):08X} "
+                f"ext=0x{int(entry.get('extension', 0)):02X} "
+                f"size={int(entry.get('size', 0))} req_ctr={req_ctr_text} "
+                f"outcome={outcome} raw={agg_raw} non_crm={non_crm_frames} "
+                f"ctr_miss={ctr_miss_in_attempt}"
+            )
+            if not debug_frames:
+                print(f"[CCP:{name}]   no frames captured during request window")
+            for i, dbg in enumerate(debug_frames):
+                hex_data = " ".join(f"{b:02X}" for b in dbg["data"])
+                print(
+                    f"[CCP:{name}]   rx[{i}] id=0x{int(dbg['id']):08X} "
+                    f"data=[{hex_data}] crm={int(bool(dbg['crm']))} "
+                    f"ctr_match={int(bool(dbg['ctr_match']))} rc={int(dbg['rc'])}"
+                )
         return result_value
 
     def _set_state(self, state: str, code: int) -> None:

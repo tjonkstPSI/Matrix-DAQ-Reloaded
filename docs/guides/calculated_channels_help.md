@@ -44,7 +44,7 @@ Each calculation is organized as a **block** containing:
 |                            |  | FuelLockoff| eFuelLockoff | bool |   |
 |                            |  [Add Output] [Remove Output]           |
 +-----------------------------------------------------------------------+
-|  Global update rate (Hz): [50]                       [OK] [Cancel]    |
+|  Calculation Evaluation Rate (Hz): [50]              [OK] [Cancel]    |
 +-----------------------------------------------------------------------+
 ```
 

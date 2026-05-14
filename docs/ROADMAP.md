@@ -62,7 +62,7 @@ Deliver a Windows desktop app that streams, visualizes, and records engine test 
 
 #### Calculated Channels Plugin
 - Restricted Python AST evaluator with symbol mapping
-- Configuration UI: channel mapping editor, expression builder, global update rate
+- Configuration UI: channel mapping editor, expression builder, calculation evaluation rate
 - YAML persistence for import/export
 
 #### Channel Manager
