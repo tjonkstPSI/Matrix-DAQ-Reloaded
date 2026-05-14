@@ -1,4 +1,4 @@
-# Author: T. Onkst | Date: 03092026
+# Author: T. Onkst | Date: 05072026
 
 from __future__ import annotations
 
@@ -567,6 +567,51 @@ def _create_ao_tasks(p: NiDAQPlugin, Task: Any) -> None:
                 pass
 
 
+def _active_task_aliases(tasks: List[Dict[str, Any]]) -> List[str]:
+    aliases: List[str] = []
+    for group in tasks or []:
+        for alias in list(group.get("aliases", []) or []):
+            name = str(alias).strip()
+            if name:
+                aliases.append(name)
+    return list(dict.fromkeys(aliases))
+
+
+def _drive_outputs_safe_low(p: NiDAQPlugin) -> None:
+    """Drive NI output tasks to their electrical safe state before closing."""
+    try:
+        do_aliases = _active_task_aliases(p._do_tasks)
+        if do_aliases and p._do_tasks:
+            for alias in do_aliases:
+                p._do_states[alias] = 0
+            try:
+                print(f"[NIDAQ] safe shutdown: driving DO LOW aliases={do_aliases}")
+            except Exception:
+                pass
+            write_do_hardware(p._do_tasks, p._do_states)
+    except Exception as exc:
+        try:
+            print(f"[NIDAQ] safe shutdown DO write failed: {type(exc).__name__}: {exc}")
+        except Exception:
+            pass
+
+    try:
+        ao_aliases = _active_task_aliases(p._ao_tasks)
+        if ao_aliases and p._ao_tasks:
+            for alias in ao_aliases:
+                p._ao_states[alias] = 0.0
+            try:
+                print(f"[NIDAQ] safe shutdown: driving AO 0V aliases={ao_aliases}")
+            except Exception:
+                pass
+            write_ao_hardware(p._ao_tasks, p._ao_states)
+    except Exception as exc:
+        try:
+            print(f"[NIDAQ] safe shutdown AO write failed: {type(exc).__name__}: {exc}")
+        except Exception:
+            pass
+
+
 def teardown_tasks(p: NiDAQPlugin) -> None:
     try:
         stop_fast_reader_threads(p)
@@ -606,6 +651,7 @@ def teardown_tasks(p: NiDAQPlugin) -> None:
                 pass
     except Exception:
         pass
+    _drive_outputs_safe_low(p)
     try:
         for d0 in p._do_tasks or []:
             t = d0.get("task")
@@ -639,6 +685,7 @@ def teardown_tasks(p: NiDAQPlugin) -> None:
 
 
 _do_hw_write_diag_count: int = 0
+_ao_hw_write_diag_count: int = 0
 
 
 def write_do_hardware(
@@ -669,6 +716,7 @@ def write_ao_hardware(
     ao_tasks: List[Dict[str, Any]],
     ao_states: Dict[str, float],
 ) -> None:
+    global _ao_hw_write_diag_count
     if not ao_tasks:
         return
     try:
@@ -679,8 +727,10 @@ def write_ao_hardware(
                 continue
             values = [float(ao_states.get(alias, 0.0)) for alias in aliases]
             task.write(values, auto_start=True)
-    except Exception:
-        pass
+    except Exception as exc:
+        if _ao_hw_write_diag_count < 20:
+            print(f"[NIDAQ] AO hw write ERROR: {type(exc).__name__}: {exc}")
+            _ao_hw_write_diag_count += 1
 
 
 def start_fast_reader_threads(p: NiDAQPlugin) -> None:
