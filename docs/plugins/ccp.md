@@ -19,6 +19,7 @@ Configure and communicate with one or two CCP ECUs over NI-XNET/CAN using A2L-ba
   - Console Messages box shows key lifecycle events (connect, unlock, poll start, errors)
   - Runtime diagnostics channels and stage logs
   - Multi-device config model (`devices[*]`) with up to two ECMs
+  - A2L reload refreshes selected channel metadata (unit, address, type, size, limits) while preserving selected names and poll priority
   - Shared NI-XNET/CAN hardware discovery helper used by CAN and CCP config dialogs
   - CAN interface dropdown per device, populated from discovered hardware and blanked when saved YAML does not match detected ports
   - Primary/Secondary role mapping to station address (`0x0`/`0x1`)
@@ -59,7 +60,9 @@ Configure and communicate with one or two CCP ECUs over NI-XNET/CAN using A2L-ba
 - `_apply_rat_func_inv()` handles all three RAT_FUNC variants: pure linear (a=d=e=0), linear-rational (a=d=0), and full quadratic.
 
 ### Variable Discovery, Selection, and Naming
-- CCP Configure dialog opens with shallow A2L `MEASUREMENT` name discovery and uses saved config metadata for already-selected channels.
+- CCP Configure dialog uses the shared A2L parser for channel discovery, including COMPU_METHOD-resolved units, addresses, data types, sizes, and limits.
+- Reloading an A2L preserves user intent from the saved config (selected measurement names and priority/tier) while refreshing A2L-derived channel metadata from the loaded file.
+- If a selected measurement from an old config is not present in the newly loaded A2L, the row remains visible and marked as missing. Save is blocked until the channel is unchecked or an A2L containing that measurement is loaded.
 - Operator selects channels by checkbox with prefix/wildcard filter.
 - Final alias = `measurements.naming_prefix + measurement.name`.
 - The All Channels Table uses a display-only label for CCP Primary/Secondary rows: it removes the configured `naming_prefix` from the visible Alias cell and keeps the full telemetry/recording alias in the row tooltip.
@@ -112,6 +115,7 @@ When multiple devices are configured, the plugin spawns one daemon worker thread
 
 **Config dialog:**
 - The channel table uses plain table cells; double-click the `Tier` cell to select `High Poll` / `Low Poll` / `DAQ 1ms` / `DAQ 10ms` / `DAQ 50ms` / `DAQ 100ms`.
+- The `Unit` column comes from the shared A2L parse result unless an explicit non-empty unit override is present. Blank saved units from older configs do not override newly parsed A2L units.
 - The "Channel Allocation" section shows a SHORT_UP channel summary (high/low counts) and DAQ tier capacity bars (only visible when DAQ tiers are assigned).
 - A "Target Poll Rate" spinner (1-50 Hz) shows estimated per-channel Hz and budget utilization for SHORT_UP channels.
 - DAQ tier capacity bars show per-tier ODT usage. Save is blocked if any DAQ tier exceeds the 90% ODT utilization cap.
@@ -234,6 +238,7 @@ Compatibility:
   - selected measurement names resolvable in A2L with valid addresses
 - Config dialog save requires a non-blank CAN interface when hardware discovery returns available interfaces.
 - If no CAN hardware is discovered, the dialog may save blank interfaces so the user can exit config; runtime then reports disconnected/red with a one-time console message.
+- Config dialog save is blocked when any enabled selected measurement is missing from the loaded A2L. This prevents stale address/type metadata from an old config from being reused with a new A2L.
 
 ### UI Flow
 - Right-click CCP tile → Configure:
@@ -242,7 +247,7 @@ Compatibility:
   3) Select A2L and load channels
   4) Filter + check measurements and assign each selected channel to a DAQ tier (double-click to cycle: `10ms`/`50ms`/`100ms`/`1ms`/`High`/`Low`)
   5) Monitor per-tier capacity bars in the "DAQ Tier Capacity" section
-  6) Save (blocked if any tier exceeds capacity) and reload plugin
+  6) Save (blocked if any selected channel is missing from the A2L or any tier exceeds capacity) and reload plugin
 - CAN interface dropdown behavior:
   - Populated from the same shared discovery helper used by the CAN plugin.
   - Each device tab can select from the discovered CAN interfaces.

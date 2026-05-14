@@ -13,9 +13,17 @@ import sys
 from .can_interfaces import discover_can_channels
 
 try:
-    from ...plugins._ccp_a2l import parse_a2l_daq_lists, _canonical_poll_tier, is_daq_tier
+    from ...plugins._ccp_a2l import (
+        _canonical_poll_tier,
+        dtype_size,
+        is_daq_tier,
+        parse_a2l,
+        parse_a2l_daq_lists,
+    )
 except Exception:
+    parse_a2l = None  # type: ignore[assignment]
     parse_a2l_daq_lists = None  # type: ignore[assignment]
+    dtype_size = None  # type: ignore[assignment]
     _canonical_poll_tier = None  # type: ignore[assignment]
     is_daq_tier = None  # type: ignore[assignment]
 
@@ -597,6 +605,27 @@ class CCPConfigDialog(QDialog):
                 return dict(self._A2L_NAME_CACHE[cache_key])
         except Exception:
             cache_key = ("", 0, 0)
+        if parse_a2l is not None and dtype_size is not None:
+            try:
+                for name, channel in parse_a2l(path).items():
+                    dtype = str(channel.data_type or "")
+                    meta: Dict[str, Any] = {
+                        "name": str(name),
+                        "data_type": dtype,
+                        "size": max(1, min(8, int(dtype_size(dtype)))),
+                        "unit": str(channel.unit or "").strip(),
+                    }
+                    if channel.address is not None:
+                        meta["address"] = int(channel.address)
+                    if channel.limits is not None:
+                        meta["limits"] = [float(channel.limits[0]), float(channel.limits[1])]
+                    out[str(name)] = meta
+                if cache_key[0]:
+                    self._A2L_NAME_CACHE[cache_key] = dict(out)
+                return out
+            except Exception:
+                out = {}
+
         data_types = {"UBYTE", "SBYTE", "UWORD", "SWORD", "ULONG", "SLONG", "FLOAT32_IEEE", "FLOAT64_IEEE"}
         in_block = False
         cur_name: str | None = None
@@ -704,6 +733,33 @@ class CCPConfigDialog(QDialog):
                 out[name] = dict(meta)
         return out
 
+    def _merge_saved_channel_meta(
+        self,
+        parsed: Dict[str, Any] | None,
+        saved: Dict[str, Any] | None,
+        name: str,
+    ) -> Dict[str, Any]:
+        saved_meta = dict(saved or {})
+        if not parsed:
+            missing = dict(saved_meta or {"name": name})
+            missing["name"] = name
+            missing["_missing_in_a2l"] = True
+            return missing
+
+        merged = dict(parsed)
+        merged["name"] = name
+        for key in ("unit", "unit_override"):
+            value = str(saved_meta.get(key, "") or "").strip()
+            if value:
+                merged["unit"] = value
+                merged["unit_override"] = value
+        saved_ext = str(saved_meta.get("address_extension", "") or "").strip()
+        if saved_ext:
+            parsed_ext = self._parse_address(saved_ext)
+            if parsed_ext is not None:
+                merged["address_extension"] = int(parsed_ext)
+        return merged
+
     def _reload_channels_from_a2l(
         self,
         selected_names: List[str] | None = None,
@@ -738,9 +794,7 @@ class CCPConfigDialog(QDialog):
         except Exception:
             meta = {}
         for name, m in saved_meta.items():
-            merged = dict(meta.get(name, {"name": name}))
-            merged.update(m)
-            meta[name] = merged
+            meta[name] = self._merge_saved_channel_meta(meta.get(name), m, name)
         d["_a2l_meta"] = meta
         self._populate_channel_table(meta, selected, priorities, saved_meta)
         self.table_channels.setUpdatesEnabled(True)
@@ -778,8 +832,6 @@ class CCPConfigDialog(QDialog):
         self.table_channels.setRowCount(len(names))
         for row, name in enumerate(names):
             m = dict(meta.get(name, {}))
-            if name in saved_meta:
-                m.update(saved_meta[name])
             unit = str(m.get("unit", "") or "").strip()
             use_item = QTableWidgetItem("")
             use_item.setFlags(use_item.flags() | Qt.ItemIsUserCheckable)
@@ -788,9 +840,13 @@ class CCPConfigDialog(QDialog):
             name_item = QTableWidgetItem(name)
             name_item.setFlags(name_item.flags() & ~Qt.ItemIsEditable)
             name_item.setData(Qt.UserRole, {"name": name, "meta": m})
+            if bool(m.get("_missing_in_a2l", False)):
+                name_item.setToolTip("Selected channel is not present in the loaded A2L.")
             self.table_channels.setItem(row, 1, name_item)
-            unit_item = QTableWidgetItem(unit or "-")
+            unit_item = QTableWidgetItem("MISSING" if bool(m.get("_missing_in_a2l", False)) else (unit or "-"))
             unit_item.setFlags(unit_item.flags() & ~Qt.ItemIsEditable)
+            if bool(m.get("_missing_in_a2l", False)):
+                unit_item.setToolTip("Uncheck this channel or load an A2L containing it before saving.")
             self.table_channels.setItem(row, 2, unit_item)
             priority_item = QTableWidgetItem(self._tier_display(priorities.get(name, self._DEFAULT_PRIORITY)))
             self.table_channels.setItem(row, 3, priority_item)
@@ -815,13 +871,18 @@ class CCPConfigDialog(QDialog):
             display_text = priority_item.text().strip() if priority_item is not None else self._DEFAULT_PRIORITY
             entry["priority"] = _DISPLAY_TO_CANONICAL.get(display_text, self._canonical_tier(display_text))
             if isinstance(meta, dict):
+                if bool(meta.get("_missing_in_a2l", False)):
+                    entry["_missing_in_a2l"] = True
                 unit = str(meta.get("unit", "") or "").strip()
                 entry["unit_override"] = unit
                 entry["unit"] = unit
                 if meta.get("address") is not None:
                     entry["address"] = int(meta.get("address"))
-                if meta.get("address_extension") is not None:
-                    entry["address_extension"] = int(meta.get("address_extension"))
+                address_extension = str(meta.get("address_extension", "") or "").strip()
+                if address_extension:
+                    parsed_ext = self._parse_address(address_extension)
+                    if parsed_ext is not None:
+                        entry["address_extension"] = int(parsed_ext)
                 if meta.get("data_type"):
                     entry["data_type"] = str(meta.get("data_type"))
                 if meta.get("size") is not None:
@@ -1124,6 +1185,14 @@ class CCPConfigDialog(QDialog):
             items = [x for x in (meas.get("list") or []) if isinstance(x, dict) and bool(x.get("enabled", True))]
             if not items:
                 return f"{d.get('name','CCP device')}: select at least one measurement."
+            missing = [str(x.get("name") or "") for x in items if bool(x.get("_missing_in_a2l", False))]
+            if missing:
+                preview = ", ".join(missing[:5])
+                more = f" and {len(missing) - 5} more" if len(missing) > 5 else ""
+                return (
+                    f"{d.get('name','CCP device')}: selected measurement(s) missing from the loaded A2L: "
+                    f"{preview}{more}. Uncheck them or load an A2L containing them before saving."
+                )
         return None
 
     def _init_status_subscriber(self) -> None:

@@ -6,6 +6,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased] - 03/09/2026
 
+### CCP config A2L reload metadata refresh — 05/14/2026
+#### Fixed
+- **A2L unit display in config dialog**: CCP config now uses the shared A2L parser for the channel table and prevents blank saved units from older configs from overwriting newly parsed A2L units.
+- **Stale selected-channel metadata**: Reloading an A2L refreshes A2L-derived metadata for selected channels while preserving selection and priority. Selected channels missing from the loaded A2L remain visible as `MISSING` and block save until resolved.
+
 ### CCP All Channels Table display labels — 05/14/2026
 #### Added
 - **Display-only CCP labels**: CCP Primary and Secondary panels in the All Channels Table now show the raw CCP measurement name without the configured `naming_prefix`, while tooltips retain the full telemetry alias used for recording/export/formulas.
