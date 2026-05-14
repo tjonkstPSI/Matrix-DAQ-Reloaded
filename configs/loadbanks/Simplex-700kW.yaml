@@ -6,24 +6,23 @@ address_base: 1
 
 commands:
   # Controls table + Write VI (standalone 700kW):
-  # VI writes coils start=3392 count=2 => logical 3393/3394
-  # (Heartbeat + Fan/Control Power). PLC addresses are base-1.
+  # VI writes coils start=3392 => logical 3393/3394/3395
+  # (Heartbeat + Fan/Control Power + Apply Load). PLC addresses are base-1.
   #
-  # Runtime uses this block for persistent control state writes.
-  # Heartbeat is toggled every 1s via dedicated heartbeat writer below.
+  # Runtime toggles heartbeat via the dedicated heartbeat writer below.
+  # Fan/Control Power and Apply Load are maintained as static controls.
   heartbeat:
     fc: 5
     address: 3393
-    # Keep disabled during LV side-by-side testing to avoid dual-writer conflicts.
-    # Enable when Matrix is the active controller.
-    enabled: false
+    # Enable only when Matrix is the active controller.
+    enabled: true
     interval_s: 1.0
 
   control_enable_a:
     fc: 15
     address: 3393
-    values: [true, true]
-    labels: ["Heartbeat", "Fan/Control Power"]
+    values: [true, true, true]
+    labels: ["Control Heartbeat", "Fan/Control Power", "Apply Load"]
 
   # Load-to-apply register from table: 42625 (BCD Double).
   # Write VI shows start=2624 (wire-style); with base-1 table this maps to 2625.
@@ -109,7 +108,8 @@ status:
     alias: "LB700/kWAvailable"
     poll_hz: 2
 
-  # Unit-data VI block (read start=2945, count=14 -> 7 float channels: Vab..kW).
+  # Unit-data VI block reads start=2945, count=14 for Vab..kW.
+  # Matrix also reads the next float channel at 2959 for Unit Hz.
   unit_vab:
     fc: 3
     address: 2945
@@ -165,4 +165,12 @@ status:
     word_order: BA
     scaling: { m: 0.001, b: 0.0, unit: "kW" }
     alias: "Unit Power [kW]"
+    poll_hz: 2
+  unit_hz:
+    fc: 3
+    address: 2959
+    type: float32
+    word_order: BA
+    scaling: { m: 1.0, b: 0.0, unit: "Hz" }
+    alias: "Unit Hz [Hz]"
     poll_hz: 2

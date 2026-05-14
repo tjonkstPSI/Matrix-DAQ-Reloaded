@@ -245,6 +245,8 @@ class LoadBankPlugin(BasePlugin):
             cur[2] = bool(master_load)
         self._control_values_a = cur
         self._control_dirty_a = True
+        if self._heartbeat_enabled and take_control is not None:
+            self._next_heartbeat_ts = 0.0
 
     def command_take_control(self, enabled: bool) -> None:
         self.set_control_enable_a(take_control=enabled)
@@ -346,16 +348,24 @@ class LoadBankPlugin(BasePlugin):
         conn = self._resolved_connection()
         unit_id = int(conn.get("unit_id", 1))
 
-        # First VI write block: keep A-bank control chain enabled (3456..3458).
+        # First VI write block: maintain static controls. Heartbeat maps skip
+        # the heartbeat coil here because it must toggle separately.
         if (not self._control_enable_ok or self._control_dirty_a) and (now_ts - self._last_control_enable_try_ts) >= 0.2:
             self._last_control_enable_try_ts = now_ts
             self._control_enable_ok = self._write_control_enable_a(unit_id)
 
         # Heartbeat coil required by some load banks (e.g., Simplex 700kW).
-        if self._heartbeat_enabled and self._control_enable_ok and now_ts >= self._next_heartbeat_ts:
+        heartbeat_requested = self._heartbeat_enabled and bool(
+            self._control_values_a[0] if self._control_values_a else False
+        )
+        if heartbeat_requested and self._control_enable_ok and now_ts >= self._next_heartbeat_ts:
             self._heartbeat_state = not self._heartbeat_state
             if self._write_heartbeat(unit_id, self._heartbeat_state):
                 self._next_heartbeat_ts = now_ts + self._heartbeat_interval_s
+        elif self._heartbeat_enabled and not heartbeat_requested:
+            self._next_heartbeat_ts = 0.0
+            if self._heartbeat_state and self._write_heartbeat(unit_id, False):
+                self._heartbeat_state = False
 
         # Rate-limited setpoint write
         if self._pending_setpoint is not None:
@@ -674,8 +684,18 @@ class LoadBankPlugin(BasePlugin):
         if not raw_vals:
             raw_vals = cmd.get("values", [True, True, True]) or [True, True, True]
         values = [bool(v) for v in list(raw_vals)]
+        hb = (self._map.get("commands", {}) or {}).get("heartbeat", {}) or {}
+        if self._heartbeat_enabled and hb:
+            try:
+                hb_address = self._address_zero_based(hb.get("address", cmd.get("address", 0)))
+                if address == hb_address and len(values) > 1:
+                    address += 1
+                    values = values[1:]
+            except Exception:
+                pass
         if not values:
-            values = [True]
+            self._control_dirty_a = False
+            return True
         try:
             if self._ctrl_diag_count < 5:
                 print(f"[LB] write_coils addr={address} (1-based={address+1}) values={values} unit={unit_id}")

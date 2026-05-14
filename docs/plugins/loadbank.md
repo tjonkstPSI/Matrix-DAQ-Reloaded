@@ -10,7 +10,7 @@ Specialized Modbus TCP control/monitor plugin for load banks from multiple suppl
 - Model support: multiple suppliers/models via model map files
 - Functionality:
   - Configure host, port, unit-id
-  - Select primary and optional secondary loadbank models (predefined register maps)
+  - Select a primary loadbank model from predefined register maps
   - Auto-connect and keep-alive after configuration
   - Provide control channels used by UI and Cycle plugin (setpoint in kW)
   - Provide status/measurement channels for monitoring and recording
@@ -18,11 +18,11 @@ Specialized Modbus TCP control/monitor plugin for load banks from multiple suppl
 
 ### Model Maps
 - Each supported loadbank model has a model map YAML in `configs/loadbanks/<model>.yaml`
-- Currently supported: `Simplex-1.5MW.yaml` (A-side), `Simplex-750kW.yaml` (B-side)
+- Currently supported: `Simplex-1.5MW.yaml` (A-side), `Simplex-750kW.yaml` (B-side), `Simplex-700kW.yaml`
 - Map defines:
   - `address_base`: `0` or `1` (vendor documentation offset; plugin adjusts to 0-based wire addresses)
-  - `commands.setpoint`: coil array (FC15) step-based load control with `steps_kw` array and greedy descending step selection
-  - `commands.control_enable_a`: coil array for Take Control, Fan Power, Master Load
+  - `commands.setpoint`: coil array (FC15) step-based load control with `steps_kw` array, or BCD register load request (FC16)
+  - `commands.control_enable_a`: static control coils for Take Control/Fan Power/Master Load, or Fan Power/Apply Load when heartbeat is separate
   - `indicators`: coil reads (FC1) for fan status, control available, normal operation, etc.
   - `status`: register reads (FC3/FC4) for metering — voltage, current, power, frequency as float32 with configurable `word_order` (`AB` or `BA`)
   - `heartbeat`: optional periodic coil toggle for keepalive
@@ -37,6 +37,19 @@ Load is applied via a coil array where each coil represents a load step (e.g., 3
 1. Sort steps descending
 2. For each step, include if remaining target >= step value
 3. Write coil array via FC15 (multiple coils)
+
+#### BCD Setpoint (Simplex 700kW)
+The Simplex 700kW does not expose individual kW step coils. Matrix writes the requested system load as a BCD Double value to the documented load request register, then uses the load bank controller's Apply Load coil. The model map keeps vendor addresses one-based:
+- YAML address `2625` becomes wire address `2624`
+- `type: bcd_double` encodes the decimal kW request into two 16-bit registers
+- `word_order: BA` matches the LabVIEW write behavior unless hardware testing proves otherwise
+
+#### Heartbeat Control (Simplex 700kW)
+The 700kW first control coil is a heartbeat, not a static Take Control bit. For heartbeat-capable maps:
+- The operator's first control button enables or disables the Matrix remote-control session.
+- While enabled, the plugin toggles the heartbeat coil at the map's configured interval.
+- Fan/Control Power and Apply Load remain static control coils.
+- The UI displays heartbeat readback when the map exposes a heartbeat status channel.
 
 ### Configuration (YAML)
 File: `configs/loadbank.yaml`
@@ -76,16 +89,19 @@ expose_channels:
 ### Operator Control Workflow
 All controls are user-driven; nothing activates automatically at startup:
 
-1. **Take Control**: user toggles in UI -> writes control coil to claim the loadbank from other systems
+1. **Take Control / Enable Remote Control**: user toggles in UI -> writes the Take Control coil on Saturn-style maps, or starts the heartbeat loop on heartbeat-capable maps
 2. **Fan Power**: user toggles in UI -> writes fan coil (requires Take Control active; hardware-enforced). Fan is shared between A/B sides — app will not turn off a fan that's already on.
-3. **Set Load + Apply Load**: user enters kW value and clicks Apply Load -> sends `master_load(True)` + `setpoint_kw(value)`. Master Load enables the hardware load switch; setpoint writes the step coil array.
+3. **Set Load + Apply Load**: user enters kW value and clicks Apply Load -> sends `master_load(True)` + `setpoint_kw(value)`. Master Load/Apply Load enables the hardware load switch; setpoint writes either the step coil array or the BCD system-load request, depending on the map.
 4. **Emergency Stop / Zero Load**: sends `setpoint_kw(0)` + `master_load(False)` — immediately drops all load.
 
-Initial state: `_control_values_a = [False, False, False]` (Take Control off, Fan off, Master Load off).
+Initial state: `_control_values_a = [False, False, False]` (Take Control or heartbeat session off, Fan off, Master/Apply Load off).
 
 ### UI
 - **Configuration dialog** (right-click tile -> Configure): primary/secondary model dropdowns (populated from `configs/loadbanks/*.yaml` plus "None"), IP/port/unit-id fields
-- **Operator panel** (console panel button): Take Control toggle, Fan Power toggle, Load Setpoint spinner + Apply Load button, Emergency Stop button, live metering readback (voltage, current, power, frequency, fan status), Cycle Control section (see Cycle plugin docs)
+- **Operator panel** (console panel button): Take Control or Enable Remote Control toggle, Fan Power toggle, Load Setpoint spinner + Apply Load button, Emergency Stop button, live metering readback (voltage, current, power, frequency, fan status, heartbeat when available), Cycle Control section (see Cycle plugin docs)
+
+### Deferred Dual-Loadbank Distribution
+The configuration schema can store a primary and secondary loadbank, but current runtime control targets the configured primary loadbank. Matrix-managed load distribution, such as filling a 1.5MW primary before applying the remainder to a 750kW secondary, is intentionally deferred until the operating requirements are better defined. The Simplex 700kW remains a single Matrix-controlled target because any daisy-chained downstream loadbanks are managed internally by the Simplex controller.
 
 ### Integration with Cycle Plugin
 - When the Cycle plugin plays, the orchestrator enables Master Load automatically and begins piping setpoints

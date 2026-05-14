@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -68,6 +69,10 @@ class LoadBankControlPanel(QWidget):
         self._primary_model = "—"
         self._secondary_model = "—"
         self._sp_max = 2000.0
+        self._heartbeat_capable = False
+        self._heartbeat_aliases: List[str] = []
+        self._heartbeat_last_value: Optional[bool] = None
+        self._heartbeat_last_change_ts = 0.0
         self._cycle_schedule: List[Tuple[float, float]] = []
         self._cycle_duration_s: float = 0.0
         self._cycle_loops_total: int = 1
@@ -102,7 +107,62 @@ class LoadBankControlPanel(QWidget):
             self._sp_max = float(lim.get("max", self._sp_max))
         except Exception:
             pass
+        self._load_heartbeat_meta()
         self._load_cycle_schedule()
+
+    def _load_heartbeat_meta(self) -> None:
+        self._heartbeat_capable = False
+        self._heartbeat_aliases = []
+        self._heartbeat_last_value = None
+        self._heartbeat_last_change_ts = 0.0
+
+        lb_block = self._cfg.get("load_banks") or {}
+        primary = (lb_block.get("primary") or {}) if isinstance(lb_block, dict) else {}
+        map_file = ""
+        if isinstance(primary, dict):
+            map_file = str(primary.get("map_file") or "")
+        if not map_file:
+            map_file = str(((self._cfg.get("model") or {}).get("map_file")) or "")
+        if not map_file:
+            return
+
+        root_dir = Path(__file__).resolve().parents[3]
+        configs_dir = root_dir / "configs"
+        mf = Path(map_file)
+        candidates = [mf, (configs_dir / mf).resolve(), (root_dir / mf).resolve()]
+        data: Dict[str, Any] = {}
+        try:
+            import yaml  # type: ignore
+            for candidate in candidates:
+                if candidate.exists():
+                    data = yaml.safe_load(candidate.read_text(encoding="utf-8")) or {}
+                    break
+        except Exception:
+            data = {}
+
+        commands = data.get("commands") or {}
+        if isinstance(commands, dict) and isinstance(commands.get("heartbeat"), dict):
+            self._heartbeat_capable = True
+
+        status = data.get("status") or {}
+        if isinstance(status, dict):
+            for key, cfg in status.items():
+                if not isinstance(cfg, dict):
+                    continue
+                alias = str(cfg.get("alias") or key)
+                if "heartbeat" in str(key).lower() or "heartbeat" in alias.lower():
+                    self._heartbeat_aliases.append(alias)
+
+        if self._heartbeat_capable and not self._heartbeat_aliases:
+            self._heartbeat_aliases.append("LB700/UnitHeartbeat")
+
+    def _refresh_control_labels(self) -> None:
+        if hasattr(self, "_btn_take"):
+            label = "Enable Remote Control" if self._heartbeat_capable else "Take Control"
+            self._btn_take.setText(label)
+        if hasattr(self, "_lbl_heartbeat") and not self._heartbeat_capable:
+            self._lbl_heartbeat.setText("N/A")
+            self._lbl_heartbeat.setStyleSheet("color: #888;")
 
     def _load_cycle_schedule(self) -> None:
         """Read cycle.yaml to get the schedule CSV for the chart widget."""
@@ -166,6 +226,7 @@ class LoadBankControlPanel(QWidget):
         self._lbl_primary.setText(f"Primary: {self._primary_model}")
         self._lbl_secondary.setText(f"Secondary: {self._secondary_model}")
         self._spin_kw.setRange(0.0, max(1.0, self._sp_max))
+        self._refresh_control_labels()
         if self._cycle_chart is not None and self._cycle_schedule and self._cycle_duration_s > 0:
             self._cycle_chart.set_schedule(
                 self._cycle_schedule,
@@ -204,6 +265,7 @@ class LoadBankControlPanel(QWidget):
         self._btn_take = QPushButton("Take Control")
         self._btn_take.setCheckable(True)
         self._btn_take.clicked.connect(self._on_take_control)  # type: ignore
+        self._refresh_control_labels()
         self._btn_fan = QPushButton("Fan Power")
         self._btn_fan.setCheckable(True)
         self._btn_fan.clicked.connect(self._on_fan_power)  # type: ignore
@@ -243,6 +305,8 @@ class LoadBankControlPanel(QWidget):
         self._lbl_kw = QLabel("—")
         self._lbl_freq = QLabel("—")
         self._lbl_fan = QLabel("—")
+        self._lbl_heartbeat = QLabel("N/A")
+        self._lbl_heartbeat.setStyleSheet("color: #888;")
         grid.addWidget(QLabel("Vab"), 0, 0)
         grid.addWidget(self._lbl_vab, 0, 1)
         grid.addWidget(QLabel("Ia"), 0, 2)
@@ -260,7 +324,10 @@ class LoadBankControlPanel(QWidget):
         grid.addWidget(QLabel("Freq"), 3, 2)
         grid.addWidget(self._lbl_freq, 3, 3)
         grid.addWidget(QLabel("Fan"), 4, 0)
-        grid.addWidget(self._lbl_fan, 4, 1, 1, 3)
+        grid.addWidget(self._lbl_fan, 4, 1)
+        grid.addWidget(QLabel("Heartbeat"), 4, 2)
+        grid.addWidget(self._lbl_heartbeat, 4, 3)
+        self._refresh_control_labels()
         root.addWidget(gb_rb)
 
         # Cycle Control
@@ -430,6 +497,39 @@ class LoadBankControlPanel(QWidget):
         else:
             self._lbl_fan.setText("—")
             self._lbl_fan.setStyleSheet("")
+
+        if not self._heartbeat_capable:
+            self._lbl_heartbeat.setText("N/A")
+            self._lbl_heartbeat.setStyleSheet("color: #888;")
+        else:
+            hb_v = _pick_value(
+                vals,
+                self._heartbeat_aliases,
+                ["lb700/unitheartbeat", "unitheartbeat", "unit heartbeat"],
+            )
+            if hb_v is None:
+                self._lbl_heartbeat.setText("—")
+                self._lbl_heartbeat.setStyleSheet("")
+            else:
+                try:
+                    on = bool(int(float(hb_v)))
+                    now = time.monotonic()
+                    if self._heartbeat_last_value is None:
+                        self._heartbeat_last_change_ts = now
+                    elif on != self._heartbeat_last_value:
+                        self._heartbeat_last_change_ts = now
+                    self._heartbeat_last_value = on
+
+                    state = "HIGH" if on else "LOW"
+                    if self._heartbeat_last_change_ts and (now - self._heartbeat_last_change_ts) <= 3.0:
+                        self._lbl_heartbeat.setText(f"Pulsing ({state})")
+                        self._lbl_heartbeat.setStyleSheet("color: #2ecc71; font-weight: 600;")
+                    else:
+                        self._lbl_heartbeat.setText(f"No pulse ({state})")
+                        self._lbl_heartbeat.setStyleSheet("color: #f39c12; font-weight: 600;")
+                except Exception:
+                    self._lbl_heartbeat.setText("—")
+                    self._lbl_heartbeat.setStyleSheet("")
 
         # Cycle telemetry
         cyc_state_val = vals.get("Cycle/state")
