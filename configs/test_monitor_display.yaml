@@ -1,12 +1,33 @@
 plot:
   time_window: 60s
   channels:
-  - alias: emasterVbat
+  - alias: qPR_Amb
     y_axis: 1
     color: '#1f77b4'
-  - alias: emasterVsw
-    y_axis: 1
+  - alias: qTP_Amb
+    y_axis: 2
     color: '#ff7f0e'
+  axis_ranges:
+    '1':
+      auto: true
+      min: 0.0
+      max: 100.0
+      name: ''
+    '2':
+      auto: true
+      min: 0.0
+      max: 100.0
+      name: ''
+    '3':
+      auto: true
+      min: 0.0
+      max: 100.0
+      name: ''
+    '4':
+      auto: true
+      min: 0.0
+      max: 100.0
+      name: ''
 watch_channels:
 - emasterIAT
 - emasterVbat

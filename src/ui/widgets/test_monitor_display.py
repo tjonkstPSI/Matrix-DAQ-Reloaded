@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import collections
+import os
 import time
 from datetime import datetime
 from pathlib import Path
@@ -911,8 +912,74 @@ class TestMonitorDisplay(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._cfg = _load_config()
+        self._perf_diag_enabled = str(os.environ.get("MATRIX_UI_PERF_DIAG", "")).strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        self._perf_diag: Dict[str, Any] = {"start": time.perf_counter(), "count": 0, "samples": []}
         self._init_ui()
         self._apply_saved_config()
+
+    def _record_perf_diag(
+        self,
+        *,
+        elapsed_ms: float,
+        alias_ms: float,
+        plot_ms: float,
+        standard_ms: float,
+        watch_ms: float,
+        ao_ms: float,
+        alarm_ms: float,
+        value_count: int,
+    ) -> None:
+        if not self._perf_diag_enabled:
+            return
+        try:
+            self._perf_diag["count"] = int(self._perf_diag.get("count", 0)) + 1
+            samples = self._perf_diag.setdefault("samples", [])
+            if isinstance(samples, list):
+                samples.append(
+                    {
+                        "elapsed_ms": float(elapsed_ms),
+                        "alias_ms": float(alias_ms),
+                        "plot_ms": float(plot_ms),
+                        "standard_ms": float(standard_ms),
+                        "watch_ms": float(watch_ms),
+                        "ao_ms": float(ao_ms),
+                        "alarm_ms": float(alarm_ms),
+                        "value_count": float(value_count),
+                    }
+                )
+            now = time.perf_counter()
+            start = float(self._perf_diag.get("start", now))
+            if now - start < 5.0:
+                return
+
+            def _avg(key: str) -> float:
+                return sum(float(s.get(key, 0.0)) for s in samples) / float(len(samples)) if samples else 0.0
+
+            def _max(key: str) -> float:
+                return max((float(s.get(key, 0.0)) for s in samples), default=0.0)
+
+            count = int(self._perf_diag.get("count", 0))
+            print(
+                "[UI_PERF] test_monitor "
+                f"count={count} rate={count / max(0.001, now - start):.1f}/s "
+                f"elapsed_ms_avg={_avg('elapsed_ms'):.2f} elapsed_ms_max={_max('elapsed_ms'):.2f} "
+                f"alias_ms_avg={_avg('alias_ms'):.2f} alias_ms_max={_max('alias_ms'):.2f} "
+                f"plot_ms_avg={_avg('plot_ms'):.2f} plot_ms_max={_max('plot_ms'):.2f} "
+                f"standard_ms_avg={_avg('standard_ms'):.2f} standard_ms_max={_max('standard_ms'):.2f} "
+                f"watch_ms_avg={_avg('watch_ms'):.2f} watch_ms_max={_max('watch_ms'):.2f} "
+                f"ao_ms_avg={_avg('ao_ms'):.2f} ao_ms_max={_max('ao_ms'):.2f} "
+                f"alarm_ms_avg={_avg('alarm_ms'):.2f} alarm_ms_max={_max('alarm_ms'):.2f} "
+                f"value_count_max={_max('value_count'):.0f}",
+                flush=True,
+            )
+            self._perf_diag = {"start": now, "count": 0, "samples": []}
+        except Exception:
+            pass
 
     def _init_ui(self) -> None:
         root = QVBoxLayout(self)
@@ -1011,23 +1078,59 @@ class TestMonitorDisplay(QWidget):
     ) -> None:
         if values is None:
             values = {}
+        diag_enabled = self._perf_diag_enabled
+        diag_start = time.perf_counter() if diag_enabled else 0.0
+        alias_ms = 0.0
+        plot_ms = 0.0
+        standard_ms = 0.0
+        watch_ms = 0.0
+        ao_ms = 0.0
+        alarm_ms = 0.0
 
+        call_start = time.perf_counter() if diag_enabled else 0.0
         all_aliases = list(values.keys())
         self._plot_panel.update_known_aliases(all_aliases)
         self._watch_panel.update_known_aliases(all_aliases)
+        if diag_enabled:
+            alias_ms = (time.perf_counter() - call_start) * 1000.0
 
         try:
+            call_start = time.perf_counter() if diag_enabled else 0.0
             self._plot_panel.append_data(values)
+            if diag_enabled:
+                plot_ms = (time.perf_counter() - call_start) * 1000.0
         except Exception:
             pass
 
+        call_start = time.perf_counter() if diag_enabled else 0.0
         self._standard_panel.update(values, units, states)
+        if diag_enabled:
+            standard_ms = (time.perf_counter() - call_start) * 1000.0
+        call_start = time.perf_counter() if diag_enabled else 0.0
         self._watch_panel.update(values, units, states)
+        if diag_enabled:
+            watch_ms = (time.perf_counter() - call_start) * 1000.0
 
+        call_start = time.perf_counter() if diag_enabled else 0.0
         if ao_channels is not None:
             self._ao_panel.configure_channels(ao_channels)
             self._ao_panel.update_readback(values)
         elif self._ao_panel.isVisible():
             self._ao_panel.update_readback(values)
+        if diag_enabled:
+            ao_ms = (time.perf_counter() - call_start) * 1000.0
 
+        call_start = time.perf_counter() if diag_enabled else 0.0
         self._alarm_terminal.process_events(alarm_events)
+        if diag_enabled:
+            alarm_ms = (time.perf_counter() - call_start) * 1000.0
+            self._record_perf_diag(
+                elapsed_ms=(time.perf_counter() - diag_start) * 1000.0,
+                alias_ms=alias_ms,
+                plot_ms=plot_ms,
+                standard_ms=standard_ms,
+                watch_ms=watch_ms,
+                ao_ms=ao_ms,
+                alarm_ms=alarm_ms,
+                value_count=len(values),
+            )

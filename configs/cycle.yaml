@@ -1,5 +1,5 @@
 source:
-  csv_path: configs/cycles/demo.csv
+  csv_path: configs/cycles/12M33 90 sec Load steps.csv
   columns:
     time: Time
     load: Load

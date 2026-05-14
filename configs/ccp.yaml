@@ -24,7 +24,9 @@ a2l:
   path: C:/Projects/Python/Matrix_v2_retry/test files/a2l/v577/v577 Master_R2.a2l
 poll_interval_ms: 10
 poll_channels_per_tick: 1
-io_timeout_s: 0.05
+io_timeout_s: 0.06
+short_up_timeout_s: 0.04
+short_up_debug_misses: false
 poll_default_priority: low
 target_poll_hz: 5
 acquisition_mode: short_up
@@ -46,314 +48,118 @@ reconnect_interval_s: 2.0
 measurements:
   naming_prefix: emaster
   list: &id001
-  - name: A_BM1
+  - name: TIPAdaptTbl
     unit_override: ''
     enabled: true
     priority: low
     unit: ''
     data_type: SWORD
     size: 2
-  - name: BP
+  - name: TIPAdapt_ECT_mstr
     unit_override: ''
     enabled: true
     priority: low
     unit: ''
     data_type: UWORD
     size: 2
-  - name: CL_BM1
+  - name: TIPAdapt_ECT_slv
+    unit_override: ''
+    enabled: true
+    priority: low
+    unit: ''
+    data_type: UWORD
+    size: 2
+  - name: TIPAdapt_MAP_LPmstr
+    unit_override: ''
+    enabled: true
+    priority: low
+    unit: ''
+    data_type: UWORD
+    size: 2
+  - name: TIPAdapt_MAP_LPslv
+    unit_override: ''
+    enabled: true
+    priority: low
+    unit: ''
+    data_type: UWORD
+    size: 2
+  - name: TIPAdapt_MAP_mstr
+    unit_override: ''
+    enabled: true
+    priority: low
+    unit: ''
+    data_type: UWORD
+    size: 2
+  - name: TIPAdapt_MAP_slv
+    unit_override: ''
+    enabled: true
+    priority: low
+    unit: ''
+    data_type: UWORD
+    size: 2
+  - name: TIPAdapt_MAPerror
     unit_override: ''
     enabled: true
     priority: low
     unit: ''
     data_type: SWORD
     size: 2
-  - name: DBW_iFB_amps
+  - name: TIPAdapt_TIP_mstr
     unit_override: ''
     enabled: true
     priority: low
     unit: ''
     data_type: UWORD
     size: 2
-  - name: EGO2_volts
-    unit_override: ''
-    enabled: true
-    priority: high
-    unit: ''
-    data_type: UWORD
-    size: 2
-  - name: HM_RAM_seconds
-    unit_override: ''
-    enabled: true
-    priority: low
-    unit: ''
-    data_type: ULONG
-    size: 4
-  - name: HM_RAMr_seconds
-    unit_override: ''
-    enabled: true
-    priority: low
-    unit: ''
-    data_type: ULONG
-    size: 4
-  - name: IAT
-    unit_override: ''
-    enabled: true
-    priority: high
-    unit: ''
-    data_type: UWORD
-    size: 2
-  - name: I_Gov3_acc
-    unit_override: ''
-    enabled: true
-    priority: low
-    unit: ''
-    data_type: SLONG
-    size: 4
-  - name: KNK_retard
-    unit_override: ''
-    enabled: true
-    priority: high
-    unit: ''
-    data_type: UWORD
-    size: 2
-  - name: MAPressure
-    unit_override: ''
-    enabled: true
-    priority: high
-    unit: ''
-    data_type: UWORD
-    size: 2
-  - name: MAT
+  - name: TIPAdapt_TIP_slv
     unit_override: ''
     enabled: true
     priority: low
     unit: ''
     data_type: UWORD
     size: 2
-  - name: MJ2_A_act
+  - name: TIPAdapt_TIPcorrect
     unit_override: ''
     enabled: true
-    priority: high
+    priority: low
     unit: ''
     data_type: SWORD
     size: 2
-  - name: MJ2_P_act
+  - name: TIPAdapt_cmd_final
     unit_override: ''
     enabled: true
-    priority: high
+    priority: low
+    unit: ''
+    data_type: UWORD
+    size: 2
+  - name: TIPAdapt_cmd_mstr
+    unit_override: ''
+    enabled: true
+    priority: low
+    unit: ''
+    data_type: UWORD
+    size: 2
+  - name: TIPAdapt_cmd_slv
+    unit_override: ''
+    enabled: true
+    priority: low
+    unit: ''
+    data_type: UWORD
+    size: 2
+  - name: TIPAdapt_correction
+    unit_override: ''
+    enabled: true
+    priority: low
     unit: ''
     data_type: SWORD
     size: 2
-  - name: MJ_A_act
+  - name: TIPAdapt_tblcorrect
     unit_override: ''
     enabled: true
-    priority: high
+    priority: low
     unit: ''
     data_type: SWORD
     size: 2
-  - name: MJ_A_cmd
-    unit_override: ''
-    enabled: true
-    priority: high
-    unit: ''
-    data_type: UWORD
-    size: 2
-  - name: MJ_P_act
-    unit_override: ''
-    enabled: true
-    priority: high
-    unit: ''
-    data_type: SWORD
-    size: 2
-  - name: MJ_P_cmd
-    unit_override: ''
-    enabled: true
-    priority: high
-    unit: ''
-    data_type: SWORD
-    size: 2
-  - name: OILP_press
-    unit_override: ''
-    enabled: true
-    priority: low
-    unit: ''
-    data_type: UWORD
-    size: 2
-  - name: OILT
-    unit_override: ''
-    enabled: true
-    priority: low
-    unit: ''
-    data_type: UWORD
-    size: 2
-  - name: Phi_UEGO
-    unit_override: ''
-    enabled: true
-    priority: high
-    unit: ''
-    data_type: UWORD
-    size: 2
-  - name: TIP
-    unit_override: ''
-    enabled: true
-    priority: high
-    unit: ''
-    data_type: UWORD
-    size: 2
-  - name: TPS1_pct
-    unit_override: ''
-    enabled: true
-    priority: low
-    unit: ''
-    data_type: UWORD
-    size: 2
-  - name: TPS2_pct
-    unit_override: ''
-    enabled: true
-    priority: low
-    unit: ''
-    data_type: UWORD
-    size: 2
-  - name: TPS_cmd_pct
-    unit_override: ''
-    enabled: true
-    priority: low
-    unit: ''
-    data_type: UWORD
-    size: 2
-  - name: TPS_pct
-    unit_override: ''
-    enabled: true
-    priority: high
-    unit: ''
-    data_type: UWORD
-    size: 2
-  - name: Vbat
-    unit_override: ''
-    enabled: true
-    priority: low
-    unit: ''
-    data_type: UWORD
-    size: 2
-  - name: Vsw
-    unit_override: ''
-    enabled: true
-    priority: low
-    unit: ''
-    data_type: UWORD
-    size: 2
-  - name: bst_Ptarg_P
-    unit_override: ''
-    enabled: true
-    priority: low
-    unit: ''
-    data_type: UWORD
-    size: 2
-  - name: bst_WGAcmd_DC
-    unit_override: ''
-    enabled: true
-    priority: low
-    unit: ''
-    data_type: UWORD
-    size: 2
-  - name: bst_WGAcmd_V
-    unit_override: ''
-    enabled: true
-    priority: low
-    unit: ''
-    data_type: UWORD
-    size: 2
-  - name: bst_WGPa
-    unit_override: ''
-    enabled: true
-    priority: low
-    unit: ''
-    data_type: UWORD
-    size: 2
-  - name: bst_loadcmd
-    unit_override: ''
-    enabled: true
-    priority: low
-    unit: ''
-    data_type: UWORD
-    size: 2
-  - name: eng_load
-    unit_override: ''
-    enabled: true
-    priority: low
-    unit: ''
-    data_type: UWORD
-    size: 2
-  - name: gov_MAP_d
-    unit_override: ''
-    enabled: true
-    priority: low
-    unit: ''
-    data_type: UWORD
-    size: 2
-  - name: mdot_a_ports
-    unit_override: ''
-    enabled: true
-    priority: low
-    unit: ''
-    data_type: UWORD
-    size: 2
-  - name: mdot_f_ports
-    unit_override: ''
-    enabled: true
-    priority: low
-    unit: ''
-    data_type: UWORD
-    size: 2
-  - name: rECT
-    unit_override: ''
-    enabled: true
-    priority: low
-    unit: ''
-    data_type: UWORD
-    size: 2
-  - name: rpm
-    unit_override: ''
-    enabled: true
-    priority: high
-    unit: ''
-    data_type: UWORD
-    size: 2
-  - name: rpmd_gain
-    unit_override: ''
-    enabled: true
-    priority: low
-    unit: ''
-    data_type: UWORD
-    size: 2
-  - name: rpmd_gov
-    unit_override: ''
-    enabled: true
-    priority: low
-    unit: ''
-    data_type: UWORD
-    size: 2
-  - name: run_mode
-    unit_override: ''
-    enabled: true
-    priority: high
-    unit: ''
-    data_type: UBYTE
-    size: 1
-  - name: spk_adv
-    unit_override: ''
-    enabled: true
-    priority: high
-    unit: ''
-    data_type: SWORD
-    size: 2
-  - name: sync_state
-    unit_override: ''
-    enabled: true
-    priority: high
-    unit: ''
-    data_type: SBYTE
-    size: 1
 writes: []
 devices:
 - name: CCP Primary

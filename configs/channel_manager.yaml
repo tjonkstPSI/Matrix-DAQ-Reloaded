@@ -1,455 +1,13 @@
 enabled: true
 recording_rate_hz: 10.0
 storage:
-  chunk_duration_s: 1.0
+  commit_interval_s: 2.0
   segment_time_limit_s: 14400.0
   segment_size_limit_mb: 100.0
-  coalesce_on_finalize: true
-  keep_chunk_files: false
 engine_running:
   source_alias: cSP_Eng
   rpm_threshold: 0.0
 channels:
-- alias: Ambient Pressure
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: Ambient RH
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: Ambient Temp
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: CCP_AAT
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: CCP_AUX_PU1_raw
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: CCP_BP
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: CCP_EGO3_raw
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: CCP_MAP_est
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: CCP_OILP_press
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: CCP_OILT
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: CCP_Vbat
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: CCP_Vsw
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: 5.0
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: soft
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: CCP_mdot_EGR_act
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: CCP_mdot_a_ports
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: CCP_mdot_exhaust_float
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: CCP_mdot_f_fill_float
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: CCP_mdot_f_ports
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: CCP_rECT
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: CCP_rIAT
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: CCP_rMAP
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: CCP_rpm
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: CCP_spk_adv
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
 - alias: cFL_EngFul
   warning:
     low: null
@@ -466,7 +24,7 @@ channels:
     high: null
     high_enter_delay_s: 0.0
     high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
+    action: visible_alert
     shutdown_type: hard
   enabling_condition: always_enabled
   enable_threshold: 0.0
@@ -486,7 +44,7 @@ channels:
     high: null
     high_enter_delay_s: 0.0
     high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
+    action: visible_alert
     shutdown_type: hard
   enabling_condition: always_enabled
   enable_threshold: 0.0
@@ -506,7 +64,7 @@ channels:
     high: null
     high_enter_delay_s: 0.0
     high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
+    action: visible_alert
     shutdown_type: hard
   enabling_condition: always_enabled
   enable_threshold: 0.0
@@ -526,7 +84,7 @@ channels:
     high: null
     high_enter_delay_s: 0.0
     high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
+    action: visible_alert
     shutdown_type: hard
   enabling_condition: always_enabled
   enable_threshold: 0.0
@@ -546,16 +104,16 @@ channels:
     high: null
     high_enter_delay_s: 0.0
     high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
+    action: visible_alert
     shutdown_type: hard
   enabling_condition: always_enabled
   enable_threshold: 0.0
 - alias: cVL_Ign
   warning:
     low: 7.0
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: 15.0
+    low_enter_delay_s: 12.5
+    low_clear_delay_s: 5.0
+    high: 3213.0
     high_enter_delay_s: 0.0
     high_clear_delay_s: 0.0
     action: visible_alert
@@ -566,107 +124,7 @@ channels:
     high: 20.0
     high_enter_delay_s: 0.0
     high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: mPR_Amb
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
     action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: mTEST
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: qDI_In1
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: qDO_Out1
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: qFL_Coolant
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
     shutdown_type: hard
   enabling_condition: always_enabled
   enable_threshold: 0.0
@@ -686,27 +144,7 @@ channels:
     high: null
     high_enter_delay_s: 0.0
     high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: qPR_CompIn1
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
     action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
     shutdown_type: hard
   enabling_condition: always_enabled
   enable_threshold: 0.0
@@ -726,47 +164,7 @@ channels:
     high: null
     high_enter_delay_s: 0.0
     high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: qTP_CoolantIn
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
     action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: qVO_ValvePos
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
     shutdown_type: hard
   enabling_condition: always_enabled
   enable_threshold: 0.0
@@ -786,7 +184,7 @@ channels:
     high: null
     high_enter_delay_s: 0.0
     high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
+    action: visible_alert
     shutdown_type: hard
   enabling_condition: always_enabled
   enable_threshold: 0.0
@@ -806,1107 +204,7 @@ channels:
     high: null
     high_enter_delay_s: 0.0
     high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emasterAUX_PU1_raw
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
     action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emasterA_BM1
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emasterBP
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emasterCL_BM1
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emasterDBW_iFB_amps
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emasterEGO2_volts
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emasterEGO3_raw
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emasterHM_RAM_seconds
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emasterHM_RAMr_seconds
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emasterIAT
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emasterI_Gov3_acc
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emasterKNK_retard
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emasterMAPressure
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emasterMAT
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emasterMFG_DPPress
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emasterMFG_DSPress
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emasterMFG_FTemp
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emasterMFG_SD_mdot_cmd
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emasterMFG_TPS_act_pct
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emasterMFG_TPS_cmd_pct
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emasterMFG_USPress
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emasterMFG_VE_mdot_err
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emasterMFG_mdot_act
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emasterOILP_press
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emasterOILT
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emasterPhi_UEGO
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emasterTIP
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emasterTPS1_pct
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emasterTPS2_pct
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emasterTPS_cmd_pct
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emasterTPS_pct
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emasterVbat
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emasterVsw
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emasterbst_Ptarg_P
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emasterbst_WGAcmd_DC
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emasterbst_WGAcmd_V
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emasterbst_WGPa
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emasterbst_loadcmd
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emastereng_load
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emastergov_MAP_d
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emastermdot_EGR_act
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emastermdot_a_ports
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emastermdot_exhaust_float
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emastermdot_f_ports
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emastermdot_f_valve_TPSf
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emasterrECT
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emasterrIAT
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emasterrMAP
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emasterrpm
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emasterrpmd_gain
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emasterrpmd_gov
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emasterrun_mode
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emasterspk_adv
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emastersync_state
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
-    shutdown_type: hard
-  enabling_condition: always_enabled
-  enable_threshold: 0.0
-- alias: emastertorque_Nm_gross
-  warning:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert
-  alarm:
-    low: null
-    low_enter_delay_s: 0.0
-    low_clear_delay_s: 0.0
-    high: null
-    high_enter_delay_s: 0.0
-    high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
     shutdown_type: hard
   enabling_condition: always_enabled
   enable_threshold: 0.0
@@ -1926,7 +224,7 @@ channels:
     high: null
     high_enter_delay_s: 0.0
     high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
+    action: visible_alert
     shutdown_type: hard
   enabling_condition: always_enabled
   enable_threshold: 0.0
@@ -1946,7 +244,7 @@ channels:
     high: null
     high_enter_delay_s: 0.0
     high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
+    action: visible_alert
     shutdown_type: hard
   enabling_condition: always_enabled
   enable_threshold: 0.0
@@ -1966,7 +264,7 @@ channels:
     high: null
     high_enter_delay_s: 0.0
     high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
+    action: visible_alert
     shutdown_type: hard
   enabling_condition: always_enabled
   enable_threshold: 0.0
@@ -1986,7 +284,7 @@ channels:
     high: null
     high_enter_delay_s: 0.0
     high_clear_delay_s: 0.0
-    action: visible_alert_shutdown
+    action: visible_alert
     shutdown_type: hard
   enabling_condition: always_enabled
   enable_threshold: 0.0
@@ -2171,6 +469,1226 @@ channels:
   enabling_condition: always_enabled
   enable_threshold: 0.0
 - alias: qPR_SlvCacPst
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: eFuelLockoffStatus
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: eLOUVER_Feedback
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: emasterTIPAdaptTbl
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: emasterTIPAdapt_ECT_mstr
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: emasterTIPAdapt_ECT_slv
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: emasterTIPAdapt_MAP_LPmstr
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: emasterTIPAdapt_MAP_LPslv
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: emasterTIPAdapt_MAP_mstr
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: emasterTIPAdapt_MAP_slv
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: emasterTIPAdapt_MAPerror
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: emasterTIPAdapt_TIP_mstr
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: emasterTIPAdapt_TIP_slv
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: emasterTIPAdapt_TIPcorrect
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: emasterTIPAdapt_cmd_final
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: emasterTIPAdapt_cmd_mstr
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: emasterTIPAdapt_cmd_slv
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: emasterTIPAdapt_correction
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: emasterTIPAdapt_tblcorrect
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: mOT_EngSsd
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: mPO_PwrCor
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: qDG_FacEspAct
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: qFL_Bby
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: qPR_MstCatDta
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: qPR_MstTrbPre
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: qPR_SlvCacPre
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: qPR_SlvCatDta
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: qPR_SlvTrbPre
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: qTP_BthAmb
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: qTP_BthMst
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: qTP_BthOil
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: qTP_BthPre
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: qTP_BthPst
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: qTP_BthSlv
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: qTP_MstCacPre
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: qTP_MstCatPre
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: qTP_MstCatPst
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: qTP_MstCmpPst
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: qTP_MstTrbPre
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: qTP_MstTrbPst
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: qTP_Oil
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: qTP_SlvCacPre
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: qTP_SlvCacPst
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: qTP_SlvCatPre
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: qTP_SlvCatPst
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: qTP_SlvCmpPst
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: qTP_SlvTrbPre
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: qTP_SlvTrbPst
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: xCT_Gen1
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: xCT_Gen2
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: xCT_Gen3
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: xFQ_Gen
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: xLOad_P_kVA
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: xLoad_S_kVA
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: xPF_PwmAvg
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: xPO_CF
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: xPO_GenAvg
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: xPO_PwnAvg
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: xVL_Gen12
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: xVL_Gen23
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: xVL_Gen31
+  warning:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert
+  alarm:
+    low: null
+    low_enter_delay_s: 0.0
+    low_clear_delay_s: 0.0
+    high: null
+    high_enter_delay_s: 0.0
+    high_clear_delay_s: 0.0
+    action: visible_alert_shutdown
+    shutdown_type: hard
+  enabling_condition: always_enabled
+  enable_threshold: 0.0
+- alias: xV_Bat
   warning:
     low: null
     low_enter_delay_s: 0.0

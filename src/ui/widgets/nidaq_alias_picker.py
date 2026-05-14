@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from typing import List, Dict
+import os
+import time
+from typing import Any, List, Dict
 
 try:
 	from PySide6.QtCore import Qt
@@ -40,9 +42,65 @@ class AliasPickerDialog(QDialog):
 		self.selected_alias: str = ""
 		self._current_alias = current_alias
 		self._channels: List[Dict[str, str]] = []
+		self._perf_diag_enabled = str(os.environ.get("MATRIX_UI_PERF_DIAG", "")).strip().lower() in {
+			"1",
+			"true",
+			"yes",
+			"on",
+		}
+		self._perf_diag: Dict[str, Any] = {"start": time.perf_counter(), "count": 0, "samples": []}
 
 		self._load_channels()
 		self._init_ui()
+
+	def _record_perf_diag(
+		self,
+		*,
+		elapsed_ms: float,
+		populate_ms: float,
+		match_count: int,
+		total_count: int,
+		query_len: int,
+	) -> None:
+		if not self._perf_diag_enabled:
+			return
+		try:
+			self._perf_diag["count"] = int(self._perf_diag.get("count", 0)) + 1
+			samples = self._perf_diag.setdefault("samples", [])
+			if isinstance(samples, list):
+				samples.append(
+					{
+						"elapsed_ms": float(elapsed_ms),
+						"populate_ms": float(populate_ms),
+						"match_count": float(match_count),
+						"total_count": float(total_count),
+						"query_len": float(query_len),
+					}
+				)
+			now = time.perf_counter()
+			start = float(self._perf_diag.get("start", now))
+			if now - start < 5.0:
+				return
+
+			def _avg(key: str) -> float:
+				return sum(float(s.get(key, 0.0)) for s in samples) / float(len(samples)) if samples else 0.0
+
+			def _max(key: str) -> float:
+				return max((float(s.get(key, 0.0)) for s in samples), default=0.0)
+
+			count = int(self._perf_diag.get("count", 0))
+			print(
+				"[UI_PERF] alias_picker "
+				f"count={count} rate={count / max(0.001, now - start):.1f}/s "
+				f"elapsed_ms_avg={_avg('elapsed_ms'):.2f} elapsed_ms_max={_max('elapsed_ms'):.2f} "
+				f"populate_ms_avg={_avg('populate_ms'):.2f} populate_ms_max={_max('populate_ms'):.2f} "
+				f"match_count_max={_max('match_count'):.0f} total_count_max={_max('total_count'):.0f} "
+				f"query_len_max={_max('query_len'):.0f}",
+				flush=True,
+			)
+			self._perf_diag = {"start": now, "count": 0, "samples": []}
+		except Exception:
+			pass
 
 	def _load_channels(self) -> None:
 		self._channels = load_standard_channels()
@@ -124,17 +182,31 @@ class AliasPickerDialog(QDialog):
 			self._lib_table.setItem(row, 1, unit_item)
 
 	def _filter_library(self, text: str) -> None:
+		diag_enabled = self._perf_diag_enabled
+		diag_start = time.perf_counter() if diag_enabled else 0.0
+		populate_ms = 0.0
 		needle = text.strip().lower()
 		if not needle:
-			self._populate_library_table(self._channels)
+			entries = self._channels
 		else:
-			filtered = [
+			entries = [
 				e for e in self._channels
 				if needle in e.get("alias", "").lower()
 				or needle in e.get("unit", "").lower()
 			]
-			self._populate_library_table(filtered)
+		populate_start = time.perf_counter() if diag_enabled else 0.0
+		self._populate_library_table(entries)
+		if diag_enabled:
+			populate_ms = (time.perf_counter() - populate_start) * 1000.0
 		self._update_ok_state()
+		if diag_enabled:
+			self._record_perf_diag(
+				elapsed_ms=(time.perf_counter() - diag_start) * 1000.0,
+				populate_ms=populate_ms,
+				match_count=len(entries),
+				total_count=len(self._channels),
+				query_len=len(needle),
+			)
 
 	def _on_library_selection_changed(self) -> None:
 		self._update_ok_state()

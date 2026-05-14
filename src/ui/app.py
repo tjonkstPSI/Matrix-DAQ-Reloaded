@@ -1,4 +1,4 @@
-# Author: T. Onkst | Date: 08182025
+# Author: T. Onkst | Date: 05052026
 
 from __future__ import annotations
 
@@ -83,7 +83,7 @@ class CoreSupervisor:
         self._seen_status = False
         self._seen_telemetry = False
         self._poll_logged = False
-        self._ready_deadline = time.monotonic() + 20.0
+        self._ready_deadline = time.monotonic() + 60.0
         self._ready_timer = QTimer()
         self._ready_timer.setInterval(50)
         self._ready_timer.timeout.connect(self._poll_ready)  # type: ignore
